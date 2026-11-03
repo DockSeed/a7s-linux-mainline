@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 20:00:00 +0200
+Subject: [PATCH] crypto: sun8i-ce - Take the resets as an array
+
+The crypto engine of the A733 has two resets, one for the engine and
+one for its CE_SYS part (A733 manual, 4.1.6.118). The driver asks for
+one reset without a name and gets only the first.
+
+Take all resets of the node as one array. With the single reset of the
+earlier SoCs the array holds that reset, and asserting and deasserting
+it works as before.
+
+Tested on Radxa Cubie A7S: both resets of the A733 engine are released
+on probe and the engine runs.
+
+Assisted-by: LLM
+---
+ drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c
+index 21762bd408e5..7ae28e692295 100644
+--- a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c
++++ b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c
+@@ -958,7 +958,7 @@ static int sun8i_ce_probe(struct platform_device *pdev)
+ 	if (irq < 0)
+ 		return irq;
+ 
+-	ce->reset = devm_reset_control_get(&pdev->dev, NULL);
++	ce->reset = devm_reset_control_array_get_exclusive(&pdev->dev);
+ 	if (IS_ERR(ce->reset))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(ce->reset),
+ 				     "No reset control found\n");

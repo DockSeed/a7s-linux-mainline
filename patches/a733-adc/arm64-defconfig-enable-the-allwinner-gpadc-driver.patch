@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 08:27:41 +0200
+Subject: [PATCH] arm64: defconfig: Enable the Allwinner GPADC driver
+
+The Radxa Cubie A7S wires five channels of the A733 GPADC to board
+straps and ID dividers. The sun20i-gpadc driver exposes them as IIO
+channels; without CONFIG_SUN20I_GPADC the enabled node has no driver.
+Build it as a module, as for other ADC drivers in the defconfig.
+
+CONFIG_KEYBOARD_SUN4I_LRADC is already set as a module.
+
+Tested on Radxa Cubie A7S: the module loads and binds to the GPADC.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index d3ffa86bb4ee..b80682c6b027 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -1711,6 +1711,7 @@ CONFIG_ROCKCHIP_SARADC=m
+ CONFIG_RZG2L_ADC=m
+ CONFIG_RZT2H_ADC=m
+ CONFIG_SOPHGO_CV1800B_ADC=m
++CONFIG_SUN20I_GPADC=m
+ CONFIG_TI_ADS1015=m
+ CONFIG_TI_AM335X_ADC=m
+ CONFIG_XILINX_XADC=m

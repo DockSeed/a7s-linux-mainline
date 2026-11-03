@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 6 Oct 2026 16:04:06 +0200
+Subject: [PATCH] dt-bindings: mmc: sunxi: Add the Allwinner A733 eMMC
+ controller
+
+The A733 has two kinds of SD/MMC host controller: SMHC0 and SMHC1 for
+SD and SDIO with a 4 bit bus, SMHC2 and SMHC3 for eMMC with an 8 bit
+bus and DDR at 200 MHz, which is HS400. One compatible for both lets a
+driver give the SD controller features only the eMMC controller has.
+
+Add allwinner,sun60i-a733-emmc with the A100 eMMC controller as
+fallback, as the H616 and A523 eMMC controllers have it.
+
+Tested on Radxa Cubie A7S: the eMMC node with this compatible bound to
+the driver and ran at HS400 with enhanced strobe.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/mmc/allwinner,sun4i-a10-mmc.yaml         | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/mmc/allwinner,sun4i-a10-mmc.yaml b/Documentation/devicetree/bindings/mmc/allwinner,sun4i-a10-mmc.yaml
+index 9e9610bb1eda..1acd4b7ba9db 100644
+--- a/Documentation/devicetree/bindings/mmc/allwinner,sun4i-a10-mmc.yaml
++++ b/Documentation/devicetree/bindings/mmc/allwinner,sun4i-a10-mmc.yaml
+@@ -51,6 +51,7 @@ properties:
+               - allwinner,sun20i-d1-emmc
+               - allwinner,sun50i-h616-emmc
+               - allwinner,sun55i-a523-emmc
++              - allwinner,sun60i-a733-emmc
+           - const: allwinner,sun50i-a100-emmc
+       - items:
+           - const: allwinner,sun50i-h616-mmc

@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 16 Oct 2026 20:17:50 +0200
+Subject: [PATCH] drm/sun4i: tv: Clean up the encoder when bind defers
+
+When no CRTC is found for the TV encoder, sun4i_tv_bind() returns
+-EPROBE_DEFER through err_disable_clk. The encoder is initialised by
+then and is left on the mode_config list. struct sun4i_tv is allocated
+with devm_kzalloc() in bind, so it is freed when the component framework
+releases the devres group of the failed bind, and the next walk of the
+encoder list, in drm_mode_config_cleanup(), touches freed memory.
+
+Go through err_cleanup_encoder instead, as the connector error path
+already does, so the encoder is removed from the list before the
+memory goes.
+
+Not covered: the other error paths of bind, which already unwind in the
+right order.
+
+Tested on Radxa Cubie A7S: not tested; the TV encoder is not on the A733
+display path.
+
+Fixes: 78428d672c2e ("drm/sun4i: tv: Switch to drm_of_find_possible_crtcs")
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_tv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tv.c b/drivers/gpu/drm/sun4i/sun4i_tv.c
+index ce22f1662c0c..c00b12e241c0 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tv.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tv.c
+@@ -489,7 +489,7 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
+ 								dev->of_node);
+ 	if (!tv->encoder.possible_crtcs) {
+ 		ret = -EPROBE_DEFER;
+-		goto err_disable_clk;
++		goto err_cleanup_encoder;
+ 	}
+ 
+ 	drm_connector_helper_add(&tv->connector,

@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 6 Oct 2026 16:22:32 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Use the eMMC compatible for mmc2
+
+mmc2 is SMHC2, an eMMC controller with an 8 bit bus and HS400. Describe
+it with the eMMC compatible so that it keeps its eMMC features when the
+SD controller loses them.
+
+Tested on Radxa Cubie A7S: mmc2 bound with the eMMC compatible and ran
+at HS400 with enhanced strobe.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 923e344e1d40..c1f2c042eb82 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -811,8 +811,8 @@ mmc0: mmc@4020000 {
+ 		};
+ 
+ 		mmc2: mmc@4022000 {
+-			compatible = "allwinner,sun60i-a733-mmc",
+-				     "allwinner,sun20i-d1-mmc";
++			compatible = "allwinner,sun60i-a733-emmc",
++				     "allwinner,sun50i-a100-emmc";
+ 			reg = <0x04022000 0x1000>;
+ 			interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH 0>;
+ 			clocks = <&ccu CLK_BUS_MMC2>, <&ccu CLK_MMC2>;

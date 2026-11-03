@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 18:40:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733-cubie-a7s: Offer DisplayPort pin
+ assignment D
+
+The combo PHY can carry two DisplayPort lanes next to USB3. On the
+board, lanes 0 and 1 of the PHY go to the SSTX1 and SSRX1 pins of the
+connector and lanes 2 and 3 to SSRX2 and SSTX2 (Radxa Cubie A7S
+schematic V1.10, sheet 12).
+
+Offer pin assignment D in the DisplayPort mode of the connector, next to
+C and E. A partner that wants USB3 together with DisplayPort takes it;
+one that does not keeps pin assignment C. A dock that can do both and
+prefers multi-function now gets two lanes next to USB3, so modes above
+the bandwidth of two lanes, such as 3840x2160 at 60 Hz, are not offered
+there. Pin assignment F is not offered.
+
+Tested on Radxa Cubie A7S: a monitor offering only pin assignment C still
+gets it in both plug orientations; pin assignment D not tested, no sink
+offering it was at hand.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index b217ceea5135..3927cb05e8d2 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -552,11 +552,11 @@ connector {
+ 			/* USB default current, now stated as a PD source */
+ 			source-pdos = <PDO_FIXED(5000, 900, PDO_FIXED_USB_COMM)>;
+ 
+-			/* DisplayPort alternate mode, pin assignments C and E */
++			/* DisplayPort alternate mode, pin assignments C, D and E */
+ 			altmodes {
+ 				displayport {
+ 					svid = /bits/ 16 <0xff01>;
+-					vdo = <0x00001446>;
++					vdo = <0x00001c46>;
+ 				};
+ 			};
+ 

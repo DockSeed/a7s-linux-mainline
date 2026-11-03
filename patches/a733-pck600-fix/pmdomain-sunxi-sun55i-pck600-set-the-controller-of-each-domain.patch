@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 12:10:00 +0200
+Subject: [PATCH] pmdomain: sunxi: sun55i-pck600: Set the controller of each
+ domain
+
+Nothing sets pd->pck, which sunxi_pck600_pd_set_power() dereferences to
+report a domain that fails to change state, so such a failure oopses
+instead of being reported. Set it in the probe loop.
+
+Tested on Radxa Cubie A7S: booted on two boards with the A733 node;
+all eleven domains register without an oops. The error path itself was
+not triggered.
+
+Fixes: 76e4310115ca ("pmdomain: sunxi: add driver for Allwinner A523's PCK-600 power controller")
+Assisted-by: LLM
+---
+ drivers/pmdomain/sunxi/sun55i-pck600.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/pmdomain/sunxi/sun55i-pck600.c b/drivers/pmdomain/sunxi/sun55i-pck600.c
+index 8a37d11b65a2..6d34101794d1 100644
+--- a/drivers/pmdomain/sunxi/sun55i-pck600.c
++++ b/drivers/pmdomain/sunxi/sun55i-pck600.c
+@@ -176,6 +176,7 @@ static int sunxi_pck600_probe(struct platform_device *pdev)
+ 		pd->genpd.power_on = sunxi_pck600_power_on;
+ 		pd->genpd.flags = pd_desc->flags;
+ 		pd->base = base + PPU_REG_SIZE * i;
++		pd->pck = pck;
+ 
+ 		sunxi_pck600_pd_setup(pd, desc);
+ 		ret = pm_genpd_init(&pd->genpd, NULL, false);

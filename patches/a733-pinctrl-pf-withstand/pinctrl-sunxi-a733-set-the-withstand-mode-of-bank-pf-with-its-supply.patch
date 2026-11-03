@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 8 Oct 2026 07:59:16 +0200
+Subject: [PATCH] pinctrl: sunxi: a733: Set the withstand mode of bank PF with
+ its supply
+
+Bank PF of the A733 switches between its 3.3 V and 1.8 V supply in
+GPIO_POW_VAL_SET_CTL, but its withstand mode in GPIO_POW_MOD_SEL bits
+11:10 stays where the boot chain left it. In the adaptive mode (01) the
+pads follow the SoC's own detector of the bank supply, and on the Cubie
+A7S that detector intermittently reports 3.3 V while the bank runs at
+1.8 V. An SD card at SDR104 then fails its first transfers after a
+rebind, unless the USB3 combo PHY happens to be running.
+
+Set the mode by hand together with the supply, in the order the user
+manual gives for a voltage change: the 3.3 V mode (10) before the
+switch to 3.3 V, the 1.8 V mode (11) after the switch to 1.8 V, once
+GPIO_POW_VAL reports the bank at 1.8 V and the bank still selects
+1.8 V. If the detector does not report 1.8 V within 1 ms, the bank
+keeps the 3.3 V mode and a warning is printed. At probe the mode is set
+from the supply the bank selects, so it no longer depends on the boot
+chain. The 1.8 V mode is never written while bank PF selects 3.3 V.
+
+Bank PF is thereby an exception to leaving the withstand voltage to
+the hardware on the A733: its supply is switched by the kernel, so its
+mode has to be too.
+
+Not covered: the withstand mode of the other banks, which still stays
+as the boot chain set it.
+
+Tested on Radxa Cubie A7S: booted without the USB3 PHY drivers loaded;
+bank PF was in its 1.8 V mode right after boot, and 40 SD rebinds at
+SDR104 all passed with the bank in its 1.8 V mode after each.
+
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sunxi.c | 70 ++++++++++++++++++++++++++-
+ drivers/pinctrl/sunxi/pinctrl-sunxi.h |  4 ++
+ 2 files changed, 73 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.c b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+index 6c2ae87500b7..01dd93a3a5b3 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+@@ -10,11 +10,13 @@
+  * warranty of any kind, whether express or implied.
+  */
+ 
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/export.h>
+ #include <linux/gpio/driver.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/irqchip/chained_irq.h>
+ #include <linux/irqdomain.h>
+ #include <linux/of.h>
+@@ -670,9 +672,68 @@ static int sunxi_pconf_group_get(struct pinctrl_dev *pctldev,
+ 	return sunxi_pconf_get(pctldev, g->pin, config);
+ }
+ 
++/* Called with pctl->lock held. */
++static void sunxi_pf_write_withstand(struct sunxi_pinctrl *pctl, u32 mode)
++{
++	u32 reg = readl(pctl->membase + pctl->pow_mod_sel_offset);
++
++	reg &= ~PIO_NCAT3_POW_PF_FIELD;
++	reg |= FIELD_PREP(PIO_NCAT3_POW_PF_FIELD, mode);
++	writel(reg, pctl->membase + pctl->pow_mod_sel_offset);
++}
++
++/*
++ * Bank PF's withstand mode has to match its supply. Set the 1.8 V mode
++ * only once the bank's supply detector reports 1.8 V, and only while
++ * the bank still selects 1.8 V; otherwise keep the 3.3 V mode.
++ */
++static void sunxi_pf_withstand_1v8(struct sunxi_pinctrl *pctl)
++{
++	u32 mode = PIO_NCAT3_POW_PF_1V8;
++	unsigned long flags;
++	u32 reg;
++
++	if (readl_poll_timeout_atomic(pctl->membase + PIO_NCAT3_POW_VAL_REG,
++				      reg, FIELD_GET(PIO_NCAT3_POW_PF_FIELD, reg) ==
++				      PIO_NCAT3_POW_PF_1V8, 10, 1000)) {
++		dev_warn(pctl->dev,
++			 "bank PF supply not at 1.8 V (0x%08x), keeping 3.3 V withstand mode\n",
++			 reg);
++		mode = PIO_NCAT3_POW_PF_3V3;
++	}
++
++	raw_spin_lock_irqsave(&pctl->lock, flags);
++	reg = readl(pctl->membase + PIO_NCAT3_POW_VAL_SET_REG);
++	if (!(reg & PIO_NCAT3_POW_VAL_SET_PF_3V3))
++		sunxi_pf_write_withstand(pctl, mode);
++	raw_spin_unlock_irqrestore(&pctl->lock, flags);
++}
++
++/* Bring bank PF's withstand mode in line with the supply it selects. */
++static void sunxi_pf_withstand_init(struct sunxi_pinctrl *pctl)
++{
++	unsigned long flags;
++
++	if (!pctl->desc->pf_power_source)
++		return;
++
++	raw_spin_lock_irqsave(&pctl->lock, flags);
++	if (readl(pctl->membase + PIO_NCAT3_POW_VAL_SET_REG) &
++	    PIO_NCAT3_POW_VAL_SET_PF_3V3) {
++		sunxi_pf_write_withstand(pctl, PIO_NCAT3_POW_PF_3V3);
++		raw_spin_unlock_irqrestore(&pctl->lock, flags);
++		return;
++	}
++	raw_spin_unlock_irqrestore(&pctl->lock, flags);
++
++	sunxi_pf_withstand_1v8(pctl);
++}
++
+ /*
+  * Some SoCs feed bank PF from two supplies, 3.3 V and 1.8 V, and select
+- * between them for the whole bank. The argument is in microvolts.
++ * between them for the whole bank. The argument is in microvolts. The
++ * bank's withstand mode follows: the 3.3 V mode before the switch to
++ * 3.3 V, the 1.8 V mode after the switch to 1.8 V.
+  */
+ static int sunxi_pconf_set_power_source(struct sunxi_pinctrl *pctl, u32 uV)
+ {
+@@ -683,6 +744,8 @@ static int sunxi_pconf_set_power_source(struct sunxi_pinctrl *pctl, u32 uV)
+ 		return -EINVAL;
+ 
+ 	raw_spin_lock_irqsave(&pctl->lock, flags);
++	if (uV == 3300000)
++		sunxi_pf_write_withstand(pctl, PIO_NCAT3_POW_PF_3V3);
+ 	reg = readl(pctl->membase + PIO_NCAT3_POW_VAL_SET_REG);
+ 	if (uV == 1800000)
+ 		reg &= ~PIO_NCAT3_POW_VAL_SET_PF_3V3;
+@@ -691,6 +754,9 @@ static int sunxi_pconf_set_power_source(struct sunxi_pinctrl *pctl, u32 uV)
+ 	writel(reg, pctl->membase + PIO_NCAT3_POW_VAL_SET_REG);
+ 	raw_spin_unlock_irqrestore(&pctl->lock, flags);
+ 
++	if (uV == 1800000)
++		sunxi_pf_withstand_1v8(pctl);
++
+ 	return 0;
+ }
+ 
+@@ -1720,6 +1786,8 @@ int sunxi_pinctrl_init_with_flags(struct platform_device *pdev,
+ 	if (IS_ERR(clk))
+ 		return PTR_ERR(clk);
+ 
++	sunxi_pf_withstand_init(pctl);
++
+ 	/*
+ 	 * Seed the output latch shadow from the hardware so pins the
+ 	 * bootloader left in output mode keep their state; see
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.h b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+index 0b5ab96ab0ed..fa9e30147fe2 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.h
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+@@ -109,6 +109,10 @@
+ #define PIO_POW_MOD_CTL_OFS		0x004
+ #define PIO_NCAT3_POW_VAL_SET_REG	0x070
+ #define PIO_NCAT3_POW_VAL_SET_PF_3V3	BIT(0)
++#define PIO_NCAT3_POW_VAL_REG		0x048
++#define PIO_NCAT3_POW_PF_FIELD		GENMASK(11, 10)
++#define PIO_NCAT3_POW_PF_3V3		2
++#define PIO_NCAT3_POW_PF_1V8		3
+ 
+ #define PIO_BANK_K_OFFSET		0x500
+ 

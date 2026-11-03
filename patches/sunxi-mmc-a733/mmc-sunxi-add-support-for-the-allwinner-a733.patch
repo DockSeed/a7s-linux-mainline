@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:05:54 +0200
+Subject: [PATCH] mmc: sunxi: Add support for the Allwinner A733
+
+The A733 SMHC0-2 bind through the D1 fallback, which programs burst 8
+and trigger levels 7/8. The manual recommends burst 16, RX level 15 and
+TX level 240 (SMHC_FIFOTH). The driver also writes the CE-ATA key
+0xceaa0000 to SMHC_FUNS, of which the A733 manual defines bits 2:0 only.
+
+Add an A733 config equal to the D1 one apart from the FIFO thresholds,
+and make the threshold a config field so other SoCs keep their value.
+A flag in the config, false for every other SoC, leaves SMHC_FUNS
+unwritten on the A733.
+
+Tested on Radxa Cubie A7S: booted on two boards; the SD card and the
+eMMC are detected, SMHC_FUNS reads back without the CE-ATA key on both
+controllers, and under read load FIFOTH reads 0x300f00f0 on both.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 25 ++++++++++++++++++++++---
+ 1 file changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index f854e1b5e4e7..4a7a21ccfca4 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -263,6 +263,12 @@ struct sunxi_mmc_cfg {
+ 
+ 	/* clock hardware can switch between old and new timing modes */
+ 	bool ccu_has_timings_switch;
++
++	/* SMHC_FUNS bits 31:3 are not defined, do not write the CE-ATA key */
++	bool no_ceata_funs;
++
++	/* SMHC_FIFOTH value, 0 selects the default */
++	u32 fifoth;
+ };
+ 
+ struct sunxi_mmc_host {
+@@ -328,11 +334,11 @@ static int sunxi_mmc_init_host(struct sunxi_mmc_host *host)
+ 		return -EIO;
+ 
+ 	/*
+-	 * Burst 8 transfers, RX trigger level: 7, TX trigger level: 8
++	 * Default: burst 8 transfers, RX trigger level: 7, TX trigger level: 8
+ 	 *
+ 	 * TODO: sun9i has a larger FIFO and supports higher trigger values
+ 	 */
+-	mmc_writel(host, REG_FTRGL, 0x20070008);
++	mmc_writel(host, REG_FTRGL, host->cfg->fifoth ?: 0x20070008);
+ 	/* Maximum timeout value */
+ 	mmc_writel(host, REG_TMOUT, 0xffffffff);
+ 	/* Unmask SDIO interrupt if needed */
+@@ -342,7 +348,8 @@ static int sunxi_mmc_init_host(struct sunxi_mmc_host *host)
+ 	/* Debug register? undocumented */
+ 	mmc_writel(host, REG_DBGC, 0xdeb);
+ 	/* Enable CEATA support */
+-	mmc_writel(host, REG_FUNS, SDXC_CEATA_ON);
++	if (!host->cfg->no_ceata_funs)
++		mmc_writel(host, REG_FUNS, SDXC_CEATA_ON);
+ 	/* Set DMA descriptor list base address */
+ 	mmc_writel(host, REG_DLBA, host->sg_dma >> host->cfg->idma_des_shift);
+ 
+@@ -1222,6 +1229,17 @@ static const struct sunxi_mmc_cfg sun50i_a100_emmc_cfg = {
+ 	.needs_new_timings = true,
+ };
+ 
++static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
++	.idma_des_size_bits = 13,
++	.idma_des_shift = 2,
++	.can_calibrate = true,
++	.mask_data0 = true,
++	.needs_new_timings = true,
++	.no_ceata_funs = true,
++	/* burst 16, RX trigger level 15, TX trigger level 240 */
++	.fifoth = 0x300f00f0,
++};
++
+ static const struct of_device_id sunxi_mmc_of_match[] = {
+ 	{ .compatible = "allwinner,sun4i-a10-mmc", .data = &sun4i_a10_cfg },
+ 	{ .compatible = "allwinner,sun5i-a13-mmc", .data = &sun5i_a13_cfg },
+@@ -1234,6 +1252,7 @@ static const struct of_device_id sunxi_mmc_of_match[] = {
+ 	{ .compatible = "allwinner,sun50i-a100-mmc", .data = &sun20i_d1_cfg },
+ 	{ .compatible = "allwinner,sun50i-a100-emmc", .data = &sun50i_a100_emmc_cfg },
+ 	{ .compatible = "allwinner,sun50i-h616-mmc", .data = &sun50i_h616_cfg },
++	{ .compatible = "allwinner,sun60i-a733-mmc", .data = &sun60i_a733_cfg },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, sunxi_mmc_of_match);

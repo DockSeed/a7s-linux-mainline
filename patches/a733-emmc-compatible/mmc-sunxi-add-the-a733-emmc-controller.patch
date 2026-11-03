@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 6 Oct 2026 16:22:32 +0200
+Subject: [PATCH] mmc: sunxi: Add the A733 eMMC controller
+
+The A733 eMMC controllers (SMHC2 and SMHC3) get a compatible of their
+own. Bind it to a configuration that is a copy of the one the A733
+controllers share today, so a device tree that moves the eMMC onto the
+new compatible keeps every feature it has.
+
+Not covered: the SD controller still has the eMMC features; that is the
+next change.
+
+Tested on Radxa Cubie A7S: the eMMC controller bound under the new
+compatible, ran at HS400 with enhanced strobe, automatic CMD23 and the
+card read threshold armed, and read the same data twice.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index b48559a6e780..017c85a87d64 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -2079,6 +2079,24 @@ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	.can_hsq = true,
+ };
+ 
++static const struct sunxi_mmc_cfg sun60i_a733_emmc_cfg = {
++	.idma_des_size_bits = 13,
++	.idma_des_shift = 2,
++	.can_calibrate = true,
++	.mask_data0 = true,
++	.needs_new_timings = true,
++	.no_ceata_funs = true,
++	/* burst 16, RX trigger level 15, TX trigger level 240 */
++	.fifoth = 0x300f00f0,
++	.can_auto_cmd23 = true,
++	.thld_fifo_bytes = 1024,
++	.can_hs400 = true,
++	.ds_dl = 20,
++	.needs_a12a_init = true,
++	.can_wait_busy = true,
++	.can_hsq = true,
++};
++
+ static const struct of_device_id sunxi_mmc_of_match[] = {
+ 	{ .compatible = "allwinner,sun4i-a10-mmc", .data = &sun4i_a10_cfg },
+ 	{ .compatible = "allwinner,sun5i-a13-mmc", .data = &sun5i_a13_cfg },
+@@ -2091,6 +2109,7 @@ static const struct of_device_id sunxi_mmc_of_match[] = {
+ 	{ .compatible = "allwinner,sun50i-a100-mmc", .data = &sun20i_d1_cfg },
+ 	{ .compatible = "allwinner,sun50i-a100-emmc", .data = &sun50i_a100_emmc_cfg },
+ 	{ .compatible = "allwinner,sun50i-h616-mmc", .data = &sun50i_h616_cfg },
++	{ .compatible = "allwinner,sun60i-a733-emmc", .data = &sun60i_a733_emmc_cfg },
+ 	{ .compatible = "allwinner,sun60i-a733-mmc", .data = &sun60i_a733_cfg },
+ 	{ /* sentinel */ }
+ };

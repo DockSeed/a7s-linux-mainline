@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 19:00:16 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable the USB-C port
+
+The USB-C port J4 is wired to the USB3 controller, with the SuperSpeed
+lanes going through the first combo PHY of the SERDES block. A HUSB311
+Type-C port controller on R_I2C1 handles CC and switches VBUS through
+PL2.
+
+Add the port controller and the VBUS switch, and enable the USB3
+controller and its two PHYs. The port is a host and a power source
+only, without USB PD. The combo PHY is the orientation switch.
+
+The board takes its power through the other USB-C port, J16, never
+through J4, so the connector is self-powered. TCPM reads the property
+and opens CC on a port reset instead of presenting Rp, so a partner
+left attached across a reset sees a detach and attaches again.
+
+Tested on Radxa Cubie A7S: booted on two boards; the port controller
+binds and typec port0 appears, VBUS is switched on, and a Gen 2 stick
+enumerates as SuperSpeed Plus at 10 Gbit/s in both plug orientations on
+both boards; with a DisplayPort monitor at the port, unplugged and plugged
+in again three times in both plug orientations, the port saw each detach
+and attach and the picture came back each time.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 77 +++++++++++++++++++
+ 1 file changed, 77 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index df4722cf4a47..d7eb3f11b8bd 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -67,6 +67,27 @@ reg_usb1_vbus: regulator-usb1-vbus {
+ 		gpio = <&r_pio 1 5 GPIO_ACTIVE_HIGH>; /* PM5 */
+ 		enable-active-high;
+ 	};
++
++	/* VBUS of the USB-C port J4, switched by USB0-DRVVBUS (PL2) */
++	reg_usbc_vbus: regulator-usbc-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "usbc-vbus";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		gpio = <&r_pio 0 2 GPIO_ACTIVE_HIGH>; /* PL2 */
++		enable-active-high;
++	};
++};
++
++&combophy0 {
++	orientation-switch;
++	status = "okay";
++
++	port {
++		combophy0_ss: endpoint {
++			remote-endpoint = <&usbc_ss>;
++		};
++	};
+ };
+ 
+ &ehci1 {
+@@ -187,6 +208,46 @@ &r_i2c1 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&r_i2c1_pl12_pins>;
+ 	status = "okay";
++
++	typec@4e {
++		compatible = "hynetek,husb311", "richtek,rt1711h";
++		reg = <0x4e>;
++		interrupt-parent = <&r_pio>;
++		interrupts = <0 3 IRQ_TYPE_LEVEL_LOW>; /* PL3 */
++		vbus-supply = <&reg_usbc_vbus>;
++
++		connector {
++			compatible = "usb-c-connector";
++			label = "USB-C";
++			data-role = "host";
++			power-role = "source";
++			/* the board is powered through J16, not this port */
++			self-powered;
++			typec-power-opmode = "default";
++			pd-disable;
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				port@0 {
++					reg = <0>;
++
++					usbc_hs: endpoint {
++						remote-endpoint = <&usb3_hs>;
++					};
++				};
++
++				port@1 {
++					reg = <1>;
++
++					usbc_ss: endpoint {
++						remote-endpoint = <&combophy0_ss>;
++					};
++				};
++			};
++		};
++	};
+ };
+ 
+ &rtc {
+@@ -203,6 +264,22 @@ &uart0 {
+ 	status = "okay";
+ };
+ 
++&usb3 {
++	dr_mode = "host";
++	maximum-speed = "super-speed-plus";
++	status = "okay";
++
++	port {
++		usb3_hs: endpoint {
++			remote-endpoint = <&usbc_hs>;
++		};
++	};
++};
++
++&usb3_u2phy {
++	status = "okay";
++};
++
+ &usbphy {
+ 	usb1_vbus-supply = <&reg_usb1_vbus>;
+ 	status = "okay";

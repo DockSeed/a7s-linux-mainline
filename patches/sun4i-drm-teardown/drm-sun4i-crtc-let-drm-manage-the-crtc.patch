@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 15:25:09 +0200
+Subject: [PATCH] drm/sun4i: crtc: Let DRM manage the CRTC
+
+sun4i_drv no longer calls drm_mode_config_cleanup() itself (drm/sun4i:
+drv: Do not call drm_mode_config_cleanup()). The managed release of
+drm_mode_config_init() destroys the mode objects at the last
+drm_dev_put() instead, after component_unbind_all(), and, while
+userspace still holds the device open, after the display engine device
+has released its devres.
+
+The CRTC lives in devm memory of the display engine device and is
+destroyed through its .destroy hook, so it is cleaned up on freed
+memory in that case.
+
+Allocate it with drmm_kzalloc() and initialise it with
+drmm_crtc_init_with_planes(). The managed action calls
+drm_crtc_cleanup() before the memory is freed. The managed variant
+wants a NULL .destroy, so drop the hook.
+
+Not covered: the planes of the CRTC, converted separately.
+
+Tested on Radxa Cubie A7S: the DisplayPort device unbound and bound
+again three times with a monitor attached, without an oops; the picture
+returns after each bind.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_crtc.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_crtc.c b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+index 55312a0115ce..8219ccb710cd 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_crtc.c
++++ b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+@@ -19,6 +19,7 @@
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_crtc.h>
++#include <drm/drm_managed.h>
+ #include <drm/drm_modes.h>
+ #include <drm/drm_print.h>
+ #include <drm/drm_probe_helper.h>
+@@ -258,7 +259,6 @@ static int sun4i_crtc_verify_crc_source(struct drm_crtc *crtc,
+ static const struct drm_crtc_funcs sun4i_crtc_funcs = {
+ 	.atomic_destroy_state	= drm_atomic_helper_crtc_destroy_state,
+ 	.atomic_duplicate_state	= drm_atomic_helper_crtc_duplicate_state,
+-	.destroy		= drm_crtc_cleanup,
+ 	.page_flip		= drm_atomic_helper_page_flip,
+ 	.reset			= drm_atomic_helper_crtc_reset,
+ 	.set_config		= drm_atomic_helper_set_config,
+@@ -279,7 +279,7 @@ struct sun4i_crtc *sun4i_crtc_init(struct drm_device *drm,
+ 	struct drm_plane *primary = NULL, *cursor = NULL;
+ 	int ret, i;
+ 
+-	scrtc = devm_kzalloc(drm->dev, sizeof(*scrtc), GFP_KERNEL);
++	scrtc = drmm_kzalloc(drm, sizeof(*scrtc), GFP_KERNEL);
+ 	if (!scrtc)
+ 		return ERR_PTR(-ENOMEM);
+ 	scrtc->engine = engine;
+@@ -308,11 +308,11 @@ struct sun4i_crtc *sun4i_crtc_init(struct drm_device *drm,
+ 		}
+ 	}
+ 
+-	ret = drm_crtc_init_with_planes(drm, &scrtc->crtc,
+-					primary,
+-					cursor,
+-					&sun4i_crtc_funcs,
+-					NULL);
++	ret = drmm_crtc_init_with_planes(drm, &scrtc->crtc,
++					 primary,
++					 cursor,
++					 &sun4i_crtc_funcs,
++					 NULL);
+ 	if (ret) {
+ 		dev_err(drm->dev, "Couldn't init DRM CRTC\n");
+ 		return ERR_PTR(ret);

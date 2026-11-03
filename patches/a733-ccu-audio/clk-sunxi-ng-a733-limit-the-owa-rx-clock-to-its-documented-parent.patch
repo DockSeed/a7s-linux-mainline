@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 05:24:05 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Limit the OWA RX clock to its documented
+ parent
+
+OWA_RX_CLK (0x1284) is described with three parents, the 200, 300 and
+400 MHz outputs of PLL_PERI0 at mux values 0, 1 and 2. The A733 manual
+lists only value 2, PERI0_400M; values 0 and 1 are reserved, and the
+register resets to 0 (user manual section 4.1.6.190). Without a write
+to the mux, the receiver clock runs from a reserved source, because
+nothing selects PERI0_400M. Seen on the Radxa Cubie A7S: after boot
+OWA_RX_CLK reads 0.
+
+Describe the clock with its one documented parent and without the mux,
+and select PERI0_400M in the probe, as the H616 driver does for its OHCI
+12M clocks.
+
+Not covered: OWA_TX keeps its three documented audio PLL parents.
+
+Tested on Radxa Cubie A7S: on one board OWA_RX_CLK reads mux 2
+(PERI0_400M) after boot instead of 0, and an OWA loop from TX to RX at
+48 kHz received clean, locked data.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 29 +++++++++++++++++---------
+ 1 file changed, 19 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 700cae872ece..be50812f8c16 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -1211,16 +1211,16 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(spdif_tx_clk, "spdif-tx", spdif_tx_parents,
+ 				    BIT(31),	/* gate */
+ 				    0);
+ 
+-static const struct clk_hw *spdif_rx_parents[] = {
+-	&pll_periph0_200M_clk.hw,
+-	&pll_periph0_300M_clk.hw,
+-	&pll_periph0_400M_clk.hw,
+-};
+-static SUNXI_CCU_M_HW_WITH_MUX_GATE(spdif_rx_clk, "spdif-rx", spdif_rx_parents, 0x1284,
+-				    0, 5,	/* M */
+-				    24, 3,	/* mux */
+-				    BIT(31),	/* gate */
+-				    0);
++/*
++ * Only mux value 2 (PERI0_400M) is documented, 0 and 1 are reserved: the
++ * probe selects it, the clock is described without its mux.
++ */
++#define SUN60I_A733_OWA_RX_CLK_REG	0x1284
++static SUNXI_CCU_M_HWS_WITH_GATE(spdif_rx_clk, "spdif-rx", pll_periph0_400M_hws,
++				 SUN60I_A733_OWA_RX_CLK_REG,
++				 0, 5,		/* M */
++				 BIT(31),	/* gate */
++				 0);
+ 
+ static SUNXI_CCU_GATE_HWS(bus_spdif_clk, "bus-spdif", apb1_hws, 0x128c, BIT(0), 0);
+ 
+@@ -2403,6 +2403,15 @@ static int sun60i_a733_ccu_probe(struct platform_device *pdev)
+ 	val |= (1 << 20) | (4 << 16);
+ 	writel(val, reg + SUN60I_A733_PLL_AUDIO1_REG);
+ 
++	/*
++	 * OWA_RX_CLK resets to the reserved source 0. With a single parent
++	 * the clock framework never writes the mux, so select PERI0_400M.
++	 */
++	val = readl(reg + SUN60I_A733_OWA_RX_CLK_REG);
++	val &= ~GENMASK(26, 24);
++	val |= 2 << 24;
++	writel(val, reg + SUN60I_A733_OWA_RX_CLK_REG);
++
+ 	ret = devm_sunxi_ccu_probe(&pdev->dev, reg, &sun60i_a733_ccu_desc);
+ 	if (ret)
+ 		return ret;

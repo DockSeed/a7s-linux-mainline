@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:57:34 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the UART2 and UART4
+ controllers
+
+Boards bring out more A733 UARTs than the console UART0 on their pin
+headers, but the SoC dtsi only describes UART0.
+
+Add UART2 at 0x02502000 and UART4 at 0x02504000, both DesignWare APB
+UARTs like UART0, with their bus clocks and resets. On the A733 the
+UARTs are 4 KiB apart. Add the pin groups that reach the Cubie A7S
+headers: UART2 on PB0/PB1 with RTS on PB2 (header J11) and CTS on PB3
+(header J6), function 2, and UART4 on PJ24/PJ25 (J11, function 4). Both
+nodes are disabled and the pin groups are /omit-if-no-ref/, because
+nothing fitted on the board uses them; a board enables what it uses.
+
+Not covered: DMA requests, and the other UARTs.
+
+Tested on Radxa Cubie A7S: booted on two boards with both nodes enabled in
+a copy of the DTB; both UARTs probe as 16550A and take PB0/PB1 and
+PJ24/PJ25.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 43 +++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index ae8a7a4d2c61..b9e7035b71dd 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -325,6 +325,27 @@ uart0_pb_pins: uart0-pb-pins {
+ 				allwinner,pinmux = <2>;
+ 				function = "uart0";
+ 			};
++
++			/omit-if-no-ref/
++			uart2_pb_pins: uart2-pb-pins {
++				pins = "PB0", "PB1";
++				allwinner,pinmux = <2>;
++				function = "uart2";
++			};
++
++			/omit-if-no-ref/
++			uart2_rts_cts_pb_pins: uart2-rts-cts-pb-pins {
++				pins = "PB2", "PB3";
++				allwinner,pinmux = <2>;
++				function = "uart2";
++			};
++
++			/omit-if-no-ref/
++			uart4_pj_pins: uart4-pj-pins {
++				pins = "PJ24", "PJ25";
++				allwinner,pinmux = <4>;
++				function = "uart4";
++			};
+ 		};
+ 
+ 		ccu: clock-controller@2002000 {
+@@ -369,6 +390,28 @@ uart0: serial@2500000 {
+ 			status = "disabled";
+ 		};
+ 
++		uart2: serial@2502000 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x02502000 0x400>;
++			interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++			clocks = <&ccu CLK_BUS_UART2>;
++			resets = <&ccu RST_BUS_UART2>;
++			status = "disabled";
++		};
++
++		uart4: serial@2504000 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x02504000 0x400>;
++			interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++			clocks = <&ccu CLK_BUS_UART4>;
++			resets = <&ccu RST_BUS_UART4>;
++			status = "disabled";
++		};
++
+ 		gic: interrupt-controller@3400000 {
+ 			compatible = "arm,gic-v3";
+ 			#interrupt-cells = <3>;

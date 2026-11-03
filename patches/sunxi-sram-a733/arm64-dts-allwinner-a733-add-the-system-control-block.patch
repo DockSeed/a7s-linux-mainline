@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 8 Oct 2026 21:10:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the system control block
+
+The system control block of the A733 sits at 0x03000000 (4 KiB) in the
+user manual's memory map. Describe it, so that devices can reach its
+registers through the system control driver.
+
+Tested on Radxa Cubie A7S: booted on two boards; the system control node
+binds and hands the calibration registers to the USB2 PHY.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index f05a5c584006..3f3d90cd4041 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -520,6 +520,14 @@ ths: thermal-sensor@2522000 {
+ 			#thermal-sensor-cells = <1>;
+ 		};
+ 
++		syscon: syscon@3000000 {
++			compatible = "allwinner,sun60i-a733-system-control";
++			reg = <0x03000000 0x1000>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges;
++		};
++
+ 		sid: efuse@3006000 {
+ 			compatible = "allwinner,sun60i-a733-sid",
+ 				     "allwinner,sun50i-a64-sid";

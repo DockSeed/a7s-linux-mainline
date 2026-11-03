@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 20 Oct 2026 16:55:37 +0200
+Subject: [PATCH] drm/dp: End the CRC capture when the CRTC is off
+
+drm_dp_aux_crc_work() reads the sink once per frame until userspace
+closes the CRC file, and starts each pass with drm_crtc_wait_one_vblank().
+While the CRTC is off that call warns with a backtrace and returns at
+once, because drm_crtc_vblank_off() makes drm_vblank_get() fail. With
+the file open, turning the CRTC off therefore makes the worker warn on
+every pass until the file is closed. Every user of drm_dp_start_crc()
+has this, for example the Analogix DP bridge behind the Rockchip VOP and
+amdgpu, which call drm_crtc_vblank_off() when they disable the CRTC.
+drm_dp_stop_crc() cannot end the capture on a disable: it waits for the
+worker, which only ends when the file is closed.
+
+Take a vblank reference before each wait and end the loop when it is
+refused, which it is while the CRTC is off. The frame CRC ABI asks
+userspace to set a capture up again after a modeset, so the file stays
+open without a worker, and a capture that ended is not resumed when the
+CRTC is turned on again. Closing the file still calls drm_dp_stop_crc(),
+whose flush returns at once, and stops the sink.
+
+Seen on the Radxa Cubie A7S (Allwinner A733) with a DisplayPort monitor:
+with the CRC data file of the CRTC open, blanking the framebuffer turned
+the CRTC off, and drm_dp_aux_crc_work() warned "vblank not available"
+from drm_crtc_wait_one_vblank() on every pass.
+
+Not covered: a pass that is already waiting for a vblank when the CRTC
+is turned off keeps waiting. Where the vblank counter does not advance
+at drm_crtc_vblank_off(), as without a hardware counter or timestamps,
+the wait runs into its timeout, which warns once, and the loop ends at
+the next pass. A CRTC that is turned off and on again within one wait is
+not noticed, and the capture goes on. A capture that userspace relies on
+after a modeset is set up again by closing the file and opening it.
+
+Tested on Radxa Cubie A7S: booted on one board with a DisplayPort
+monitor; in repeated cycles of blanking the framebuffer with the CRC
+file open, the capture ended with the CRTC, the kernel logged at most
+one vblank timeout warning per cycle and no "vblank not available", and
+closing the file returned at once.
+
+Fixes: 79c1da7c3bf7 ("drm/dp: add helpers for capture of frame CRCs")
+Assisted-by: LLM
+---
+ drivers/gpu/drm/display/drm_dp_helper.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_dp_helper.c b/drivers/gpu/drm/display/drm_dp_helper.c
+index f9e65bd266cf..a99f548e9e68 100644
+--- a/drivers/gpu/drm/display/drm_dp_helper.c
++++ b/drivers/gpu/drm/display/drm_dp_helper.c
+@@ -2298,7 +2298,14 @@ static void drm_dp_aux_crc_work(struct work_struct *work)
+ 
+ 	crtc = aux->crtc;
+ 	while (crtc->crc.opened) {
++		/*
++		 * A CRTC that is off has no vblank to wait for: the capture
++		 * ends, and userspace sets it up again after the modeset.
++		 */
++		if (drm_crtc_vblank_get(crtc))
++			break;
+ 		drm_crtc_wait_one_vblank(crtc);
++		drm_crtc_vblank_put(crtc);
+ 		if (!crtc->crc.opened)
+ 			break;
+ 
+@@ -2473,6 +2480,12 @@ EXPORT_SYMBOL(drm_dp_psr_setup_time);
+  * @aux: DisplayPort AUX channel
+  * @crtc: CRTC displaying the frames whose CRCs are to be captured
+  *
++ * The capture ends at the first pass that finds the vblank of @crtc off, for
++ * example after the CRTC was turned off, and it is not resumed: the frame CRC
++ * ABI asks userspace to set a capture up again after a modeset. A CRTC that
++ * is turned off and on again within one pass may keep the capture going.
++ * drm_dp_stop_crc() has to be called all the same, to stop the sink.
++ *
+  * Returns 0 on success or a negative error code on failure.
+  */
+ int drm_dp_start_crc(struct drm_dp_aux *aux, struct drm_crtc *crtc)

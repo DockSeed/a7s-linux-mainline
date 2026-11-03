@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 3 Oct 2026 16:34:05 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Reserve the SCP
+ firmware memory
+
+The boot chain loads the firmware of the SCP, the A733's management core,
+to DRAM at 0x48100000 and leaves it running, but does not reserve that
+memory. Reserve 1 MiB there as no-map, so the kernel neither uses nor maps
+it.
+
+Tested on Radxa Cubie A7S: booted on two boards; the kernel reserves
+0x48100000-0x481fffff as no-map, and /proc/iomem lists it as reserved.
+
+Assisted-by: LLM
+---
+ .../boot/dts/allwinner/sun60i-a733-cubie-a7s.dts     | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 3cb3060ed566..854896c0fb2c 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -24,6 +24,18 @@ ext_osc32k: ext-osc32k-clk {
+ 		clock-output-names = "ext_osc32k";
+ 	};
+ 
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/* SCP firmware, loaded and left running by the boot chain */
++		scp@48100000 {
++			reg = <0x0 0x48100000 0x0 0x100000>;
++			no-map;
++		};
++	};
++
+ 	reg_vcc3v3: vcc3v3 {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "vcc-3v3";

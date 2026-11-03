@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 17:58:28 +0200
+Subject: [PATCH] mfd: axp20x: Add the power key cell to the AXP318W
+
+The AXP318W has a power key, and the driver already describes its
+interrupts, but it registers no cell for it. The power key therefore
+produces no input events.
+
+Register "axp318-pek" with the rising edge (PEK_DBR) and falling edge
+(PEK_DBF) interrupts of the power key, as the other variants do. The
+interrupts are the AXP318_IRQ_PEK_RIS_EDGE and AXP318_IRQ_PEK_FAL_EDGE
+entries of the AXP318W interrupt table in this driver, bits 6 and 5 of
+IRQ status/enable register 2. The cell uses its own name, so that the
+axp20x-pek driver does not offer the AXP202 start-up and shut-down
+attributes, which access a different register on this PMIC.
+
+Tested on Radxa Cubie A7S: booted on one board; a short of the power
+key test pads raises both edge interrupts, and a press and a release
+reach user space as KEY_POWER.
+
+Assisted-by: LLM
+---
+ drivers/mfd/axp20x.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/mfd/axp20x.c b/drivers/mfd/axp20x.c
+index 67ab529ebd2c..a8b9af425ea3 100644
+--- a/drivers/mfd/axp20x.c
++++ b/drivers/mfd/axp20x.c
+@@ -1136,8 +1136,14 @@ static const struct mfd_cell axp313a_cells[] = {
+ 	MFD_CELL_RES("axp313a-pek", axp313a_pek_resources),
+ };
+ 
++static const struct resource axp318_pek_resources[] = {
++	DEFINE_RES_IRQ_NAMED(AXP318_IRQ_PEK_RIS_EDGE, "PEK_DBR"),
++	DEFINE_RES_IRQ_NAMED(AXP318_IRQ_PEK_FAL_EDGE, "PEK_DBF"),
++};
++
+ static const struct mfd_cell axp318_cells[] = {
+ 	MFD_CELL_NAME("axp20x-regulator"),
++	MFD_CELL_RES("axp318-pek", axp318_pek_resources),
+ };
+ 
+ static const struct mfd_cell axp717_cells[] = {

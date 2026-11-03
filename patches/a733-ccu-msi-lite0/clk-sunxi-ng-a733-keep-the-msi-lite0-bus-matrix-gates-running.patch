@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 17:10:00 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Keep the MSI_LITE0 bus matrix gates
+ running
+
+GMAC0 with its syscon, DMAC0 and the crypto engine sit behind the
+MSI_LITE0 bus bridge. Nothing in the device tree consumes the bridge's
+AHB and MBUS gates, so clk_disable_unused() closes them, and every
+register behind the bridge then reads as zero: the GMAC reports no
+version and fails to attach its PHY.
+
+Mark both gates critical, as is done for the MBUS gate of the storage
+bridge.
+
+Not covered: describing the bridge gates as parents of the bus gates
+behind them, as is done for the AHB gate of the storage bridge.
+
+Tested on Radxa Cubie A7S: booted on two boards; both gates are still
+open after clk_disable_unused(), the GMAC reads version 0x2053 and
+attaches its PHY, and dmatest on DMAC0 completes. Without this change
+the GMAC registers read 0 and the PHY attach failed with -EINVAL.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index cc2b229e2e6a..15ba7312e654 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -565,7 +565,7 @@ static SUNXI_CCU_GATE_HWS(ahb_serdes_clk, "ahb-serdes", ahb_hws,
+ static SUNXI_CCU_GATE_HWS(ahb_usb_sys_clk, "ahb-usb-sys", ahb_hws,
+ 			  0x5c0, BIT(9), 0);
+ static SUNXI_CCU_GATE_HWS(ahb_msi_lite0_clk, "ahb-msi-lite0", ahb_hws,
+-			  0x5c0, BIT(16), 0);
++			  0x5c0, BIT(16), CLK_IS_CRITICAL);
+ 
+ /* This gate controls access to the storage controller MMIO registers. */
+ static SUNXI_CCU_GATE_HWS(ahb_store_clk, "ahb-store", ahb_hws,
+@@ -595,7 +595,7 @@ static SUNXI_CCU_GATE_HWS(mbus_vid_in_clk, "mbus-vid-in", mbus_hws,
+ static SUNXI_CCU_GATE_HWS(mbus_serdes_clk, "mbus-serdes", mbus_hws,
+ 			  0x5e0, BIT(28), 0);
+ static SUNXI_CCU_GATE_HWS(mbus_msi_lite0_clk, "mbus-msi-lite0", mbus_hws,
+-			  0x5e0, BIT(29), 0);
++			  0x5e0, BIT(29), CLK_IS_CRITICAL);
+ 
+ /* Keep enabled for the storage controller DMA paths. */
+ static SUNXI_CCU_GATE_HWS(mbus_store_clk, "mbus-store", mbus_hws,

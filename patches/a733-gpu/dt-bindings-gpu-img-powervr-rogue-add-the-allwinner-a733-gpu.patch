@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 07:01:04 +0200
+Subject: [PATCH] dt-bindings: gpu: img,powervr-rogue: Add the Allwinner A733
+ GPU
+
+The Allwinner A733 has an Imagination BXM-4-64 MC1 GPU. Add its SoC
+compatible to the BXM-4-64 list.
+
+It takes the generic clocks (core, mem, sys), one reset, one interrupt
+and a single power domain, all within the existing constraints.
+
+Tested on Radxa Cubie A7S: booted on two boards; the node with this
+compatible binds powervr with its core, mem and sys clocks, its reset,
+its interrupt and one power domain.
+
+Assisted-by: LLM
+---
+ Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml b/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml
+index e9218e0f363d..3c658926300c 100644
+--- a/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml
++++ b/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml
+@@ -37,6 +37,7 @@ properties:
+           - const: img,img-rogue
+       - items:
+           - enum:
++              - allwinner,sun60i-a733-gpu
+               - thead,th1520-gpu
+           - const: img,img-bxm-4-64
+           - const: img,img-rogue

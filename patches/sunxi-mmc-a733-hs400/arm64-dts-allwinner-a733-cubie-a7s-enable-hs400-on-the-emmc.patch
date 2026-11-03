@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:10:50 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable HS400 on the
+ eMMC
+
+The eMMC on the Cubie A7S supports HS400 at 1.8 V with enhanced strobe,
+and its data strobe is wired to PC0. Enable both modes.
+
+Tested on Radxa Cubie A7S: booted on two boards; on the board with an
+eMMC the card runs at HS400 enhanced strobe, 200 MHz, 8 bit, 1.8 V; the
+board without one logs no new error.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index cfbe67e74b9d..dd6dec6411d6 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -91,6 +91,8 @@ &mmc2 {
+ 	non-removable;
+ 	cap-mmc-hw-reset;
+ 	mmc-hs200-1_8v;
++	mmc-hs400-1_8v;
++	mmc-hs400-enhanced-strobe;
+ 	status = "okay";
+ };
+ 

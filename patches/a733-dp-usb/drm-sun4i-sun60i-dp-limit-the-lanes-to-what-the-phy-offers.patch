@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 18:40:00 +0200
+Subject: [PATCH] drm/sun4i: sun60i-dp: Limit the lanes to what the PHY offers
+
+The connector can have fewer than four lanes left for DisplayPort: pin
+assignment D keeps two of them for USB3.
+
+Take the lane limit from the bus width of the PHY, as the DesignWare
+DisplayPort driver does, so that the modes are checked against the lanes
+the connector has left and the link is trained on them.
+
+Tested on Radxa Cubie A7S: four lanes at pin assignment C as before; two
+lanes not tested, no sink offering pin assignment D was at hand.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun60i_dp.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun60i_dp.c b/drivers/gpu/drm/sun4i/sun60i_dp.c
+index c548d8032ad0..187347e3d79f 100644
+--- a/drivers/gpu/drm/sun4i/sun60i_dp.c
++++ b/drivers/gpu/drm/sun4i/sun60i_dp.c
+@@ -354,12 +354,16 @@ static int sun60i_dp_read_caps(struct sun60i_dp *dp)
+ 	return ret;
+ }
+ 
+-/* The highest link rate and lane count both ends support */
++/*
++ * The highest link rate and lane count both ends support. The PHY says how
++ * many lanes the connector has left for DisplayPort.
++ */
+ static void sun60i_dp_max_link(struct sun60i_dp *dp, unsigned int *rate,
+ 			       unsigned int *lanes)
+ {
+ 	*rate = sun60i_dp_link_rates[0];
+-	*lanes = SUN60I_DP_MAX_LANES;
++	*lanes = min_t(unsigned int, SUN60I_DP_MAX_LANES,
++		       phy_get_bus_width(dp->phy));
+ 
+ 	guard(mutex)(&dp->lock);
+ 

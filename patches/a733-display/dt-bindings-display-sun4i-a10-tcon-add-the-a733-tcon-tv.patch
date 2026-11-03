@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:19 +0200
+Subject: [PATCH] dt-bindings: display: sun4i-a10-tcon: Add the A733 TCON TV
+
+The A733 has two TCON TVs in its VIDEO_OUT1 block group. They are
+channel 1 only TCONs like the R40 TCON TV, with a bus clock, a pixel
+clock and a reset, but their registers sit in a power domain that the
+power controller switches off when no device claims it.
+
+Add the compatible to the TV branch and allow a power domain.
+
+Tested on Radxa Cubie A7S: booted on one board with a device tree that
+uses this binding; TCON TV1 probes and dtbs_check reports nothing.
+
+Assisted-by: LLM
+---
+ .../bindings/display/allwinner,sun4i-a10-tcon.yaml           | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-tcon.yaml b/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-tcon.yaml
+index 724d93b9193b..4cd072fc6041 100644
+--- a/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-tcon.yaml
++++ b/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-tcon.yaml
+@@ -35,6 +35,7 @@ properties:
+       - const: allwinner,sun9i-a80-tcon-tv
+       - const: allwinner,sun20i-d1-tcon-lcd
+       - const: allwinner,sun20i-d1-tcon-tv
++      - const: allwinner,sun60i-a733-tcon-tv
+ 
+       - items:
+           - enum:
+@@ -80,6 +81,9 @@ properties:
+   dmas:
+     maxItems: 1
+ 
++  power-domains:
++    maxItems: 1
++
+   resets:
+     anyOf:
+       - items:
+@@ -254,6 +258,7 @@ allOf:
+               - allwinner,sun8i-r40-tcon-tv
+               - allwinner,sun9i-a80-tcon-tv
+               - allwinner,sun20i-d1-tcon-tv
++              - allwinner,sun60i-a733-tcon-tv
+ 
+     then:
+       properties:

@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 07:26:41 +0200
+Subject: [PATCH] watchdog: sunxi_wdt: let the watchdog core serve timeouts
+ above 16 s
+
+The timer counts at most 16 s, and the driver gives this limit as
+max_timeout, so the watchdog core rejects every longer timeout with
+-EINVAL. systemd asks for 10 minutes for its reboot watchdog by
+default. On the -EINVAL systemd-shutdown logs
+
+  Failed to set watchdog hardware timeout to 10min: Invalid argument
+
+and disarms the watchdog, so the rest of the shutdown runs without one.
+
+Give the limit as max_hw_heartbeat_ms instead. The watchdog core then
+accepts longer timeouts and pings the hardware in between until the
+timeout set by userspace has expired. sunxi_wdt_set_timeout() programs
+at most 16 s and keeps the requested timeout, as
+Documentation/watchdog/watchdog-kernel-api.rst describes for such
+drivers.
+
+Seen on the Radxa Cubie A7S (Allwinner A733) at reboot.
+
+Tested on Radxa Cubie A7S: a 40 s timeout is now accepted, and the
+watchdog armed with it resets the board at its end, not after 16 s.
+
+Assisted-by: LLM
+---
+ drivers/watchdog/sunxi_wdt.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/watchdog/sunxi_wdt.c b/drivers/watchdog/sunxi_wdt.c
+index 3db34524ed13..a19bd28e0a50 100644
+--- a/drivers/watchdog/sunxi_wdt.c
++++ b/drivers/watchdog/sunxi_wdt.c
+@@ -166,16 +166,18 @@ static int sunxi_wdt_set_timeout(struct watchdog_device *wdt_dev,
+ 	struct sunxi_wdt_dev *sunxi_wdt = watchdog_get_drvdata(wdt_dev);
+ 	void __iomem *wdt_base = sunxi_wdt->wdt_base;
+ 	const struct sunxi_wdt_reg *regs = sunxi_wdt->wdt_regs;
++	unsigned int hw_timeout = min(timeout, WDT_MAX_TIMEOUT);
+ 	u32 reg;
+ 
+-	if (wdt_timeout_map[timeout] == 0)
+-		timeout++;
++	if (wdt_timeout_map[hw_timeout] == 0)
++		hw_timeout++;
+ 
+-	sunxi_wdt->wdt_dev.timeout = timeout;
++	/* The watchdog core pings in between for timeouts above 16 s. */
++	sunxi_wdt->wdt_dev.timeout = max(timeout, hw_timeout);
+ 
+ 	reg = readl(wdt_base + regs->wdt_mode);
+ 	reg &= ~(WDT_TIMEOUT_MASK << regs->wdt_timeout_shift);
+-	reg |= wdt_timeout_map[timeout] << regs->wdt_timeout_shift;
++	reg |= wdt_timeout_map[hw_timeout] << regs->wdt_timeout_shift;
+ 	reg |= regs->wdt_key_val;
+ 	writel(reg, wdt_base + regs->wdt_mode);
+ 
+@@ -309,7 +311,7 @@ static int sunxi_wdt_probe(struct platform_device *pdev)
+ 	sunxi_wdt->wdt_dev.info = &sunxi_wdt_info;
+ 	sunxi_wdt->wdt_dev.ops = &sunxi_wdt_ops;
+ 	sunxi_wdt->wdt_dev.timeout = WDT_MAX_TIMEOUT;
+-	sunxi_wdt->wdt_dev.max_timeout = WDT_MAX_TIMEOUT;
++	sunxi_wdt->wdt_dev.max_hw_heartbeat_ms = WDT_MAX_TIMEOUT * 1000;
+ 	sunxi_wdt->wdt_dev.min_timeout = WDT_MIN_TIMEOUT;
+ 	sunxi_wdt->wdt_dev.parent = dev;
+ 

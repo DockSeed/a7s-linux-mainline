@@ -1,0 +1,317 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 18:31:05 +0200
+Subject: [PATCH] drm/sun4i: sun60i_dp: Add stereo audio
+
+The A733 DisplayPort transmitter has a secondary data channel that
+carries audio (user manual sections 15.4.7.65 to 15.4.7.87), fed by an
+I2S controller over an internal connection (sections 17.1.1 and
+15.4.7.66). The manual names I2S3 and I2S4 for that connection and
+documents no select field (section 15.2.9.1); I2S3 is an assumption, not
+measured. Without a driver for it the transmitter sends no audio, and a
+sink with speakers stays silent.
+
+Register the DisplayPort audio operations of the bridge. The DRM bridge
+connector then registers an HDMI codec under the transmitter's device,
+which a sound card names with the phandle of the node. On prepare,
+select the I2S input, two channels, the asynchronous clock mode, an
+identity channel map and the channel status of the stream, then enable
+the audio packets last, as section 15.4.7.65 asks, still muted. Mute and
+unmute with the stream; after a mode set or a DPMS cycle a running
+stream stays mute until it is prepared again. The registers are only
+reached while the link is up, so the link state and the stream state are
+now read and written under the lock that already guards the hot plug
+state.
+
+Only two channels of plain I2S are accepted. The audio InfoFrame is not
+sent: the manual does not say how the bytes of an InfoFrame are laid out
+in the packet memory (section 15.4.7.79).
+
+Tested on Radxa Cubie A7S: the card registers, plays without disturbing
+the picture and comes back after an unbind and bind of the transmitter;
+audio not heard, no DisplayPort sink with speakers was at hand.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/Kconfig     |   1 +
+ drivers/gpu/drm/sun4i/sun60i_dp.c | 191 +++++++++++++++++++++++++++++-
+ 2 files changed, 189 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/Kconfig b/drivers/gpu/drm/sun4i/Kconfig
+index 77be8bdc8307..01f808e1d1c2 100644
+--- a/drivers/gpu/drm/sun4i/Kconfig
++++ b/drivers/gpu/drm/sun4i/Kconfig
+@@ -93,6 +93,7 @@ config DRM_SUN60I_DP
+ 	select DRM_DISPLAY_HELPER
+ 	select DRM_KMS_HELPER
+ 	select GENERIC_PHY
++	select SND_SOC_HDMI_CODEC if SND_SOC
+ 	help
+ 	  Choose this option if you have an Allwinner A733 SoC and want to
+ 	  use its DisplayPort transmitter, on a DisplayPort connector or on
+diff --git a/drivers/gpu/drm/sun4i/sun60i_dp.c b/drivers/gpu/drm/sun4i/sun60i_dp.c
+index 187347e3d79f..64be5dde4f64 100644
+--- a/drivers/gpu/drm/sun4i/sun60i_dp.c
++++ b/drivers/gpu/drm/sun4i/sun60i_dp.c
+@@ -46,6 +46,9 @@
+ #include <drm/drm_modes.h>
+ #include <drm/drm_of.h>
+ 
++#include <sound/asoundef.h>
++#include <sound/hdmi-codec.h>
++
+ #include "sun60i_dp.h"
+ 
+ /* Transmitter controller registers (user manual section 15.4.7) */
+@@ -58,6 +61,8 @@
+ #define  SUN60I_DP_SOFT_RESET_LINK		BIT(4)
+ #define  SUN60I_DP_SOFT_RESET_VIDEO		BIT(0)
+ #define SUN60I_DP_INPUT_SOURCE_ENABLE		0x0094
++#define SUN60I_DP_CORE_CAPABILITIES		0x00f8
++#define  SUN60I_DP_CAP_AUDIO_PRESENT		BIT(9)
+ #define SUN60I_DP_CORE_ID			0x00fc
+ #define  SUN60I_DP_CORE_ID_A733			0x000a0509
+ #define SUN60I_DP_AUX_COMMAND			0x0100
+@@ -121,6 +126,30 @@
+ #define SUN60I_DP_SRC0_ENABLE			0x0800
+ #define SUN60I_DP_SRC0_STREAM_ENABLE		0x0804
+ 
++/* Secondary channel of source 0, audio (user manual sections 15.4.7.65-87) */
++#define SUN60I_DP_SEC0_AUDIO_ENABLE		0x0900
++#define  SUN60I_DP_AUDIO_PACKET_ENABLE		BIT(0)
++#define  SUN60I_DP_AUDIO_MUTE			BIT(1)
++#define SUN60I_DP_SEC0_AUDIO_INPUT_SELECT	0x0904
++#define  SUN60I_DP_AUDIO_INPUT_I2S		0
++#define SUN60I_DP_SEC0_CHANNEL_COUNT		0x0908
++#define  SUN60I_DP_CHANNEL_COUNT_2		0x2
++#define SUN60I_DP_SEC0_AUDIO_CLOCK_MODE		0x0920
++#define  SUN60I_DP_AUDIO_CLOCK_ASYNC		0
++#define SUN60I_DP_SEC0_CS_SOURCE_FORMAT		0x0940
++#define  SUN60I_DP_CS_SOURCE_NUMBER		GENMASK(7, 4)
++#define  SUN60I_DP_CS_NON_LINEAR_PCM		BIT(3)
++#define  SUN60I_DP_CS_EMPHASIS			GENMASK(2, 0)
++#define SUN60I_DP_SEC0_CS_CATEGORY_CODE		0x0944
++#define SUN60I_DP_SEC0_CS_LENGTH_ORIG_FREQ	0x0948
++#define  SUN60I_DP_CS_WORD_LENGTH		GENMASK(7, 4)
++#define  SUN60I_DP_CS_ORIG_FREQ			GENMASK(3, 0)
++#define SUN60I_DP_SEC0_CS_FREQ_CLOCK_ACCURACY	0x094c
++#define  SUN60I_DP_CS_SAMPLING_FREQ		GENMASK(7, 4)
++#define  SUN60I_DP_CS_CLOCK_ACCURACY		GENMASK(3, 0)
++#define SUN60I_DP_SEC0_AUDIO_CHANNEL_MAP	0x0954
++#define  SUN60I_DP_CHANNEL_MAP_IDENTITY		0x76543210
++
+ /* Link and video clock gates (user manual section 15.4.8) */
+ #define SUN60I_DP_PAD_LNK_CLK			0x0000
+ #define SUN60I_DP_PAD_VID_CLK			0x0004
+@@ -180,7 +209,10 @@ struct sun60i_dp {
+ 	struct drm_bridge	*next_bridge;
+ 	struct drm_dp_aux	aux;
+ 
+-	/* protects the hot plug state and the AUX PHY power */
++	/*
++	 * protects the hot plug state, the AUX PHY power, and enabled and
++	 * audio_on, which the audio callbacks read
++	 */
+ 	struct mutex		lock;
+ 	bool			hpd;
+ 	unsigned int		hpd_reports;
+@@ -191,6 +223,7 @@ struct sun60i_dp {
+ 	unsigned int		link_rate;
+ 	unsigned int		lanes;
+ 	bool			enabled;
++	bool			audio_on;
+ };
+ 
+ /* Swing and pre-emphasis levels per lane */
+@@ -940,7 +973,8 @@ static void sun60i_dp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 
+ 	dev_dbg(dp->dev, "link at %u kHz, %u lanes\n", dp->link_rate * 10,
+ 		dp->lanes);
+-	dp->enabled = true;
++	scoped_guard(mutex, &dp->lock)
++		dp->enabled = true;
+ 
+ 	return;
+ 
+@@ -966,6 +1000,15 @@ static void sun60i_dp_bridge_atomic_disable(struct drm_bridge *bridge,
+ 	/* Tell the sink that the stream is gone */
+ 	if (dp->dpcd_valid)
+ 		drm_dp_link_power_down(&dp->aux, dp->dpcd[DP_DPCD_REV]);
++
++	/* The AUX transfer above takes dp->lock itself */
++	guard(mutex)(&dp->lock);
++
++	/*
++	 * The block is reset once the runtime PM suspends; an audio stream
++	 * that outlives the link has to be prepared again.
++	 */
++	dp->audio_on = false;
+ 	phy_power_off(dp->phy);
+ 	phy_exit(dp->phy);
+ 	pm_runtime_put_autosuspend(dp->dev);
+@@ -1115,6 +1158,140 @@ sun60i_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ 	return MODE_OK;
+ }
+ 
++/*
++ * Audio. The DRM bridge connector registers an hdmi-codec under this device
++ * and calls the four functions below from its callbacks; a sound card names
++ * that codec with the phandle of this node. The transmitter takes I2S3 over
++ * an internal connection (sections 17.1.1 and 15.4.7.66), and I2S3 is clock
++ * master. The registers are only readable while the link is up, so the
++ * functions touch them only then, under dp->lock, which atomic_disable also
++ * holds while it powers the block down.
++ *
++ * Section 15.4.7.65 asks for the control registers to be set before the
++ * packets are enabled, so AUDIO_ENABLE is written last. Asynchronous clock
++ * mode (section 15.4.7.73) generates the audio clock regeneration values in
++ * the core; MAUD and NAUD are only used in synchronous mode (sections
++ * 15.4.7.71, 15.4.7.72) and are not written.
++ */
++static int sun60i_dp_audio_check(struct sun60i_dp *dp)
++{
++	lockdep_assert_held(&dp->lock);
++
++	if (!dp->enabled)
++		return -ENODEV;
++
++	if (!(readl(dp->regs + SUN60I_DP_CORE_CAPABILITIES) &
++	      SUN60I_DP_CAP_AUDIO_PRESENT))
++		return -ENODEV;
++
++	return 0;
++}
++
++/* Channel status fields as the manual names them (sections 15.4.7.81-84) */
++static void sun60i_dp_audio_channel_status(struct sun60i_dp *dp, const u8 *cs)
++{
++	writel(FIELD_PREP(SUN60I_DP_CS_SOURCE_NUMBER, cs[2] & 0xf) |
++	       FIELD_PREP(SUN60I_DP_CS_NON_LINEAR_PCM,
++			  !!(cs[0] & IEC958_AES0_NONAUDIO)) |
++	       FIELD_PREP(SUN60I_DP_CS_EMPHASIS,
++			  (cs[0] & IEC958_AES0_CON_EMPHASIS) >> 3),
++	       dp->regs + SUN60I_DP_SEC0_CS_SOURCE_FORMAT);
++	writel(cs[1], dp->regs + SUN60I_DP_SEC0_CS_CATEGORY_CODE);
++	writel(FIELD_PREP(SUN60I_DP_CS_WORD_LENGTH, cs[4] & 0xf) |
++	       FIELD_PREP(SUN60I_DP_CS_ORIG_FREQ, cs[4] >> 4),
++	       dp->regs + SUN60I_DP_SEC0_CS_LENGTH_ORIG_FREQ);
++	writel(FIELD_PREP(SUN60I_DP_CS_SAMPLING_FREQ, cs[3] & 0xf) |
++	       FIELD_PREP(SUN60I_DP_CS_CLOCK_ACCURACY,
++			  (cs[3] & IEC958_AES3_CON_CLOCK) >> 4),
++	       dp->regs + SUN60I_DP_SEC0_CS_FREQ_CLOCK_ACCURACY);
++}
++
++static int sun60i_dp_audio_startup(struct drm_bridge *bridge,
++				   struct drm_connector *connector)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++
++	guard(mutex)(&dp->lock);
++
++	return sun60i_dp_audio_check(dp);
++}
++
++static int sun60i_dp_audio_prepare(struct drm_bridge *bridge,
++				   struct drm_connector *connector,
++				   struct hdmi_codec_daifmt *fmt,
++				   struct hdmi_codec_params *hparms)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	int ret;
++
++	/* The manual describes plain I2S (section 15.4.4.2) and two channels */
++	if (fmt->fmt != HDMI_I2S || hparms->channels != 2)
++		return -EINVAL;
++
++	guard(mutex)(&dp->lock);
++
++	ret = sun60i_dp_audio_check(dp);
++	if (ret)
++		return ret;
++
++	/* Muted with the packets off, which also clears an overflow */
++	writel(SUN60I_DP_AUDIO_MUTE, dp->regs + SUN60I_DP_SEC0_AUDIO_ENABLE);
++
++	writel(SUN60I_DP_AUDIO_INPUT_I2S,
++	       dp->regs + SUN60I_DP_SEC0_AUDIO_INPUT_SELECT);
++	writel(SUN60I_DP_CHANNEL_COUNT_2,
++	       dp->regs + SUN60I_DP_SEC0_CHANNEL_COUNT);
++	writel(SUN60I_DP_AUDIO_CLOCK_ASYNC,
++	       dp->regs + SUN60I_DP_SEC0_AUDIO_CLOCK_MODE);
++	/* Channel n to output n; the reset value maps every input to 0 */
++	writel(SUN60I_DP_CHANNEL_MAP_IDENTITY,
++	       dp->regs + SUN60I_DP_SEC0_AUDIO_CHANNEL_MAP);
++	sun60i_dp_audio_channel_status(dp, hparms->iec.status);
++
++	/* Still muted: mute_stream opens the stream once the I2S runs */
++	writel(SUN60I_DP_AUDIO_PACKET_ENABLE | SUN60I_DP_AUDIO_MUTE,
++	       dp->regs + SUN60I_DP_SEC0_AUDIO_ENABLE);
++	dp->audio_on = true;
++
++	return 0;
++}
++
++static void sun60i_dp_audio_shutdown(struct drm_bridge *bridge,
++				     struct drm_connector *connector)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++
++	guard(mutex)(&dp->lock);
++
++	dp->audio_on = false;
++
++	/* Once the link is down the block is, or will be, in reset */
++	if (dp->enabled)
++		writel(SUN60I_DP_AUDIO_MUTE,
++		       dp->regs + SUN60I_DP_SEC0_AUDIO_ENABLE);
++}
++
++static int sun60i_dp_audio_mute_stream(struct drm_bridge *bridge,
++				       struct drm_connector *connector,
++				       bool enable, int direction)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	u32 val = SUN60I_DP_AUDIO_PACKET_ENABLE;
++
++	if (direction != SNDRV_PCM_STREAM_PLAYBACK)
++		return 0;
++
++	if (enable)
++		val |= SUN60I_DP_AUDIO_MUTE;
++
++	guard(mutex)(&dp->lock);
++
++	if (dp->enabled && dp->audio_on)
++		writel(val, dp->regs + SUN60I_DP_SEC0_AUDIO_ENABLE);
++
++	return 0;
++}
++
+ static const struct drm_bridge_funcs sun60i_dp_bridge_funcs = {
+ 	.atomic_create_state	= drm_atomic_helper_bridge_create_state,
+ 	.atomic_duplicate_state	= drm_atomic_helper_bridge_duplicate_state,
+@@ -1127,6 +1304,10 @@ static const struct drm_bridge_funcs sun60i_dp_bridge_funcs = {
+ 	.mode_valid		= sun60i_dp_bridge_mode_valid,
+ 	.atomic_enable		= sun60i_dp_bridge_atomic_enable,
+ 	.atomic_disable		= sun60i_dp_bridge_atomic_disable,
++	.dp_audio_startup	= sun60i_dp_audio_startup,
++	.dp_audio_prepare	= sun60i_dp_audio_prepare,
++	.dp_audio_shutdown	= sun60i_dp_audio_shutdown,
++	.dp_audio_mute_stream	= sun60i_dp_audio_mute_stream,
+ };
+ 
+ static struct sun60i_dp *sun60i_dp_from_connector(struct drm_connector *connector)
+@@ -1371,8 +1552,12 @@ static int sun60i_dp_probe(struct platform_device *pdev)
+ 	drm_dp_aux_init(&dp->aux);
+ 
+ 	dp->bridge.of_node = dev->of_node;
+-	dp->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID;
++	dp->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID |
++			 DRM_BRIDGE_OP_DP_AUDIO;
+ 	dp->bridge.type = DRM_MODE_CONNECTOR_DisplayPort;
++	dp->bridge.hdmi_audio_dev = dev;
++	dp->bridge.hdmi_audio_max_i2s_playback_channels = 2;
++	dp->bridge.hdmi_audio_dai_port = -1;
+ 
+ 	ret = devm_drm_bridge_add(dev, &dp->bridge);
+ 	if (ret)

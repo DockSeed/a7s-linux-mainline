@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 16 Oct 2026 18:14:48 +0000
+Subject: [PATCH] drm/dp: Flush the CRC worker before stopping the sink CRC
+
+drm_dp_stop_crc() clears DP_TEST_SINK_START first and flushes the CRC
+worker after that. The worker may still be in a loop iteration: after
+-EAGAIN it sleeps for 1 to 2 ms and reads the sink a second time
+without checking crtc->crc.opened again, and that read finds
+TEST_SINK_START cleared and hits the WARN_ON() in drm_dp_aux_get_crc().
+With a sink that does not report a new CRC every frame, most reads
+return -EAGAIN, so closing the CRC file often lands in that sleep.
+
+Flush the worker first. The CRC debugfs code clears crtc->crc.opened
+before it calls set_crc_source() to stop the capture, so the worker
+leaves its loop at the next check, and both of its reads run while the
+sink still has TEST_SINK_START set.
+
+Seen on the Radxa Cubie A7S (Allwinner A733) with a DisplayPort
+monitor: a capture closed after its first CRC warns in
+drm_dp_aux_get_crc(), called from the retry in drm_dp_aux_crc_work().
+
+Tested on Radxa Cubie A7S: CRC captures closed at random points of the
+frame no longer warn, and every capture still returns its CRC.
+
+Fixes: 79c1da7c3bf7 ("drm/dp: add helpers for capture of frame CRCs")
+Assisted-by: LLM
+---
+ drivers/gpu/drm/display/drm_dp_helper.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/display/drm_dp_helper.c b/drivers/gpu/drm/display/drm_dp_helper.c
+index 488fd123a01a..f9e65bd266cf 100644
+--- a/drivers/gpu/drm/display/drm_dp_helper.c
++++ b/drivers/gpu/drm/display/drm_dp_helper.c
+@@ -2507,6 +2507,12 @@ int drm_dp_stop_crc(struct drm_dp_aux *aux)
+ 	u8 buf;
+ 	int ret;
+ 
++	/*
++	 * The worker reads the sink until crtc->crc.opened is cleared, so
++	 * let it finish before the sink stops.
++	 */
++	flush_work(&aux->crc_work);
++
+ 	ret = drm_dp_dpcd_read_byte(aux, DP_TEST_SINK, &buf);
+ 	if (ret < 0)
+ 		return ret;
+@@ -2515,7 +2521,6 @@ int drm_dp_stop_crc(struct drm_dp_aux *aux)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	flush_work(&aux->crc_work);
+ 	aux->crtc = NULL;
+ 
+ 	return 0;

@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 08:29:10 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the SMHC1 controller
+
+The SoC dtsi describes SMHC0 and SMHC2, but not SMHC1, the SD/SDIO
+controller whose pins go to the 15-pin header J6 of the Cubie A7S.
+
+Add SMHC1 at 0x04021000 with the compatible pair of SMHC0: the manual
+gives it the register set of SMHC0, and sunxi-mmc handles it with the A733
+configuration. Its bus gate, module clock and reset come from the CCU; the
+bus gate's parent is the STORE AHB gate that the controller needs for its
+register access. Add the pin groups for PG0 (CLK), PG1 (CMD) and PG2 to
+PG5 (D0 to D3), function 2, with the drive strength and pull-up of the
+SMHC0 groups. Nothing else uses PG0 to PG5 on the board, so the node
+carries them. It is disabled; a board enables it.
+
+Not covered: the 1.8 V signalling and the supplies, which belong to the
+board; the pin bank supply, which the pin controller does not switch for
+bank PG.
+
+Tested on Radxa Cubie A7S: with the node enabled in a copy of the DTB,
+the controller probes and initializes and takes PG0 to PG5; no card was
+connected.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 36 +++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 726171bfe6b8..334d5880d32f 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -551,6 +551,24 @@ mmc0_3v3_pins: mmc0-3v3-pins {
+ 				power-source = <3300000>;
+ 			};
+ 
++			/omit-if-no-ref/
++			mmc1_clk_pin: mmc1-clk-pins {
++				pins = "PG0";
++				allwinner,pinmux = <2>;
++				function = "mmc1";
++				drive-strength = <30>;
++				bias-pull-up;
++			};
++
++			/omit-if-no-ref/
++			mmc1_pins: mmc1-pins {
++				pins = "PG1", "PG2", "PG3", "PG4", "PG5";
++				allwinner,pinmux = <2>;
++				function = "mmc1";
++				drive-strength = <10>;
++				bias-pull-up;
++			};
++
+ 			/* RST and CLK */
+ 			mmc2_clk_rst_pins: mmc2-clk-rst-pins {
+ 				pins = "PC1", "PC5";
+@@ -1044,6 +1062,24 @@ mmc0: mmc@4020000 {
+ 			#size-cells = <0>;
+ 		};
+ 
++		mmc1: mmc@4021000 {
++			compatible = "allwinner,sun60i-a733-mmc",
++				     "allwinner,sun20i-d1-mmc";
++			reg = <0x04021000 0x1000>;
++			interrupts = <GIC_SPI 162 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_MMC1>, <&ccu CLK_MMC1>;
++			clock-names = "ahb", "mmc";
++			resets = <&ccu RST_BUS_MMC1>;
++			reset-names = "ahb";
++			pinctrl-names = "default";
++			pinctrl-0 = <&mmc1_pins>, <&mmc1_clk_pin>;
++			max-frequency = <200000000>;
++			cap-sd-highspeed;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
+ 		mmc2: mmc@4022000 {
+ 			compatible = "allwinner,sun60i-a733-emmc",
+ 				     "allwinner,sun50i-a100-emmc";

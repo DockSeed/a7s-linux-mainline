@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 21:20:13 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Set up Gen2 on the
+ USB-C port
+
+Some Gen2 devices on the USB-C port link at Gen1 unless LLUCTL bit 30 is
+set, and Gen2 writes fail with the reset value of LCSR_TX_DEEMPH. Set
+the quirk and a TxDeemph of 0x34c1, which differs from the reset value
+0x34c2 only in the two bits that removed the errors.
+
+Tested on Radxa Cubie A7S: booted on two boards; both properties are
+set, the stick links at SuperSpeed Plus in both plug orientations, and a
+write with read-back completed without transaction errors in both
+directions on one board and in the normal direction on the other;
+without the two properties the link came up at SuperSpeed only on one
+board.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index e7ef3e436076..04e2f5614ebb 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -275,6 +275,8 @@ &uart0 {
+ &usb3 {
+ 	dr_mode = "host";
+ 	maximum-speed = "super-speed-plus";
++	snps,inv-sync-hdr-quirk;
++	snps,lcsr-tx-deemph = <0x34c1>;
+ 	status = "okay";
+ 
+ 	port {

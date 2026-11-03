@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 15:16:15 +0200
+Subject: [PATCH] dt-bindings: usb: wch,ch334: Allow hard wired devices on the
+ ports
+
+The CH334 hub node is used for hubs with a soldered device on a port.
+usb-hub.yaml already allows such child nodes, but additionalProperties
+rejects them. Use unevaluatedProperties as the other hub bindings do.
+
+Tested on Radxa Cubie A7S: booted on two boards with a device tree that
+uses this binding; the hub node with its device child binds and
+dtbs_check reports nothing.
+
+Assisted-by: LLM
+---
+ Documentation/devicetree/bindings/usb/wch,ch334.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/usb/wch,ch334.yaml b/Documentation/devicetree/bindings/usb/wch,ch334.yaml
+index 2fdca14dc1de..1dd7d36d9bd5 100644
+--- a/Documentation/devicetree/bindings/usb/wch,ch334.yaml
++++ b/Documentation/devicetree/bindings/usb/wch,ch334.yaml
+@@ -46,7 +46,7 @@ required:
+   - compatible
+   - reg
+ 
+-additionalProperties: false
++unevaluatedProperties: false
+ 
+ examples:
+   - |

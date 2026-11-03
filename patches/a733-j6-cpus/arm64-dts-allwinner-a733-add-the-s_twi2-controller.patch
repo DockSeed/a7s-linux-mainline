@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 20:51:18 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the S_TWI2 controller
+
+The SoC dtsi describes S_TWI0 and S_TWI1 of the CPUS domain, but not
+S_TWI2. A board that brings its pins out on a pin header cannot use it.
+
+Add S_TWI2 at 0x07085000 (A733 manual, memory map), interrupt SPI 205
+(12.2.3.1), with its bus gate and reset in the PRCM (4.2.5.16). The
+manual gives it the registers of TWI0 (18.11.7), so the node has the
+compatible of S_TWI0 and S_TWI1.
+
+Add the pin group the Radxa Cubie A7S can use: SDA on PL5 and SCK on
+PM4, both function 3 (18.14.3.1, tables 18-38 and 18-39). The board
+routes PL5 to pin 22 of J11 and PM4 to pin 3 of J6, so the bus spans
+both pin headers; no other S_TWI2 pin reaches a header. The pins carry
+other functions as well, so a board uses one function on them. The node
+is disabled; a board enables it.
+
+Not covered: DMA requests, which the driver does not use.
+
+Tested on Radxa Cubie A7S: the controller drives SDA on PL5 and SCK on
+PM4, read back on two GPIOs wired to the header pins.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index d384bb753c36..cf78be254f5a 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1786,6 +1786,13 @@ r_i2c1_pl12_pins: r-i2c1-pl12-pins {
+ 				function = "r_i2c1";
+ 			};
+ 
++			/omit-if-no-ref/
++			r_i2c2_pl5_pm4_pins: r-i2c2-pl5-pm4-pins {
++				pins = "PL5", "PM4";
++				allwinner,pinmux = <3>;
++				function = "r_i2c2";
++			};
++
+ 			/omit-if-no-ref/
+ 			r_ir_rx_pl6_pin: r-ir-rx-pl6-pin {
+ 				pins = "PL6";
+@@ -1930,6 +1937,19 @@ r_i2c1: i2c@7084000 {
+ 			#size-cells = <0>;
+ 		};
+ 
++		r_i2c2: i2c@7085000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x07085000 0x400>;
++			interrupts = <GIC_SPI 205 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&r_ccu CLK_BUS_R_I2C2>;
++			resets = <&r_ccu RST_BUS_R_I2C2>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
+ 		rtc: rtc@7090000 {
+ 			compatible = "allwinner,sun60i-a733-rtc",
+ 				     "allwinner,sun50i-r329-rtc";

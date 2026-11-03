@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Enzo Adriano <enzo.adriano.code@gmail.com>
+Date: Sat, 13 Jun 2026 05:42:13 -0400
+Subject: [PATCH] dt-bindings: arm: sunxi: add Radxa Cubie A7S
+
+Document the Radxa Cubie A7S board compatible for the Allwinner A733 SoC.
+
+Signed-off-by: Enzo Adriano <enzo.adriano.code@gmail.com>
+---
+ Documentation/devicetree/bindings/arm/sunxi.yaml | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/arm/sunxi.yaml b/Documentation/devicetree/bindings/arm/sunxi.yaml
+index f04db28c630a..18e676476f0b 100644
+--- a/Documentation/devicetree/bindings/arm/sunxi.yaml
++++ b/Documentation/devicetree/bindings/arm/sunxi.yaml
+@@ -857,6 +857,11 @@ properties:
+           - const: radxa,cubie-a5e
+           - const: allwinner,sun55i-a527
+ 
++      - description: Radxa Cubie A7S
++        items:
++          - const: radxa,cubie-a7s
++          - const: allwinner,sun60i-a733
++
+       - description: Remix Mini PC
+         items:
+           - const: jide,remix-mini-pc

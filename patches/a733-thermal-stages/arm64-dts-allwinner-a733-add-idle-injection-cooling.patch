@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 06:18:50 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add idle injection cooling
+
+Between the passive trip at 90 degrees C and the critical trip at 110,
+cpufreq is the only cooling of the CPU zones. When the lowest operating
+point cannot hold the die, as on a board without a heatsink, the next
+event is the power-off at the critical trip.
+
+Add a thermal-idle node to cpu2 to cpu7 and a second passive trip at 100
+degrees C with 2 degrees hysteresis to both CPU zones, mapped to the idle
+injection of the zone's cores. cpu0 and cpu1 get no node, so two cores
+keep running while the others are forced idle. An injected period of
+10 ms is longer than the minimum residency of the core power-down
+states, and the exit latency limit of 500 us admits both of them.
+
+The maps start at 50 percent. A cpuidle cooling device counts in
+percent, and step_wise enters at the lower limit or one step above the
+current state: unbounded, the stage starts at 1 percent and rises one
+step per poll, too slowly for the 10 degrees left to the critical trip.
+50 percent on these cores removes about 10 degrees under an all-core
+load. The upper limit stays open, so the stage can rise to 100 percent.
+
+The vendor device tree has the same trip on the same cores, but maps the
+Cortex-A55 cores at 0 to 50 percent and the Cortex-A76 cores at 0 to
+100, so the stage starts at 1 percent there.
+
+Not covered: the DDR, GPU and NPU zones keep only their critical trip.
+
+Tested on Radxa Cubie A7S: with the idle trip lowered and the zone
+temperature emulated above it, cpu2 to cpu7 were forced idle at the set
+share, cpu2 to cpu5 also powered down, and the die cooled; cpu0 and
+cpu1 kept running, and the stage let go when the emulated temperature
+dropped.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 64 +++++++++++++++++++
+ 1 file changed, 64 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 4b9746f011ee..b471919e0818 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -110,6 +110,12 @@ cpu2: cpu@200 {
+ 			d-cache-line-size = <64>;
+ 			d-cache-sets = <128>;
+ 			next-level-cache = <&l2_cache2>;
++
++			cpu2_idle: thermal-idle {
++				#cooling-cells = <2>;
++				duration-us = <10000>;
++				exit-latency-us = <500>;
++			};
+ 		};
+ 
+ 		cpu3: cpu@300 {
+@@ -128,6 +134,12 @@ cpu3: cpu@300 {
+ 			d-cache-line-size = <64>;
+ 			d-cache-sets = <128>;
+ 			next-level-cache = <&l2_cache3>;
++
++			cpu3_idle: thermal-idle {
++				#cooling-cells = <2>;
++				duration-us = <10000>;
++				exit-latency-us = <500>;
++			};
+ 		};
+ 
+ 		cpu4: cpu@400 {
+@@ -146,6 +158,12 @@ cpu4: cpu@400 {
+ 			d-cache-line-size = <64>;
+ 			d-cache-sets = <128>;
+ 			next-level-cache = <&l2_cache4>;
++
++			cpu4_idle: thermal-idle {
++				#cooling-cells = <2>;
++				duration-us = <10000>;
++				exit-latency-us = <500>;
++			};
+ 		};
+ 
+ 		cpu5: cpu@500 {
+@@ -164,6 +182,12 @@ cpu5: cpu@500 {
+ 			d-cache-line-size = <64>;
+ 			d-cache-sets = <128>;
+ 			next-level-cache = <&l2_cache5>;
++
++			cpu5_idle: thermal-idle {
++				#cooling-cells = <2>;
++				duration-us = <10000>;
++				exit-latency-us = <500>;
++			};
+ 		};
+ 
+ 		cpu6: cpu@600 {
+@@ -183,6 +207,12 @@ cpu6: cpu@600 {
+ 			d-cache-line-size = <64>;
+ 			d-cache-sets = <256>;
+ 			next-level-cache = <&l2_cache6>;
++
++			cpu6_idle: thermal-idle {
++				#cooling-cells = <2>;
++				duration-us = <10000>;
++				exit-latency-us = <500>;
++			};
+ 		};
+ 
+ 		cpu7: cpu@700 {
+@@ -201,6 +231,12 @@ cpu7: cpu@700 {
+ 			d-cache-line-size = <64>;
+ 			d-cache-sets = <256>;
+ 			next-level-cache = <&l2_cache7>;
++
++			cpu7_idle: thermal-idle {
++				#cooling-cells = <2>;
++				duration-us = <10000>;
++				exit-latency-us = <500>;
++			};
+ 		};
+ 
+ 		idle-states {
+@@ -1104,6 +1140,12 @@ cpub_passive: cpub-passive {
+ 					type = "passive";
+ 				};
+ 
++				cpub_idle: cpub-idle {
++					temperature = <100000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
+ 				cpub-crit {
+ 					temperature = <110000>;
+ 					hysteresis = <0>;
+@@ -1116,6 +1158,13 @@ map0 {
+ 					trip = <&cpub_passive>;
+ 					cooling-device = <&cpu6 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+ 				};
++
++				/* enter idle injection at 50 %, not one step per poll */
++				map1 {
++					trip = <&cpub_idle>;
++					cooling-device = <&cpu6_idle 50 THERMAL_NO_LIMIT>,
++							 <&cpu7_idle 50 THERMAL_NO_LIMIT>;
++				};
+ 			};
+ 		};
+ 
+@@ -1132,6 +1181,12 @@ cpul_passive: cpul-passive {
+ 					type = "passive";
+ 				};
+ 
++				cpul_idle: cpul-idle {
++					temperature = <100000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
+ 				cpul-crit {
+ 					temperature = <110000>;
+ 					hysteresis = <0>;
+@@ -1144,6 +1199,15 @@ map0 {
+ 					trip = <&cpul_passive>;
+ 					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+ 				};
++
++				/* enter idle injection at 50 %, not one step per poll */
++				map1 {
++					trip = <&cpul_idle>;
++					cooling-device = <&cpu2_idle 50 THERMAL_NO_LIMIT>,
++							 <&cpu3_idle 50 THERMAL_NO_LIMIT>,
++							 <&cpu4_idle 50 THERMAL_NO_LIMIT>,
++							 <&cpu5_idle 50 THERMAL_NO_LIMIT>;
++				};
+ 			};
+ 		};
+ 

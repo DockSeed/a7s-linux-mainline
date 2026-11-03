@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 16:03:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Give IOMMU0 the CSI and ISP port
+ gates
+
+A master's register block in the IOMMU does not answer while the
+master's port on the MBUS matrix is gated, and the access stalls the
+bus. The IOMMU driver takes a reference on the port gate of a master,
+given as a "masterN" clock, for as long as the master translates. The
+A733 clock driver marks these gates CLK_IS_CRITICAL, so they stay
+enabled and the reference does not change their state.
+
+Name the port gate of the camera input, master 1 (CSI) and master 2
+(ISP) of the first IOMMU (manual chapter 10). Both are in the video
+input system and use the same MBUS port, VID_IN, bit 24 of
+MBUS_MAT_CLK_GATING_REG (manual section 4.1.6.83).
+
+Nothing changes until a node lists the IOMMU in "iommus": the driver
+enables a master clock only for a master with a user.
+
+Not covered: the manual does not say which matrix port the two masters
+use; VID_IN is the only port of the video input system.
+
+Tested on Radxa Cubie A7S: with both nodes enabled for a test, IOMMU0
+holds the VID_IN port gate for masters 1 and 2, and both devices
+translate through it.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 36f730e32d63..75c150ed9a85 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1110,9 +1110,11 @@ iommu0: iommu@3900000 {
+ 				 <&ccu CLK_APB_IOMMU0_SYS>,
+ 				 <&ccu CLK_AHB_IOMMU0_SYS>,
+ 				 <&ccu CLK_MBUS_IOMMU0>,
++				 <&ccu CLK_MBUS_VID_IN>,
++				 <&ccu CLK_MBUS_VID_IN>,
+ 				 <&ccu CLK_MBUS_VE_ENC0_GATE>;
+ 			clock-names = "mclk", "pclk", "hclk", "mbus",
+-				      "master3";
++				      "master1", "master2", "master3";
+ 			resets = <&ccu RST_BUS_IOMMU0_SYS>;
+ 			#iommu-cells = <1>;
+ 		};

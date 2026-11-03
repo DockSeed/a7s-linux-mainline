@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 15:16:15 +0200
+Subject: [PATCH] usb: misc: onboard_usb_dev: Add the AICSemi AIC8800D80
+
+The AIC8800D80 WiFi and Bluetooth module sits behind a hub on boards
+like the Radxa Cubie A7S. It needs a supply and a CHIP_EN pin that is
+released after the supply is stable. Without an entry nothing powers it
+before the hub enumerates the port.
+
+Add it as a non-hub device with one supply and a reset GPIO. The delay
+between supply and reset release is the longest one of the existing
+entries, it has not been measured.
+
+The module enumerates as a69c:8d80 and, once its firmware is loaded,
+again as a69c:8d81. Add both to the USB ID table, so the USB device is
+bound in either state and stays powered in suspend when it is a wakeup
+source.
+
+Tested on Radxa Cubie A7S: booted on two boards; the driver switches on
+the supply and releases CHIP_EN, only then the module enumerates on
+port 1 of the hub, and the driver binds its USB device. The ID after the
+firmware download is not tested, the firmware loader is not in mainline.
+
+Assisted-by: LLM
+---
+ drivers/usb/misc/onboard_usb_dev.c | 3 +++
+ drivers/usb/misc/onboard_usb_dev.h | 9 +++++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/drivers/usb/misc/onboard_usb_dev.c b/drivers/usb/misc/onboard_usb_dev.c
+index 11508ed4df25..87ab8283366b 100644
+--- a/drivers/usb/misc/onboard_usb_dev.c
++++ b/drivers/usb/misc/onboard_usb_dev.c
+@@ -564,6 +564,7 @@ static struct platform_driver onboard_dev_driver = {
+ 
+ /************************** USB driver **************************/
+ 
++#define VENDOR_ID_AICSEMI	0xa69c
+ #define VENDOR_ID_BISON		0x5986
+ #define VENDOR_ID_CORECHIPS	0x3431
+ #define VENDOR_ID_CYPRESS	0x04b4
+@@ -650,6 +651,8 @@ static void onboard_dev_usbdev_disconnect(struct usb_device *udev)
+ }
+ 
+ static const struct usb_device_id onboard_dev_id_table[] = {
++	{ USB_DEVICE(VENDOR_ID_AICSEMI, 0x8d80) }, /* AIC8800D80 WiFi/BT, firmware download */
++	{ USB_DEVICE(VENDOR_ID_AICSEMI, 0x8d81) }, /* AIC8800D80 WiFi/BT */
+ 	{ USB_DEVICE(VENDOR_ID_BISON, 0x1198) }, /* Bison Electronics Inc. Integrated Camera */
+ 	{ USB_DEVICE(VENDOR_ID_CORECHIPS, 0x6241) }, /* SL6341 2.0 HUB */
+ 	{ USB_DEVICE(VENDOR_ID_CORECHIPS, 0x6341) }, /* SL6341 3.0 HUB */
+diff --git a/drivers/usb/misc/onboard_usb_dev.h b/drivers/usb/misc/onboard_usb_dev.h
+index 3523f8f8a149..28be353f1130 100644
+--- a/drivers/usb/misc/onboard_usb_dev.h
++++ b/drivers/usb/misc/onboard_usb_dev.h
+@@ -127,6 +127,14 @@ static const struct onboard_dev_pdata wch_ch334_data = {
+ 	.is_hub = true,
+ };
+ 
++static const struct onboard_dev_pdata aicsemi_aic8800d80_data = {
++	/* Longest delay of the entries above, not measured on hardware */
++	.reset_us = 14000,
++	.num_supplies = 1,
++	.supply_names = { "vdd" },
++	.is_hub = false,
++};
++
+ static const struct onboard_dev_pdata xmos_xvf3500_data = {
+ 	.reset_us = 1,
+ 	.num_supplies = 2,
+@@ -170,6 +178,7 @@ static const struct of_device_id onboard_dev_match[] = {
+ 	{ .compatible = "usb3431,6241", .data = &corechips_sl6341_data, },
+ 	{ .compatible = "usb3431,6341", .data = &corechips_sl6341_data, },
+ 	{ .compatible = "usb5986,1198", .data = &bison_intcamera_data, },
++	{ .compatible = "usba69c,8d80", .data = &aicsemi_aic8800d80_data, },
+ 	{}
+ };
+ 

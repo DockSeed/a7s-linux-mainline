@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 07:01:28 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the GPU
+
+The A733 has an Imagination BXM-4-64 MC1 GPU. Add its node, disabled.
+
+- reg: the GPU0 window of the memory map, 0x01800000-0x0188ffff.
+- interrupts: INTID 95, the GPU's only interrupt line.
+- clocks: "core" is the GPU0 module clock and "sys" its bus gate. "mem"
+  is PLL_GPU0, as in the vendor's device tree, so the driver's power-on
+  sequence keeps the GPU PLL enabled.
+- power-domains: GPU_TOP only. The PCK-600 does not switch GPU_CORE on
+  this SoC: the core domain powers up by itself once PLL_GPU0, the GPU0
+  module clock and the bus gate with the reset released are all on,
+  which the driver's runtime resume does before the first register
+  access. With GPU_CORE listed, genpd waits for a status bit that only
+  appears after the consumer has clocked the block, and probe fails.
+
+dma-coherent is left out: coherency of the GPU master port on this SoC
+is not established.
+
+Tested on Radxa Cubie A7S: booted on two boards; powervr binds
+1800000.gpu with the GPU_TOP power domain, loads the firmware from the
+initramfs, initialises, and /dev/dri/renderD128 appears. No render job
+was submitted.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 4af6f208043e..a60c09a65be8 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -342,6 +342,20 @@ soc@0 {
+ 		#size-cells = <1>;
+ 		ranges = <0x0 0x0 0x0 0x40000000>;
+ 
++		gpu: gpu@1800000 {
++			compatible = "allwinner,sun60i-a733-gpu",
++				     "img,img-bxm-4-64", "img,img-rogue";
++			reg = <0x01800000 0x90000>;
++			interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_GPU0>, <&ccu CLK_PLL_GPU0>,
++				 <&ccu CLK_BUS_GPU0>;
++			clock-names = "core", "mem", "sys";
++			resets = <&ccu RST_BUS_GPU0>;
++			power-domains = <&pck600 PD_GPU_TOP>;
++			power-domain-names = "a";
++			status = "disabled";
++		};
++
+ 		pio: pinctrl@2000000 {
+ 			compatible = "allwinner,sun60i-a733-pinctrl";
+ 			reg = <0x02000000 0x600>;

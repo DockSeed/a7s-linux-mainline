@@ -1,0 +1,21 @@
+a7s-linux-mainline -- licensing notice
+
+Everything in this repository is GPL-2.0-only (see LICENSE), unless a
+file or patch states otherwise with an SPDX identifier. Patches by other
+authors keep their authorship and license.
+
+keys/ holds the unchanged public kernel.org signing keys, so that the
+kernel source can be verified.
+
+Not part of this repository and not covered by its license:
+
+1. The Linux kernel source. build.sh fetches it from kernel.org. It is
+   licensed as described in its COPYING file.
+
+2. Firmware and boot loader components. build.sh downloads nothing but
+   the kernel source and its signature. Where an image needs firmware or
+   a boot loader, it comes from its original source under its owner's
+   terms.
+
+Allwinner and Radxa are named only because their hardware is supported.
+This project is not affiliated with or endorsed by them.

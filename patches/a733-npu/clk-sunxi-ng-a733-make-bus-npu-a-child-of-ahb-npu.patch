@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 16:30:35 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Make bus-npu a child of ahb-npu
+
+The NPU has a gate in the AHB matrix (ahb-npu) and one in its own bus
+gating reset register (bus-npu). Its register interface needs both:
+with either of them off, the registers of the NPU read as zero. The
+vivante,gc binding has one clock for the register interface, so a
+consumer can hold only one of them.
+
+The manual does not name a parent for bus-npu, so the hosc parent taken
+from the vendor BSP is a guess as well. Make bus-npu a child of
+ahb-npu. Enabling bus-npu then enables ahb-npu.
+
+Not covered: the rate of bus-npu, which has no consumer.
+
+Tested on Radxa Cubie A7S: booted on two boards; bus-npu sits under
+ahb-npu and both gates are on while the NPU is awake; switching either
+of them off by hand makes the registers read as zero.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 78b0579a82b7..8895da5350e0 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -13,7 +13,7 @@
+  * known kernel consumer, so they are not modelled here.
+  *
+  * TODO: The real parents of some bus gates, including its-pcie0-aclk,
+- * msi-lite, npu, sgpio, lpc and i2spcm, are not documented in the
++ * msi-lite, sgpio, lpc and i2spcm, are not documented in the
+  * manual. For now, follow the vendor BSP, which keeps them on hosc.
+  */
+ 
+@@ -895,7 +895,13 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(npu_clk, "npu", npu_parents, 0xb00,
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+ 				    0);
+-static SUNXI_CCU_GATE_DATA(bus_npu_clk, "bus-npu", hosc, 0xb04, BIT(0), 0);
++/*
++ * The NPU has a gate in the AHB matrix and one in its own bus gating reset
++ * register. The NPU binding has one clock for both, so the second gate is
++ * the parent of the first: enabling bus-npu enables ahb-npu too.
++ */
++static const struct clk_hw *ahb_npu_hws[] = { &ahb_npu_clk.common.hw };
++static SUNXI_CCU_GATE_HWS(bus_npu_clk, "bus-npu", ahb_npu_hws, 0xb04, BIT(0), 0);
+ 
+ /*
+  * GPU_CLK = ClockSource * ((16 - M) / 16)

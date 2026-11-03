@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 8 Oct 2026 08:01:00 +0200
+Subject: [PATCH] mmc: sunxi: Fail the runtime resume if the controller does
+ not reset
+
+sunxi_mmc_init_host() returns -EIO when the controller does not leave
+its reset. The runtime resume drops that, programs the bus width and
+the clock into a controller that is still in reset and enables the
+interrupt, so the first request after the resume fails without a hint.
+
+Switch the clocks off again and return the error. The interrupt is
+still disabled from the suspend, so it stays so.
+
+Tested on Radxa Cubie A7S: booted on two boards with a test-only change
+that fails the controller reset in the runtime resume; the SD
+controller's resume fails and it stays suspended with its clocks off,
+while on the eMMC the MMC core, which ignores the failed resume, sends
+the next command anyway, the card is removed, and the following resume
+succeeds.
+
+Fixes: 9a8e1e8cc2c0 ("mmc: sunxi: Add runtime_pm support")
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index c30eacb660f7..d24fc97ea5b1 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -1515,7 +1515,12 @@ static int sunxi_mmc_runtime_resume(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	sunxi_mmc_init_host(host);
++	ret = sunxi_mmc_init_host(host);
++	if (ret) {
++		sunxi_mmc_disable(host);
++		return ret;
++	}
++
+ 	sunxi_mmc_set_bus_width(host, mmc->ios.bus_width);
+ 	sunxi_mmc_set_clk(host, &mmc->ios);
+ 	enable_irq(host->irq);

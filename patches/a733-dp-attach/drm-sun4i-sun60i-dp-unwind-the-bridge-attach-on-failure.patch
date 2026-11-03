@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 09:44:01 +0200
+Subject: [PATCH] drm/sun4i: sun60i_dp: Unwind the bridge attach on failure
+
+sun60i_dp_bridge_attach() attaches the next bridge, then sets
+aux.drm_dev and registers the AUX channel. If the registration fails,
+the next bridge stays in the encoder's chain and aux.drm_dev still
+points at a drm_device that the failed bind frees. The core removes
+only this bridge from the chain and does not call .detach, and without
+CONFIG_DRM_DISPLAY_DP_AUX_CHARDEV nothing clears the field; the AUX
+helpers use it in their debug messages and warnings. In that
+configuration .detach leaves the same stale field after an unbind.
+
+Register the AUX channel first, as ti-sn65dsi86 does, then attach the
+next bridge, and undo the steps in reverse order when one fails.
+drm_dp_aux_register() warns if drm_dev is not set, so it has to be set
+before the call and cleared again on failure. Clear it in .detach too.
+
+Not covered: on success only the order changes, the AUX channel is now
+registered before the next bridge attaches; the fault is not seen
+without injecting an error.
+
+Tested on Radxa Cubie A7S: with the AUX registration and the next
+bridge made to fail in turn, each failed attach cleared aux.drm_dev and
+left no AUX adapter behind, and the next bind brought the picture back.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun60i_dp.c | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun60i_dp.c b/drivers/gpu/drm/sun4i/sun60i_dp.c
+index 152ef573d4d0..c548d8032ad0 100644
+--- a/drivers/gpu/drm/sun4i/sun60i_dp.c
++++ b/drivers/gpu/drm/sun4i/sun60i_dp.c
+@@ -978,13 +978,24 @@ static int sun60i_dp_bridge_attach(struct drm_bridge *bridge,
+ 	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR))
+ 		return -EINVAL;
+ 
++	dp->aux.drm_dev = bridge->dev;
++
++	ret = drm_dp_aux_register(&dp->aux);
++	if (ret)
++		goto err_drm_dev;
++
+ 	ret = drm_bridge_attach(encoder, dp->next_bridge, bridge, flags);
+ 	if (ret)
+-		return ret;
++		goto err_aux;
+ 
+-	dp->aux.drm_dev = bridge->dev;
++	return 0;
+ 
+-	return drm_dp_aux_register(&dp->aux);
++err_aux:
++	drm_dp_aux_unregister(&dp->aux);
++err_drm_dev:
++	dp->aux.drm_dev = NULL;
++
++	return ret;
+ }
+ 
+ static void sun60i_dp_bridge_detach(struct drm_bridge *bridge)
+@@ -992,6 +1003,7 @@ static void sun60i_dp_bridge_detach(struct drm_bridge *bridge)
+ 	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
+ 
+ 	drm_dp_aux_unregister(&dp->aux);
++	dp->aux.drm_dev = NULL;
+ }
+ 
+ /*

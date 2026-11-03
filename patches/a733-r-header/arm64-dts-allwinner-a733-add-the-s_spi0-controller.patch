@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 17:31:51 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the S_SPI0 controller
+
+The SoC dtsi describes no SPI controller of the CPUS domain. A board that
+brings S_SPI0 out on a pin header cannot use it.
+
+Add S_SPI0 at 0x07092000 (A733 manual, memory map), interrupt SPI 210
+(12.2.3.1). The manual gives its registers as the same as those of SPI0
+(18.8.7), which is the binding's "allwinner,sun60i-a733-spi" compatible
+with its fallback, so spi-sun6i binds to it. The node has the bus clock
+and the reset of the PRCM (4.2.5.13) and the module clock S_SPI_CLK
+(4.2.5.12), each with its own gate.
+
+Add the pin group for clock, MOSI and MISO on PL5 to PL7, function 4
+(18.14.3.1), which the Radxa Cubie A7S routes to pins 22, 13 and 15 of its
+pin header. Chip select 0 (PL4) does not reach the header, so it is not in
+the group and a board uses a GPIO chip select. The pins are shared with
+S_UART0 and S_IR_RX, so a board uses one function on them. The node is
+disabled; a board enables it.
+
+Not covered: DMA requests.
+
+Tested on Radxa Cubie A7S: with the node enabled for a test and pins 13
+and 15 of J11 joined, a spidev transfer longer than the FIFO comes back
+unchanged.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 65c169758266..bd6c014147a8 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1841,6 +1841,13 @@ r_uart0_pl6_pins: r-uart0-pl6-pins {
+ 				allwinner,pinmux = <3>;
+ 				function = "s_uart0";
+ 			};
++
++			/omit-if-no-ref/
++			r_spi0_pl5_pins: r-spi0-pl5-pins {
++				pins = "PL5", "PL6", "PL7";
++				allwinner,pinmux = <4>;
++				function = "s_spi0";
++			};
+ 		};
+ 
+ 		r_ir: ir@7040000 {
+@@ -1910,6 +1917,19 @@ rtc: rtc@7090000 {
+ 			#clock-cells = <1>;
+ 		};
+ 
++		r_spi0: spi@7092000 {
++			compatible = "allwinner,sun60i-a733-spi",
++				     "allwinner,sun55i-a523-spi";
++			reg = <0x07092000 0x1000>;
++			interrupts = <GIC_SPI 210 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&r_ccu CLK_BUS_R_SPI>, <&r_ccu CLK_R_SPI>;
++			clock-names = "ahb", "mod";
++			resets = <&r_ccu RST_BUS_R_SPI>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
+ 		cpu_ccu: clock-controller@8870000 {
+ 			compatible = "allwinner,sun60i-a733-cpu-ccu";
+ 			reg = <0x08870000 0x4000>;

@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 05:02:23 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Add the CPU cluster
+ supplies
+
+DCDC3 and DCDC5 of the AXP318W supply the Cortex-A76 cores (vdd-cpub)
+and the Cortex-A55 cores (vdd-cpul). Describe both from 0.8 V, the
+typical voltage of the A733 datasheet (V0.93, section 5.3, Table 5-2,
+which lists no minimum or maximum), to 1.05 V, an upper bound that the
+datasheet does not give, not measured, and keep them always-on until
+cpufreq uses them.
+
+Tested on Radxa Cubie A7S: booted on two boards; DCDC3 and DCDC5
+register as vdd-cpub and vdd-cpul, enabled within their limits and with
+no consumer, and dmesg shows no regulator warning; cpufreq is not used.
+
+Assisted-by: LLM
+---
+ .../boot/dts/allwinner/sun60i-a733-cubie-a7s.dts   | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 04e2f5614ebb..fb15a32fa5f2 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -208,6 +208,20 @@ reg_swout2: swout2 {
+ 				regulator-name = "vcc-io";
+ 				regulator-always-on;
+ 			};
++
++			reg_dcdc3: dcdc3 {
++				regulator-name = "vdd-cpub";
++				regulator-min-microvolt = <800000>;
++				regulator-max-microvolt = <1050000>;
++				regulator-always-on;
++			};
++
++			reg_dcdc5: dcdc5 {
++				regulator-name = "vdd-cpul";
++				regulator-min-microvolt = <800000>;
++				regulator-max-microvolt = <1050000>;
++				regulator-always-on;
++			};
+ 		};
+ 	};
+ };

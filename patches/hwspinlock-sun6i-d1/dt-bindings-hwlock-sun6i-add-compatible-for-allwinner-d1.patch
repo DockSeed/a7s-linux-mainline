@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>
+Date: Sun, 27 Sep 2026 09:56:25 +0700
+Subject: [PATCH] dt-bindings: hwlock: sun6i: Add compatible for Allwinner D1
+
+The D1 and T113 have a hardware spinlock with the register layout the
+sun6i driver handles. Add a compatible for it, with the A31 one as
+fallback.
+
+Signed-off-by: Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>
+Acked-by: Conor Dooley <conor.dooley@microchip.com>
+---
+ .../bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml    | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml b/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml
+index 584cce3211c0..13f9a20ae18f 100644
+--- a/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml
++++ b/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml
+@@ -15,7 +15,12 @@ description:
+ 
+ properties:
+   compatible:
+-    const: allwinner,sun6i-a31-hwspinlock
++    oneOf:
++      - const: allwinner,sun6i-a31-hwspinlock
++      - items:
++          - enum:
++              - allwinner,sun20i-d1-hwspinlock
++          - const: allwinner,sun6i-a31-hwspinlock
+ 
+   reg:
+     maxItems: 1

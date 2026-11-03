@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:56:59 +0200
+Subject: [PATCH] mmc: sunxi: Switch the pad I/O voltage through pinctrl states
+
+Without a vqmmc regulator the driver assumes fixed 3.3 V signalling and
+fails every request for 1.8 V. On the A733 the SD card pads in bank PF
+have a 3.3 V and a 1.8 V supply, and the pin controller selects one, so
+UHS needs no regulator but cannot be reached.
+
+When the device has the pinctrl states "sdmmc-3v3" and "sdmmc-1v8", as
+documented for the Tegra SDHCI, select them for 3.3 V and 1.8 V
+signalling. A vqmmc regulator still takes precedence, and without both
+states nothing changes.
+
+Tested on Radxa Cubie A7S: booted on two boards; the card selects 1.8 V
+through the sdmmc-1v8 state and runs at SDR104, but after an unbind and
+bind of the controller it came back once in high-speed mode at 3.3 V on
+one board.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 9ee442008a1a..b48559a6e780 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -30,6 +30,7 @@
+ #include <linux/module.h>
+ #include <linux/of_address.h>
+ #include <linux/of_platform.h>
++#include <linux/pinctrl/consumer.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regulator/consumer.h>
+@@ -431,6 +432,11 @@ struct sunxi_mmc_host {
+ 	/* vqmmc */
+ 	bool		vqmmc_enabled;
+ 
++	/* pad states for the I/O voltage, when it is switched in the SoC */
++	struct pinctrl		*pinctrl;
++	struct pinctrl_state	*pins_3v3;
++	struct pinctrl_state	*pins_1v8;
++
+ 	/* timings */
+ 	bool		use_new_timings;
+ 
+@@ -1624,6 +1630,7 @@ static void sunxi_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
+ 
+ static int sunxi_mmc_volt_switch(struct mmc_host *mmc, struct mmc_ios *ios)
+ {
++	struct sunxi_mmc_host *host = mmc_priv(mmc);
+ 	int ret;
+ 
+ 	/* vqmmc regulator is available */
+@@ -1632,6 +1639,20 @@ static int sunxi_mmc_volt_switch(struct mmc_host *mmc, struct mmc_ios *ios)
+ 		return ret < 0 ? ret : 0;
+ 	}
+ 
++	/* the SoC switches the I/O voltage of the pads */
++	if (host->pins_1v8) {
++		switch (ios->signal_voltage) {
++		case MMC_SIGNAL_VOLTAGE_330:
++			return pinctrl_select_state(host->pinctrl,
++						    host->pins_3v3);
++		case MMC_SIGNAL_VOLTAGE_180:
++			return pinctrl_select_state(host->pinctrl,
++						    host->pins_1v8);
++		default:
++			return -EINVAL;
++		}
++	}
++
+ 	/* no vqmmc regulator, assume fixed regulator at 3/3.3V */
+ 	if (mmc->ios.signal_voltage == MMC_SIGNAL_VOLTAGE_330)
+ 		return 0;
+@@ -2162,6 +2183,18 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
+ 	if (ret)
+ 		return ret;
+ 
++	host->pinctrl = devm_pinctrl_get(&pdev->dev);
++	if (!IS_ERR(host->pinctrl)) {
++		host->pins_3v3 = pinctrl_lookup_state(host->pinctrl,
++						      "sdmmc-3v3");
++		host->pins_1v8 = pinctrl_lookup_state(host->pinctrl,
++						      "sdmmc-1v8");
++		if (IS_ERR(host->pins_3v3) || IS_ERR(host->pins_1v8)) {
++			host->pins_3v3 = NULL;
++			host->pins_1v8 = NULL;
++		}
++	}
++
+ 	host->reg_base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(host->reg_base))
+ 		return PTR_ERR(host->reg_base);

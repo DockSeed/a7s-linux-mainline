@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 10:06:52 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Let the audio module clocks set
+ PLL_AUDIO0
+
+The I2S/PCM, OWA TX and DMIC module clocks pass no rate request to
+their parents, so PLL_AUDIO0 is never set to its 22.5792 MHz x 4 point.
+A 44.1 kHz stream then picks the nearest fixed source: OWA at 44.1 kHz
+runs from AUDIO1PLL_DIV5 / 28, 21.943 MHz instead of 22.5792 MHz, 2.8 %
+slow. 48 kHz is exact either way (AUDIO1PLL_DIV5 / 25).
+
+Set CLK_SET_RATE_PARENT on I2S/PCM0-4, OWA TX and DMIC, so a 44.1 kHz
+request reaches PLL_AUDIO0 and selects the manual's point from its
+sigma-delta table. PLL_AUDIO1's taps no longer pass requests up (previous
+patch), so the 48 kHz family keeps its fixed source.
+
+Tested on Radxa Cubie A7S: booted on two boards; OWA at 44.1 kHz takes
+PLL_AUDIO0 (OWA_TX_CLK 0x80000003, mux 0) and at 48 kHz AUDIO1PLL_DIV5
+(0x82000018, mux 2), and spdif-tx runs at 22.5792 MHz. The I2S and DMIC
+module clocks were not exercised.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 38cf2bc6afd0..ec5213b58d72 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -1155,21 +1155,21 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(i2spcm0_clk, "i2spcm0", i2spcm_parents, 0x12
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ static SUNXI_CCU_GATE_DATA(bus_i2spcm0_clk, "bus-i2spcm0", hosc, 0x120c, BIT(0), 0);
+ 
+ static SUNXI_CCU_M_HW_WITH_MUX_GATE(i2spcm1_clk, "i2spcm1", i2spcm_parents, 0x1210,
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ static SUNXI_CCU_GATE_DATA(bus_i2spcm1_clk, "bus-i2spcm1", hosc, 0x121c, BIT(0), 0);
+ 
+ static SUNXI_CCU_M_HW_WITH_MUX_GATE(i2spcm2_clk, "i2spcm2", i2spcm_parents, 0x1220,
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ 
+ static const struct clk_hw *i2spcm2_asrc_parents[] = {
+ 	&pll_audio0_4x_clk.common.hw,
+@@ -1190,14 +1190,14 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(i2spcm3_clk, "i2spcm3", i2spcm_parents, 0x12
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ static SUNXI_CCU_GATE_DATA(bus_i2spcm3_clk, "bus-i2spcm3", hosc, 0x123c, BIT(0), 0);
+ 
+ static SUNXI_CCU_M_HW_WITH_MUX_GATE(i2spcm4_clk, "i2spcm4", i2spcm_parents, 0x1240,
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ static SUNXI_CCU_GATE_DATA(bus_i2spcm4_clk, "bus-i2spcm4", hosc, 0x124c, BIT(0), 0);
+ 
+ static const struct clk_hw *spdif_tx_parents[] = {
+@@ -1209,7 +1209,7 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(spdif_tx_clk, "spdif-tx", spdif_tx_parents,
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ 
+ /*
+  * Only mux value 2 (PERI0_400M) is documented, 0 and 1 are reserved: the
+@@ -1233,7 +1233,7 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(dmic_clk, "dmic", dmic_parents, 0x12c0,
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ 
+ static SUNXI_CCU_GATE_HWS(bus_dmic_clk, "bus-dmic", apb1_hws, 0x12cc, BIT(0), 0);
+ 

@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 10:20:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the PWM controllers
+
+The A733 has two PWM controllers with ten channels each, which the
+device tree does not describe. Add pwm0 and pwm1, disabled, and one pin
+group for each PWM1 pin on the Radxa Cubie A7S header J11 used here
+(PD11 to PD13, PJ22 to PJ25) and for the blue LED (PJ26). The values
+(page numbers are pages of the A733 manual PDF):
+
+- Registers at 0x02527000 (PWM0) and 0x02528000 (PWM1), 4 KiB each in
+  the memory map (p.26). The last register is at 0x364, so the size is
+  0x400.
+- Interrupts 67 and 68, which are GIC_SPI 35 and 36: interrupt table
+  (section 12.2.3.1, p.614).
+- Ten channels each: PWM0_[9:0] and PWM1_[9:0] (section 18.7.1).
+- Clocks: the bus gate, SYS_CLK24M and APB0 as hosc and apb. The
+  manual gives SYS_CLK24M as a fixed 24 MHz clock from PLL_REF, not
+  the 26 MHz DCXO (section 18.7.3, p.1323). Reset: RST_BUS_PWM0 and
+  RST_BUS_PWM1.
+- PD11, PD12 and PD13 carry PWM1-1, PWM1-2 and PWM1-3 on function 7
+  (PD_CFG1, p.1647). PJ22 to PJ26 carry PWM1-4 to PWM1-8 on function 3
+  (PJ_CFG2, PJ_CFG3, p.1764 to 1766).
+
+The board connects PD11 to PD13 and PJ22 to PJ25 to the 30-pin header
+J11 (schematic V1.10, sheet 14) and PJ26 to the blue LED (sheet 16).
+PJ27, which carries PWM1-9, goes to the fan connector J7, which is not
+fitted, so it has no group. The nodes stay disabled and the pin groups
+are /omit-if-no-ref/, because nothing fitted on the board uses them.
+
+Not covered: enabling a controller on the board, S_PWM, and the PWM0
+pins.
+
+Tested on Radxa Cubie A7S: booted on one board with pwm1 enabled and
+the PJ26 group selected in a test device tree; the controller probes
+with ten channels, PJ26 takes its PWM function and the LED blinks.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 80 +++++++++++++++++++
+ 1 file changed, 80 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index b9e48dbcbdad..d520847695b2 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -597,6 +597,62 @@ mmc2_pins: mmc2-pins {
+ 				bias-pull-up;
+ 			};
+ 
++			/omit-if-no-ref/
++			pwm1_pd11_pin: pwm1-pd11-pin {
++				pins = "PD11";
++				allwinner,pinmux = <7>;
++				function = "pwm1";
++			};
++
++			/omit-if-no-ref/
++			pwm1_pd12_pin: pwm1-pd12-pin {
++				pins = "PD12";
++				allwinner,pinmux = <7>;
++				function = "pwm1";
++			};
++
++			/omit-if-no-ref/
++			pwm1_pd13_pin: pwm1-pd13-pin {
++				pins = "PD13";
++				allwinner,pinmux = <7>;
++				function = "pwm1";
++			};
++
++			/omit-if-no-ref/
++			pwm1_pj22_pin: pwm1-pj22-pin {
++				pins = "PJ22";
++				allwinner,pinmux = <3>;
++				function = "pwm1";
++			};
++
++			/omit-if-no-ref/
++			pwm1_pj23_pin: pwm1-pj23-pin {
++				pins = "PJ23";
++				allwinner,pinmux = <3>;
++				function = "pwm1";
++			};
++
++			/omit-if-no-ref/
++			pwm1_pj24_pin: pwm1-pj24-pin {
++				pins = "PJ24";
++				allwinner,pinmux = <3>;
++				function = "pwm1";
++			};
++
++			/omit-if-no-ref/
++			pwm1_pj25_pin: pwm1-pj25-pin {
++				pins = "PJ25";
++				allwinner,pinmux = <3>;
++				function = "pwm1";
++			};
++
++			/omit-if-no-ref/
++			pwm1_pj26_pin: pwm1-pj26-pin {
++				pins = "PJ26";
++				allwinner,pinmux = <3>;
++				function = "pwm1";
++			};
++
+ 			/omit-if-no-ref/
+ 			rgmii0_ph_pins: rgmii0-ph-pins {
+ 				pins = "PH0", "PH1", "PH2", "PH4", "PH5",
+@@ -843,6 +899,30 @@ lradc: lradc@2524000 {
+ 			status = "disabled";
+ 		};
+ 
++		pwm0: pwm@2527000 {
++			compatible = "allwinner,sun60i-a733-pwm";
++			reg = <0x02527000 0x400>;
++			interrupts = <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_PWM0>, <&ccu CLK_SYS_24M>, <&ccu CLK_APB0>;
++			clock-names = "bus", "hosc", "apb";
++			resets = <&ccu RST_BUS_PWM0>;
++			#pwm-cells = <3>;
++			allwinner,npwms = <10>;
++			status = "disabled";
++		};
++
++		pwm1: pwm@2528000 {
++			compatible = "allwinner,sun60i-a733-pwm";
++			reg = <0x02528000 0x400>;
++			interrupts = <GIC_SPI 36 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_PWM1>, <&ccu CLK_SYS_24M>, <&ccu CLK_APB0>;
++			clock-names = "bus", "hosc", "apb";
++			resets = <&ccu RST_BUS_PWM1>;
++			#pwm-cells = <3>;
++			allwinner,npwms = <10>;
++			status = "disabled";
++		};
++
+ 		syscon: syscon@3000000 {
+ 			compatible = "allwinner,sun60i-a733-system-control";
+ 			reg = <0x03000000 0x1000>;

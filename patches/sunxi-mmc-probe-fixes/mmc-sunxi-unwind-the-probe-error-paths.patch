@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 8 Oct 2026 08:00:00 +0200
+Subject: [PATCH] mmc: sunxi: Unwind the probe error paths
+
+sunxi_mmc_resource_request() leaves the module and bus clocks on and
+the reset released. If the interrupt request, the descriptor
+allocation, mmc_of_parse(), sunxi_mmc_init_host() or mmc_add_host()
+fails afterwards, probe returns with the controller still running. A
+failed mmc_add_host() also leaves runtime PM enabled, and the next bind
+warns about an unbalanced pm_runtime_enable().
+
+Release in reverse order of acquisition, with a label per step as
+mtk-sd does: runtime PM only once it was enabled, then the descriptor
+memory, then the interrupt and the clocks, as sunxi_mmc_remove() does.
+The interrupt request in sunxi_mmc_resource_request() jumps to the
+label that switches the clocks off.
+
+Tested on Radxa Cubie A7S: booted on two boards with a test-only change
+that fails each probe step on demand; after every failed bind of the SD
+and the eMMC controller the clocks are off and the reset is asserted,
+and the next bind works without an unbalanced pm_runtime_enable()
+warning.
+
+Fixes: 3cbcb16095f9 ("mmc: sunxi: Add driver for SD/MMC hosts found on Allwinner sunxi SoCs")
+Fixes: 9a8e1e8cc2c0 ("mmc: sunxi: Add runtime_pm support")
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index fe4c0f6d73f3..c30eacb660f7 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -1354,8 +1354,12 @@ static int sunxi_mmc_resource_request(struct sunxi_mmc_host *host,
+ 		goto error_disable_mmc;
+ 	}
+ 
+-	return devm_request_threaded_irq(&pdev->dev, host->irq, sunxi_mmc_irq,
++	ret = devm_request_threaded_irq(&pdev->dev, host->irq, sunxi_mmc_irq,
+ 			sunxi_mmc_handle_manual_stop, 0, "sunxi-mmc", host);
++	if (ret)
++		goto error_disable_mmc;
++
++	return 0;
+ 
+ error_disable_mmc:
+ 	sunxi_mmc_disable(host);
+@@ -1385,9 +1389,11 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 
+ 	host->sg_cpu = dma_alloc_coherent(&pdev->dev, PAGE_SIZE,
+ 					  &host->sg_dma, GFP_KERNEL);
+-	if (!host->sg_cpu)
+-		return dev_err_probe(&pdev->dev, -ENOMEM,
+-				     "Failed to allocate DMA descriptor mem\n");
++	if (!host->sg_cpu) {
++		ret = dev_err_probe(&pdev->dev, -ENOMEM,
++				    "Failed to allocate DMA descriptor mem\n");
++		goto error_disable_mmc;
++	}
+ 
+ 	if (host->cfg->ccu_has_timings_switch) {
+ 		/*
+@@ -1467,7 +1473,7 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 
+ 	ret = mmc_add_host(mmc);
+ 	if (ret)
+-		goto error_free_dma;
++		goto error_disable_pm;
+ 
+ 	dev_info(&pdev->dev, "initialized, max. request size: %u KB%s\n",
+ 		 mmc->max_req_size >> 10,
+@@ -1475,8 +1481,13 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 
+ 	return 0;
+ 
++error_disable_pm:
++	pm_runtime_disable(&pdev->dev);
+ error_free_dma:
+ 	dma_free_coherent(&pdev->dev, PAGE_SIZE, host->sg_cpu, host->sg_dma);
++error_disable_mmc:
++	disable_irq(host->irq);
++	sunxi_mmc_disable(host);
+ 	return ret;
+ }
+ 

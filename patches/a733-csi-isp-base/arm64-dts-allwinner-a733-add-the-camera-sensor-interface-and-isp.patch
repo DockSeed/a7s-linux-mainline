@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 16:04:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the camera sensor interface
+ and ISP
+
+The A733 has a camera sensor interface controller, the CSIC, and an
+image signal processor, the ISP, in the video input system. Add their
+nodes, disabled.
+
+The windows are the 1 MiB of the CSI and the 4 MiB of the ISP the
+manual maps (chapter 2), and their masters are masters 1 and 2 of the
+first IOMMU (manual chapter 10). The interrupts are the CSI_* sources
+of CPUX, 139 to 140 and 149 to 167, GIC SPI number minus 32 (manual
+section 12.2.3.1). Both nodes hold the PD_VI power domain and the bus
+reset of CSI_BGR_REG; the ISP has none of its own, and the reset of
+the video input system itself is de-asserted by default (manual
+section 4.1.6.247).
+
+Each node holds every gate on its register and DMA path as a named
+clock: the bus gate, the module clock, the MBUS clock enable of the
+CSI or the ISP, and the two gates of the video input system, VID_IN of
+AHB_MAT_CLK_GATING_REG bit 2 and of MBUS_MAT_CLK_GATING_REG bit 24
+(manual sections 4.1.6.245, 4.1.6.244, 4.1.6.246, 4.1.6.84, 4.1.6.82
+and 4.1.6.83). The last two are on at reset and clk_disable_unused()
+closes them when no node holds them.
+
+They stay disabled until a driver binds them: an enabled node that no
+driver binds keeps the PCK-600 from ever calling its sync_state(),
+since fw_devlink waits for the consumer, so no power domain that nobody
+holds would be switched off.
+
+Not covered: the parent and rate of the module clocks, the sensor ports
+and the MIPI and MCLK pins, and a driver. No camera is attached to the
+board, and the manual describes no register of the ISP.
+
+Tested on Radxa Cubie A7S: with the nodes enabled for a test, the clocks
+and the reset of both blocks follow runtime PM, PD_VI is on while they
+are resumed, the CSIC registers read their reset values, and the ISP
+window reads zero (the manual lists no ISP register).
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 46 +++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 75c150ed9a85..7087c4d4e69e 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1518,6 +1518,52 @@ dp_out: port@1 {
+ 			};
+ 		};
+ 
++		csic: csic@5800000 {
++			compatible = "allwinner,sun60i-a733-csic";
++			reg = <0x05800000 0x100000>;
++			interrupts = <GIC_SPI 117 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 120 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 107 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 108 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 121 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 122 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 123 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 124 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 126 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 127 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 133 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 134 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 135 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_CSI>, <&ccu CLK_AHB_VID_IN>,
++				 <&ccu CLK_MBUS_VID_IN>, <&ccu CLK_MBUS_CSI>,
++				 <&ccu CLK_CSI>;
++			clock-names = "bus", "ahb", "mbus", "mclk", "mod";
++			resets = <&ccu RST_BUS_CSI>;
++			power-domains = <&pck600 PD_VI>;
++			iommus = <&iommu0 1>;
++			status = "disabled";
++		};
++
++		isp: isp@5900000 {
++			compatible = "allwinner,sun60i-a733-isp";
++			reg = <0x05900000 0x400000>;
++			interrupts = <GIC_SPI 129 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 130 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 131 IRQ_TYPE_LEVEL_HIGH 0>,
++				     <GIC_SPI 132 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_CSI>, <&ccu CLK_AHB_VID_IN>,
++				 <&ccu CLK_MBUS_VID_IN>, <&ccu CLK_MBUS_ISP>,
++				 <&ccu CLK_ISP>;
++			clock-names = "bus", "ahb", "mbus", "mclk", "mod";
++			resets = <&ccu RST_BUS_CSI>;
++			power-domains = <&pck600 PD_VI>;
++			iommus = <&iommu0 2>;
++			status = "disabled";
++		};
++
+ 		pcie: pcie@6000000 {
+ 			compatible = "allwinner,sun60i-a733-pcie";
+ 			reg = <0x06000000 0x400000>,

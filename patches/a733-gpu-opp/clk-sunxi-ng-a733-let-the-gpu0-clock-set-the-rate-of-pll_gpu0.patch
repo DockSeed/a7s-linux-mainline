@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:57:25 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Let the GPU0 clock set the rate of
+ PLL_GPU0
+
+GPU0 divides PLL_GPU0 by 1, 2, 4, 8 or 16, but passes no rate request
+to its parent. A consumer of GPU0 can therefore only pick a divider of
+whatever rate PLL_GPU0 has, 840 MHz out of reset, and the board has to
+set PLL_GPU0 itself, with assigned-clock-rates on its own clock.
+
+Set CLK_SET_RATE_PARENT, so that a rate request on GPU0 reaches
+PLL_GPU0, and CLK_SET_RATE_NO_REPARENT. GPU0 can also take
+PLL_PERIPH0 and its taps, which feed other consumers: without the flag
+the rate search tries every parent and may re-rate PLL_PERIPH0. With it
+the search stays on the parent the board selected.
+
+PLL_GPU0 has CLK_SET_RATE_GATE, so the request fails with -EBUSY while
+the PLL is prepared; nothing changes for a rate set before the GPU
+enables its clocks.
+
+The board's assigned-clock-rates already set PLL_GPU0 to 1008 MHz before
+GPU0, so the request for 1008 MHz on GPU0 finds the parent at that rate
+and changes nothing for it.
+
+Not covered: the rate request of the GPU driver, which the next patches
+add.
+
+Tested on Radxa Cubie A7S: on two boards the GPU driver's rate request
+on GPU0 set PLL_GPU0 to that rate with GPU0 undivided while the PLL
+output was gated, and the GPU firmware booted.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 33ccf88ad8f5..78b0579a82b7 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -925,7 +925,9 @@ static struct ccu_div gpu0_clk = {
+ 		.reg		= 0xb20,
+ 		.features	= CCU_FEATURE_UPDATE_BIT,
+ 		.hw.init	= CLK_HW_INIT_PARENTS_DATA("gpu0", gpu_parents,
+-							   &ccu_div_ops, 0),
++							   &ccu_div_ops,
++							   CLK_SET_RATE_PARENT |
++							   CLK_SET_RATE_NO_REPARENT),
+ 	}
+ };
+ static SUNXI_CCU_GATE_HWS(bus_gpu0_clk, "bus-gpu0", ahb_hws, 0xb24, BIT(0), 0);

@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 18:02:33 +0200
+Subject: [PATCH] arm64: defconfig: Enable the X-Powers PMIC power key driver
+
+The power key of the X-Powers PMICs (AXP20x, AXP22x, AXP318W) reports
+through axp20x-pek. Build it as a module, as the other PMIC power key
+drivers are, so that a press of the key reaches user space.
+
+Tested on Radxa Cubie A7S: booted on one board; the driver builds as a
+module, loads and registers the power key input device.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index d6415055da45..e7bb7e6a0e25 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -549,6 +549,7 @@ CONFIG_INPUT_PM8941_PWRKEY=y
+ CONFIG_INPUT_PM8XXX_VIBRATOR=m
+ CONFIG_INPUT_TPS65219_PWRBUTTON=m
+ CONFIG_INPUT_TPS6594_PWRBUTTON=m
++CONFIG_INPUT_AXP20X_PEK=m
+ CONFIG_INPUT_PWM_BEEPER=m
+ CONFIG_INPUT_PWM_VIBRA=m
+ CONFIG_INPUT_RK805_PWRKEY=m

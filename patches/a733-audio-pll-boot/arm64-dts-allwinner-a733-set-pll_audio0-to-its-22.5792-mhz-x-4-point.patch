@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 07:18:32 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Set PLL_AUDIO0 to its 22.5792
+ MHz x 4 point
+
+The first 44.1 kHz stream on an I2S/PCM controller after boot fails:
+
+  sun4i-i2s 2532000.i2s: Unsupported BCLK divider: -22
+
+The I2S/PCM module clocks select AUDIO0PLL4X after reset, and sun4i-i2s
+enables its module clock in runtime resume, before hw_params sets the
+rate. PLL_AUDIO0 is CLK_SET_RATE_GATE, so while it is prepared its rate
+is fixed at the reset value, about 98.3 MHz. The request for
+22.5792 MHz then settles on PERI0_200M / 9, 22.22 MHz, for which no
+BCLK divider exists. The failed attempt leaves the module clock on
+PERI0_200M, PLL_AUDIO0 is released, and every later stream gets the
+exact rate.
+
+Set PLL_AUDIO0 to 90.3168 MHz when the CCU registers, the one point of
+its sigma-delta table and the 22.5792 MHz x 4 configuration of the
+manual's PLL table. No consumer holds the PLL at that time, so the rate
+changes with the output gated, as the manual's frequency change
+procedure requires. The 48 kHz family runs from PLL_AUDIO1 and is not
+affected.
+
+Not covered: CLK_SET_RATE_GATE stays; it matches the manual's procedure.
+
+Tested on Radxa Cubie A7S: after a cold boot PLL_AUDIO0 holds the
+manual's point before any stream, and the first 44.1 kHz stream on
+I2S/PCM0-4 and on OWA runs from AUDIO0PLL4X.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 3e52b38f1c4f..892c50f16680 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -583,6 +583,8 @@ ccu: clock-controller@2002000 {
+ 				      "iosc", "losc-fanout";
+ 			#clock-cells = <1>;
+ 			#reset-cells = <1>;
++			assigned-clocks = <&ccu CLK_PLL_AUDIO0_4X>;
++			assigned-clock-rates = <90316800>;
+ 		};
+ 
+ 		wdt: watchdog@2050000 {

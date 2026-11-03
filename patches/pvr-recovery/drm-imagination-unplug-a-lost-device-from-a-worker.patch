@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 07:04:44 +0200
+Subject: [PATCH] drm/imagination: Unplug a lost device from a worker
+
+pvr_device_lost() calls drm_dev_unplug() inline, and drm_dev_unplug()
+ends in synchronize_srcu(&drm_unplug_srcu). It is reached from inside a
+drm_dev_enter() section: pvr_mmu_flush_exec() holds one across
+pvr_power_reset(), and a failed hard reset calls pvr_device_lost() there.
+The task then waits for its own SRCU reader and stays in D state for
+good, holding reset_sem, so every later reset blocks as well.
+
+Keep setting ->lost synchronously, since the reset path and the
+watchdog read it, and run the unplug from a work item on the scheduler
+workqueue, where no SRCU reader and no reset_sem is held. pvr_remove()
+disables the work before its own drm_dev_unplug(), so the two never run
+side by side.
+
+Tested on Radxa Cubie A7S: not tested; the test system submits no GPU
+jobs, so this path was not reached.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/imagination/pvr_device.h |  8 ++++++++
+ drivers/gpu/drm/imagination/pvr_drv.c    |  2 ++
+ drivers/gpu/drm/imagination/pvr_power.c  | 19 ++++++++++++++++++-
+ 3 files changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/imagination/pvr_device.h b/drivers/gpu/drm/imagination/pvr_device.h
+index d51c57cf9332..d171c4166a73 100644
+--- a/drivers/gpu/drm/imagination/pvr_device.h
++++ b/drivers/gpu/drm/imagination/pvr_device.h
+@@ -315,6 +315,14 @@ struct pvr_device {
+ 	 */
+ 	bool lost;
+ 
++	/**
++	 * @lost_work: Runs the drm_dev_unplug() that pvr_device_lost() requests.
++	 *
++	 * pvr_device_lost() can be reached inside a drm_dev_enter() section, and
++	 * drm_dev_unplug() waits in synchronize_srcu() for every such section to end.
++	 */
++	struct work_struct lost_work;
++
+ 	/**
+ 	 * @reset_sem: Reset semaphore.
+ 	 *
+diff --git a/drivers/gpu/drm/imagination/pvr_drv.c b/drivers/gpu/drm/imagination/pvr_drv.c
+index 5c965ef0274f..a5b0c970dca5 100644
+--- a/drivers/gpu/drm/imagination/pvr_drv.c
++++ b/drivers/gpu/drm/imagination/pvr_drv.c
+@@ -1477,6 +1477,8 @@ static void pvr_remove(struct platform_device *plat_dev)
+ 
+ 	pm_runtime_suspend(drm_dev->dev);
+ 	pvr_device_fini(pvr_dev);
++	/* A device lost during remove must not run a second unplug beside this one. */
++	disable_work_sync(&pvr_dev->lost_work);
+ 	drm_dev_unplug(drm_dev);
+ 	pvr_watchdog_fini(pvr_dev);
+ 	pvr_queue_device_fini(pvr_dev);
+diff --git a/drivers/gpu/drm/imagination/pvr_power.c b/drivers/gpu/drm/imagination/pvr_power.c
+index eb4b6ecdf4f4..d70dd165eb17 100644
+--- a/drivers/gpu/drm/imagination/pvr_power.c
++++ b/drivers/gpu/drm/imagination/pvr_power.c
+@@ -29,18 +29,33 @@
+ 
+ #define WATCHDOG_TIME_MS (500)
+ 
++static void
++pvr_device_lost_work(struct work_struct *work)
++{
++	struct pvr_device *pvr_dev = container_of(work, struct pvr_device, lost_work);
++
++	drm_dev_unplug(from_pvr_device(pvr_dev));
++}
++
+ /**
+  * pvr_device_lost() - Mark GPU device as lost
+  * @pvr_dev: Target PowerVR device.
+  *
+  * This will cause the DRM device to be unplugged.
++ *
++ * The unplug runs from a worker. Callers can hold the unplug SRCU read lock
++ * (pvr_mmu_flush_exec() holds it across pvr_power_reset()) or the reset
++ * semaphore that a reader inside such a section waits for, and
++ * drm_dev_unplug() ends in synchronize_srcu(): called inline, the task waits
++ * for itself. Setting @lost stays synchronous for the reset path and the
++ * watchdog, which read it; ioctls are refused once the worker has unplugged.
+  */
+ void
+ pvr_device_lost(struct pvr_device *pvr_dev)
+ {
+ 	if (!pvr_dev->lost) {
+ 		pvr_dev->lost = true;
+-		drm_dev_unplug(from_pvr_device(pvr_dev));
++		queue_work(pvr_dev->sched_wq, &pvr_dev->lost_work);
+ 	}
+ }
+ 
+@@ -250,6 +265,7 @@ int
+ pvr_watchdog_init(struct pvr_device *pvr_dev)
+ {
+ 	INIT_DELAYED_WORK(&pvr_dev->watchdog.work, pvr_watchdog_worker);
++	INIT_WORK(&pvr_dev->lost_work, pvr_device_lost_work);
+ 
+ 	return 0;
+ }
+@@ -616,6 +632,7 @@ void
+ pvr_watchdog_fini(struct pvr_device *pvr_dev)
+ {
+ 	cancel_delayed_work_sync(&pvr_dev->watchdog.work);
++	cancel_work_sync(&pvr_dev->lost_work);
+ }
+ 
+ int pvr_power_domains_init(struct pvr_device *pvr_dev)

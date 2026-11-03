@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 15:25:10 +0200
+Subject: [PATCH] drm/sun4i: layer: Let DRM manage the planes
+
+sun4i_drv no longer calls drm_mode_config_cleanup() itself (drm/sun4i:
+drv: Do not call drm_mode_config_cleanup()). The managed release of
+drm_mode_config_init() destroys the mode objects at the last
+drm_dev_put() instead, after component_unbind_all(), and, while
+userspace still holds the device open, after the display engine device
+has released its devres.
+
+The planes of the display backend live in devm memory of the display
+engine device and are destroyed through .destroy, so they are cleaned up
+on freed memory in that case.
+
+Allocate and initialise them with drmm_universal_plane_alloc(), which
+registers drm_plane_cleanup() as a managed action and frees the memory
+after it. The managed variant wants a NULL .destroy, so drop the hook.
+The fields of the layer are set after the allocation.
+
+That allocation already calls .format_mod_supported, to fill the
+IN_FORMATS blob, and sun4i_layer_format_mod_supported() read the
+frontend from the layer, which is not set up yet. Look at the modifier
+list of the plane instead, which the core has set at that point and
+which holds the tiled modifier only if the plane was created with a
+frontend. The result is the same as before for every format and
+modifier: without a frontend the plane lists the backend formats and
+the linear modifier only, with one it lists the tiled modifier as well.
+
+Not covered: the planes of the sun8i mixer, converted separately.
+
+Tested on Radxa Cubie A7S: not tested; the board has no controller of
+this kind, the code is compiled only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_layer.c | 48 ++++++++++++++++-------------
+ 1 file changed, 26 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_layer.c b/drivers/gpu/drm/sun4i/sun4i_layer.c
+index d65587d96d9e..ad33bd82ecc5 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_layer.c
++++ b/drivers/gpu/drm/sun4i/sun4i_layer.c
+@@ -10,6 +10,7 @@
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_blend.h>
+ #include <drm/drm_gem_atomic_helper.h>
++#include <drm/drm_managed.h>
+ 
+ #include "sun4i_backend.h"
+ #include "sun4i_frontend.h"
+@@ -114,13 +115,22 @@ static void sun4i_backend_layer_atomic_update(struct drm_plane *plane,
+ static bool sun4i_layer_format_mod_supported(struct drm_plane *plane,
+ 					     uint32_t format, uint64_t modifier)
+ {
+-	struct sun4i_layer *layer = plane_to_sun4i_layer(plane);
+-
+-	if (IS_ERR_OR_NULL(layer->backend->frontend))
+-		return sun4i_backend_format_is_supported(format, modifier);
+-
+-	return sun4i_backend_format_is_supported(format, modifier) ||
+-	       sun4i_frontend_format_is_supported(format, modifier);
++	unsigned int i;
++
++	if (sun4i_backend_format_is_supported(format, modifier))
++		return true;
++
++	/*
++	 * This is called while the plane is allocated, before the layer is
++	 * set up. The modifier list of the plane holds the tiled modifier
++	 * only if the plane has a frontend.
++	 */
++	for (i = 0; i < plane->modifier_count; i++)
++		if (plane->modifiers[i] == modifier)
++			return sun4i_frontend_format_is_supported(format,
++								  modifier);
++
++	return false;
+ }
+ 
+ static const struct drm_plane_helper_funcs sun4i_backend_layer_helper_funcs = {
+@@ -131,7 +141,6 @@ static const struct drm_plane_helper_funcs sun4i_backend_layer_helper_funcs = {
+ static const struct drm_plane_funcs sun4i_backend_layer_funcs = {
+ 	.atomic_destroy_state	= sun4i_backend_layer_destroy_state,
+ 	.atomic_duplicate_state	= sun4i_backend_layer_duplicate_state,
+-	.destroy		= drm_plane_cleanup,
+ 	.disable_plane		= drm_atomic_helper_disable_plane,
+ 	.reset			= sun4i_backend_layer_reset,
+ 	.update_plane		= drm_atomic_helper_update_plane,
+@@ -196,14 +205,6 @@ static struct sun4i_layer *sun4i_layer_init_one(struct drm_device *drm,
+ 	const uint32_t *formats = sun4i_layer_formats;
+ 	unsigned int formats_len = ARRAY_SIZE(sun4i_layer_formats);
+ 	struct sun4i_layer *layer;
+-	int ret;
+-
+-	layer = devm_kzalloc(drm->dev, sizeof(*layer), GFP_KERNEL);
+-	if (!layer)
+-		return ERR_PTR(-ENOMEM);
+-
+-	layer->id = id;
+-	layer->backend = backend;
+ 
+ 	if (IS_ERR_OR_NULL(backend->frontend)) {
+ 		formats = sun4i_backend_layer_formats;
+@@ -212,15 +213,18 @@ static struct sun4i_layer *sun4i_layer_init_one(struct drm_device *drm,
+ 	}
+ 
+ 	/* possible crtcs are set later */
+-	ret = drm_universal_plane_init(drm, &layer->plane, 0,
+-				       &sun4i_backend_layer_funcs,
+-				       formats, formats_len,
+-				       modifiers, type, NULL);
+-	if (ret) {
++	layer = drmm_universal_plane_alloc(drm, struct sun4i_layer, plane, 0,
++					   &sun4i_backend_layer_funcs,
++					   formats, formats_len,
++					   modifiers, type, NULL);
++	if (IS_ERR(layer)) {
+ 		dev_err(drm->dev, "Couldn't initialize layer\n");
+-		return ERR_PTR(ret);
++		return layer;
+ 	}
+ 
++	layer->id = id;
++	layer->backend = backend;
++
+ 	drm_plane_helper_add(&layer->plane,
+ 			     &sun4i_backend_layer_helper_funcs);
+ 

@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 19:51:59 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the DMA requests of S_SPI0
+
+The S_SPI0 node has no "dmas". spi-sun6i then warns at probe that it
+cannot request its TX and RX DMA channels and moves every transfer
+through the FIFO by CPU.
+
+The A733 manual lists S_SPI as DRQ port 53 for source and destination
+in the DRQ table of the DMA controller (13.1.4.1, Table 13-2), the
+table of the CPUX domain, which is the DMAC0 that the "dma" node
+describes. Add port 53 for both directions, in the order of the binding.
+
+Tested on Radxa Cubie A7S: S_SPI0 gets its TX and RX channels from
+DMAC0, and a loopback longer than the FIFO passes at 1 and 10 MHz with
+the DMA controller interrupt counting up.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index bd6c014147a8..f4069930b9db 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1925,6 +1925,8 @@ r_spi0: spi@7092000 {
+ 			clocks = <&r_ccu CLK_BUS_R_SPI>, <&r_ccu CLK_R_SPI>;
+ 			clock-names = "ahb", "mod";
+ 			resets = <&r_ccu RST_BUS_R_SPI>;
++			dmas = <&dma 53>, <&dma 53>;
++			dma-names = "rx", "tx";
+ 			status = "disabled";
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;

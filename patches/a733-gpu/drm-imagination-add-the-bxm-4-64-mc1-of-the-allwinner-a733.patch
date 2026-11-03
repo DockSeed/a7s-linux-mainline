@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 07:04:44 +0200
+Subject: [PATCH] drm/imagination: Add the BXM-4-64 MC1 of the Allwinner A733
+
+The Allwinner A733 has a BXM-4-64 MC1 with BVNC 36.56.104.183, read from
+ROGUE_CR_CORE_ID on the SoC. The driver does not know this BVNC and
+refuses to bind without exp_hw_support.
+
+Add it as supported, with its firmware name. The driver keeps no
+BVNC-indexed feature table: features, quirks and enhancements come from
+the firmware file's device info. That device info matches the one of
+36.52.104.182, a BXM-4-64 MC1 already supported, except for BRN 71242,
+which the driver only applies to cores without multicore support.
+
+Not covered: rogue_36.56.104.183_v1.fw is not in linux-firmware yet.
+
+Tested on Radxa Cubie A7S: booted on two boards; the driver accepts BVNC
+36.56.104.183 without exp_hw_support, loads rogue_36.56.104.183_v1.fw
+from the initramfs, and initialises. The firmware file is not in
+linux-firmware yet. No render job was submitted.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/imagination/pvr_device.c | 1 +
+ drivers/gpu/drm/imagination/pvr_drv.c    | 2 ++
+ 2 files changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/imagination/pvr_device.c b/drivers/gpu/drm/imagination/pvr_device.c
+index 54fe4180c73c..05c2c81521d8 100644
+--- a/drivers/gpu/drm/imagination/pvr_device.c
++++ b/drivers/gpu/drm/imagination/pvr_device.c
+@@ -533,6 +533,7 @@ pvr_gpu_support_level(const struct pvr_gpu_id *gpu_id)
+ 	case PVR_PACKED_BVNC(33, 15, 11, 3):
+ 	case PVR_PACKED_BVNC(36, 52, 104, 182):
+ 	case PVR_PACKED_BVNC(36, 53, 104, 796):
++	case PVR_PACKED_BVNC(36, 56, 104, 183):
+ 		return PVR_GPU_SUPPORTED;
+ 
+ 	default:
+diff --git a/drivers/gpu/drm/imagination/pvr_drv.c b/drivers/gpu/drm/imagination/pvr_drv.c
+index a5b0c970dca5..12e32e71539f 100644
+--- a/drivers/gpu/drm/imagination/pvr_drv.c
++++ b/drivers/gpu/drm/imagination/pvr_drv.c
+@@ -46,6 +46,7 @@
+  * * AXE-1-16M (33.15.11.3)
+  * * BXM-4-64 MC1 (36.52.104.182)
+  * * BXS-4-64 MC1 (36.53.104.796)
++ * * BXM-4-64 MC1 (36.56.104.183)
+  */
+ 
+ /**
+@@ -1539,3 +1540,4 @@ MODULE_IMPORT_NS("DMA_BUF");
+ MODULE_FIRMWARE("powervr/rogue_33.15.11.3_v1.fw");
+ MODULE_FIRMWARE("powervr/rogue_36.52.104.182_v1.fw");
+ MODULE_FIRMWARE("powervr/rogue_36.53.104.796_v1.fw");
++MODULE_FIRMWARE("powervr/rogue_36.56.104.183_v1.fw");

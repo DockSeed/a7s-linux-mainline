@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Enzo Adriano <enzo.adriano.code@gmail.com>
+Date: Sat, 13 Jun 2026 05:42:16 -0400
+Subject: [PATCH] arm64: dts: allwinner: add Radxa Cubie A7S
+
+Add the Radxa Cubie A7S board description with serial console and SD card
+boot support.
+
+Ethernet remains disabled until the GMAC210 wrapper, clocks, resets,
+MDIO, PHY reset, PHY power, and link behavior are proven.
+
+Signed-off-by: Enzo Adriano <enzo.adriano.code@gmail.com>
+---
+ arch/arm64/boot/dts/allwinner/Makefile        |  1 +
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 48 +++++++++++++++++++
+ 2 files changed, 49 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+
+diff --git a/arch/arm64/boot/dts/allwinner/Makefile b/arch/arm64/boot/dts/allwinner/Makefile
+index aa21f58a4be1..8fe64328cbb8 100644
+--- a/arch/arm64/boot/dts/allwinner/Makefile
++++ b/arch/arm64/boot/dts/allwinner/Makefile
+@@ -63,6 +63,7 @@ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h700-anbernic-rg35xx-2024.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h700-anbernic-rg35xx-h.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h700-anbernic-rg35xx-plus.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-h700-anbernic-rg35xx-sp.dtb
++dtb-$(CONFIG_ARCH_SUNXI) += sun60i-a733-cubie-a7s.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun55i-a527-cubie-a5e.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun55i-h728-x96qpro+.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun55i-t527-avaota-a1.dtb
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+new file mode 100644
+index 000000000000..453761a96323
+--- /dev/null
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -0,0 +1,48 @@
++// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
++
++/dts-v1/;
++
++#include "sun60i-a733.dtsi"
++
++/ {
++	model = "Radxa Cubie A7S";
++	compatible = "radxa,cubie-a7s", "allwinner,sun60i-a733";
++
++	aliases {
++		serial0 = &uart0;
++		mmc0 = &mmc0;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	reg_vcc3v3: vcc3v3 {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc-3v3";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		regulator-always-on;
++	};
++};
++
++&mmc0 {
++	vmmc-supply = <&reg_vcc3v3>;
++	bus-width = <4>;
++	no-mmc;
++	no-sdio;
++	status = "okay";
++};
++
++&pio {
++	uart0_pb9_pb10_pins: uart0-pb9-pb10-pins {
++		pins = "PB9", "PB10";
++		function = "uart0";
++	};
++};
++
++&uart0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&uart0_pb9_pb10_pins>;
++	status = "okay";
++};

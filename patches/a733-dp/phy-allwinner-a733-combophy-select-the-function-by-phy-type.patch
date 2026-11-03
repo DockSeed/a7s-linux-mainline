@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:26:29 +0200
+Subject: [PATCH] phy: allwinner: a733-combophy: Select the function by PHY
+ type
+
+The combo PHY carries USB3 or DisplayPort, and its binding now selects
+the function with a cell holding the PHY type.
+
+Translate the cell. PHY_TYPE_USB3 selects the USB3 function, which is
+unchanged; a device tree without the cell, from before DisplayPort,
+keeps getting it.
+
+Tested on Radxa Cubie A7S: booted on one board; the combo PHY switched
+from USB to DisplayPort when the alternate mode was entered.
+
+Assisted-by: LLM
+---
+ .../phy/allwinner/phy-sun60i-a733-combophy.c  | 33 +++++++++++++++----
+ 1 file changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+index faf8d2fa42fb..a9d394358dea 100644
+--- a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
++++ b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+@@ -24,6 +24,8 @@
+ #include <linux/reset.h>
+ #include <linux/usb/typec_mux.h>
+ 
++#include <dt-bindings/phy/phy.h>
++
+ /*
+  * SERDES top page, a syscon shared with the second combo PHY. Only the
+  * registers below belong to this PHY; they are accessed through the regmap,
+@@ -85,6 +87,7 @@ struct a733_combophy {
+ 	struct clk		*serdes_clk;
+ 	struct clk		*hosc_clk;
+ 	struct reset_control	*reset;
++	struct phy		*usb_phy;
+ 	struct typec_switch_dev	*sw;
+ 	/* protects orientation and inited */
+ 	struct mutex		lock;
+@@ -617,6 +620,24 @@ static int a733_combophy_typec_switch_register(struct a733_combophy *cp)
+ 					cp->sw);
+ }
+ 
++/*
++ * The cell selects the function by PHY type. A device tree without the
++ * cell, from before DisplayPort was supported, gets the USB3 function.
++ */
++static struct phy *a733_combophy_xlate(struct device *dev,
++				       const struct of_phandle_args *args)
++{
++	struct a733_combophy *cp = dev_get_drvdata(dev);
++
++	if (!args->args_count)
++		return cp->usb_phy;
++
++	if (args->args_count == 1 && args->args[0] == PHY_TYPE_USB3)
++		return cp->usb_phy;
++
++	return ERR_PTR(-EINVAL);
++}
++
+ static void a733_combophy_assert_reset(void *data)
+ {
+ 	reset_control_assert(data);
+@@ -627,7 +648,6 @@ static int a733_combophy_probe(struct platform_device *pdev)
+ 	struct device *dev = &pdev->dev;
+ 	struct phy_provider *provider;
+ 	struct a733_combophy *cp;
+-	struct phy *phy;
+ 	int ret;
+ 
+ 	cp = devm_kzalloc(dev, sizeof(*cp), GFP_KERNEL);
+@@ -680,11 +700,12 @@ static int a733_combophy_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	phy = devm_phy_create(dev, NULL, &a733_combophy_ops);
+-	if (IS_ERR(phy))
+-		return PTR_ERR(phy);
++	cp->usb_phy = devm_phy_create(dev, NULL, &a733_combophy_ops);
++	if (IS_ERR(cp->usb_phy))
++		return PTR_ERR(cp->usb_phy);
+ 
+-	phy_set_drvdata(phy, cp);
++	phy_set_drvdata(cp->usb_phy, cp);
++	platform_set_drvdata(pdev, cp);
+ 
+ 	if (device_property_read_bool(dev, "orientation-switch")) {
+ 		ret = a733_combophy_typec_switch_register(cp);
+@@ -692,7 +713,7 @@ static int a733_combophy_probe(struct platform_device *pdev)
+ 			return ret;
+ 	}
+ 
+-	provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
++	provider = devm_of_phy_provider_register(dev, a733_combophy_xlate);
+ 
+ 	return PTR_ERR_OR_ZERO(provider);
+ }

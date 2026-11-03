@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 19 Oct 2026 17:12:54 +0200
+Subject: [PATCH] mmc: sunxi: Do not offer eMMC DDR52 on the A733 SD
+ controllers
+
+The A733 SD and SDIO controllers (SMHC0, SMHC1) get MMC_CAP_1_8V_DDR and
+MMC_CAP_3_3V_DDR like every controller with new timings. Seen on the
+Radxa Cubie A7S with an eMMC module on a microSD adapter in the SD slot:
+the module attaches as a high speed DDR card, every read ends in a data
+error and the partition table cannot be read. Without the DDR caps the
+same module runs at High Speed SDR, 52 MHz, 4 bit, the mode the boot
+loader uses, and reads cleanly. Whether the DDR timing or the 1.8 V
+signalling that mmc_select_hs_ddr() switches to with MMC_CAP_1_8V_DDR
+breaks the transfer is not known.
+
+Do not add the DDR caps by default for these controllers, as is done for
+the H5 eMMC. SD and SDIO cards never use them, so the UHS modes of the
+slot stay; the A733 eMMC controllers keep DDR52, HS200 and HS400. The
+caps are left out before mmc_of_parse(), so a board can still ask for
+DDR52 with mmc-ddr-1_8v or mmc-ddr-3_3v.
+
+Tested on Radxa Cubie A7S: the SD slot no longer offers DDR52, an SD
+card still runs at SDR104 and the eMMC at HS400; an eMMC module on a
+microSD adapter was not at hand.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 5b63310dbf0e..3d888b02d05d 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -379,6 +379,9 @@ struct sunxi_mmc_cfg {
+ 
+ 	/* requests go through the host software queue, needs can_wait_busy */
+ 	bool can_hsq;
++
++	/* card slot: no eMMC DDR52 unless the DT asks for it (mmc-ddr-*) */
++	bool no_mmc_ddr;
+ };
+ 
+ struct sunxi_mmc_host {
+@@ -2161,6 +2164,7 @@ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	.needs_a12a_init = true,
+ 	.can_wait_busy = true,
+ 	.can_hsq = true,
++	.no_mmc_ddr = true,
+ };
+ 
+ /* SMHC2 and SMHC3: eMMC, 8 bit, HS400 */
+@@ -2439,9 +2443,12 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 	 * use HS DDR mode for their eMMC chips.
+ 	 *
+ 	 * We still enable HS DDR modes for all the other controller
+-	 * variants that support them.
++	 * variants that support them, except for card slots such as the
++	 * A733 SD controllers, where an eMMC module on a microSD adapter
++	 * fails every read in DDR52.
+ 	 */
+ 	if ((host->cfg->clk_delays || host->use_new_timings) &&
++	    !host->cfg->no_mmc_ddr &&
+ 	    !of_device_is_compatible(pdev->dev.of_node,
+ 				     "allwinner,sun50i-h5-emmc"))
+ 		mmc->caps      |= MMC_CAP_1_8V_DDR | MMC_CAP_3_3V_DDR;

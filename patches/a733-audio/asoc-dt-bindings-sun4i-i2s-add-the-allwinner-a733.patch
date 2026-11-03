@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 20:33:32 +0200
+Subject: [PATCH] ASoC: dt-bindings: sun4i-i2s: Add the Allwinner A733
+
+The five I2S/PCM controllers of the A733 have the register layout of
+the R329 one. Add a compatible with the R329 as fallback.
+
+Tested on Radxa Cubie A7S: booted on two boards with the I2S nodes
+enabled in a test overlay; all five bind sun4i-i2s through this
+compatible and loop 48 kHz and 44.1 kHz data back through their internal
+loop. No codec or header pin is used.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/sound/allwinner,sun4i-a10-i2s.yaml       | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-i2s.yaml b/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-i2s.yaml
+index ae86cb5f0a74..2391d1cb8f9c 100644
+--- a/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-i2s.yaml
++++ b/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-i2s.yaml
+@@ -36,6 +36,7 @@ properties:
+           - enum:
+               - allwinner,sun20i-d1-i2s
+               - allwinner,sun55i-a523-i2s
++              - allwinner,sun60i-a733-i2s
+           - const: allwinner,sun50i-r329-i2s
+ 
+   reg:

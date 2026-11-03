@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 12:05:00 +0200
+Subject: [PATCH] pinctrl: sunxi: a733: Do not remux an interrupt pin to read
+ it
+
+With irq_read_needs_mux, reading an interrupt pin muxes it back to
+function 6 afterwards, but the A733 external interrupt function is 14,
+and 6 is reserved on pins such as the SD card detect pin PF6. The A733
+data register follows a pin in interrupt mode, so drop the flag.
+
+Tested on Radxa Cubie A7S: booted on two boards; the SD card-detect pin PF6
+stays in its interrupt function after it is read.
+
+Fixes: 0535bfbfa97b ("pinctrl: sunxi: add support for the Allwinner A733")
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+index bc483d983bbc..0841c04278ca 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+@@ -23,7 +23,6 @@ static const u8 a733_irq_bank_muxes[SUNXI_PINCTRL_MAX_BANKS] =
+ 
+ static struct sunxi_pinctrl_desc a733_pinctrl_data = {
+ 	.irq_banks = 11,
+-	.irq_read_needs_mux = true,
+ 	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_SEL,
+ };
+ 

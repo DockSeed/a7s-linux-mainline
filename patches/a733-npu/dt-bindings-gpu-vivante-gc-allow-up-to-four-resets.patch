@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 16:30:35 +0200
+Subject: [PATCH] dt-bindings: gpu: vivante,gc: Allow up to four resets
+
+Some SoCs split the reset of a core into one line per interface, for
+example the core, the AXI and AHB interfaces and the on-chip memory of
+the Allwinner A733 NPU. With its AXI and AHB resets asserted, that core
+reads as model 0.
+
+Allow up to four resets and describe them, the core reset first, so a
+core with a single reset is unchanged.
+
+Not covered: reset-names. The driver acts on all resets together and
+does not need to tell them apart.
+
+Tested on Radxa Cubie A7S: booted on two boards with a device tree that
+uses this binding; the NPU node with four resets probes and dtbs_check
+reports nothing.
+
+Assisted-by: LLM
+---
+ Documentation/devicetree/bindings/gpu/vivante,gc.yaml | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/gpu/vivante,gc.yaml b/Documentation/devicetree/bindings/gpu/vivante,gc.yaml
+index b1b10ea70ad9..822a10d4f3f7 100644
+--- a/Documentation/devicetree/bindings/gpu/vivante,gc.yaml
++++ b/Documentation/devicetree/bindings/gpu/vivante,gc.yaml
+@@ -44,7 +44,12 @@ properties:
+     maxItems: 4
+ 
+   resets:
+-    maxItems: 1
++    items:
++      - description: GPU core reset
++      - description: AXI/master interface reset
++      - description: AHB/slave interface reset
++      - description: On-chip SRAM reset
++    minItems: 1
+ 
+   power-domains:
+     maxItems: 1

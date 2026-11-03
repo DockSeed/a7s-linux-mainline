@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 20:00:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the crypto engine
+
+Add the non-secure interface of the A733 crypto engine (A733 manual,
+chapter 2 and section 19.1.6) with its interrupt CE_NS (12.2.3.1), the
+CE and CE_SYS bus gates and resets, the module clock and the MBUS gate
+of the clock controller (4.1.6.84, 4.1.6.117, 4.1.6.118), and the RC
+oscillator of the RTC, from which the TRNG clock is divided (4.1.6.117,
+9.1.4.1). The engine sits behind the MSI_LITE0 bridge, whose gates the
+clock driver keeps running.
+
+Not covered: the secure interface at 0x04603800.
+
+Tested on Radxa Cubie A7S: the engine probes at this address with its
+interrupt, clocks and resets, and its gates close in runtime suspend.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 39ebca8687b9..fab122ae626c 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1034,6 +1034,17 @@ dma: dma-controller@4601000 {
+ 			#dma-cells = <1>;
+ 		};
+ 
++		crypto: crypto@4603000 {
++			compatible = "allwinner,sun60i-a733-crypto";
++			reg = <0x04603000 0x800>;
++			interrupts = <GIC_SPI 168 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_CE>, <&ccu CLK_CE>,
++				 <&ccu CLK_MBUS_CE>, <&rtc CLK_IOSC>,
++				 <&ccu CLK_BUS_CE_SYS>;
++			clock-names = "bus", "mod", "ram", "trng", "sys";
++			resets = <&ccu RST_BUS_CE>, <&ccu RST_BUS_CE_SYS>;
++		};
++
+ 		de_top: clock-controller@5008000 {
+ 			compatible = "allwinner,sun60i-a733-de-top";
+ 			reg = <0x05008000 0x100>;

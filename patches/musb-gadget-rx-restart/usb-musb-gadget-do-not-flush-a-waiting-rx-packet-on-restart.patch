@@ -1,0 +1,149 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 12:00:00 +0200
+Subject: [PATCH] usb: musb: gadget: Do not flush a waiting RX packet on
+ restart
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Without this, a bulk OUT packet that arrives before the function driver
+has queued its next request is lost, because musb_ep_restart() flushes
+the RX FIFO when the request is queued. The host has already got its ACK
+and does not send the packet again. With the mass storage gadget the
+CBW of the next command disappears, the data phase is never started
+and the host runs into a command timeout.
+
+musb_g_rx() finds no request and leaves the packet, with RxPktRdy set,
+in the FIFO. The flush that commit 3fc137386c46 ("usb: musb: Fix
+hardware lockup on first Rx endpoint request") added in place of
+rxstate() then throws it away. That commit did so because rxstate()
+could call ->complete() from within usb_ep_queue(), which is not
+allowed. A callback such as rx_complete() of u_ether enables IRQs
+through netif_rx() when it runs in task context, so the interrupt of a
+second waiting packet found an empty queue and RxPktRdy stayed set
+with no interrupt left to unload it.
+
+Do not flush. If RxPktRdy is set when the request is started, queue a
+bottom half work item, which takes the lock and calls musb_g_rx() as
+the interrupt would have. The packet is unloaded into the request, so
+RxPktRdy does not stay set. The lockup cannot come back: the callback
+no longer runs inside usb_ep_queue() but in softirq context with the
+IRQs off, where in_interrupt() is true as in the interrupt path, so
+netif_rx() does not disable and enable the bottom halves and no IRQ is
+enabled during the callback. If the callback queues the next request
+while another packet waits, the restart queues the work again. Without
+RxPktRdy the FIFO holds nothing to flush, and the restart leaves the
+endpoint alone. The restart holds a runtime PM reference until the work
+has run, as the work cannot resume the controller in softirq context.
+
+Seen on the Radxa Cubie A7S, where USB0 runs as a mass storage gadget:
+the host timed out on a command in 5 of 7 runs.
+
+Not covered: a second packet in a double-buffered FIFO that is already
+waiting without a pending interrupt while the request is not complete
+after the first packet.
+
+Tested on Radxa Cubie A7S: with USB0 as a mass storage gadget, alone and
+together with ACM and NCM, the host read the whole LUN without a command
+timeout in every run.
+
+Cc: stable@vger.kernel.org
+Cc: Hubert Wiśniewski <hubert.wisniewski.25632@gmail.com>
+Fixes: 3fc137386c46 ("usb: musb: Fix hardware lockup on first Rx endpoint request")
+Assisted-by: LLM
+---
+ drivers/usb/musb/musb_core.h   |  2 ++
+ drivers/usb/musb/musb_gadget.c | 50 ++++++++++++++++++++++++++++++++--
+ 2 files changed, 49 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/musb/musb_core.h b/drivers/usb/musb/musb_core.h
+index 91b5b6b66f96..eb0bbad9a4d5 100644
+--- a/drivers/usb/musb/musb_core.h
++++ b/drivers/usb/musb/musb_core.h
+@@ -288,6 +288,8 @@ struct musb {
+ 	struct delayed_work	deassert_reset_work;
+ 	struct delayed_work	finish_resume_work;
+ 	struct delayed_work	gadget_work;
++	struct work_struct	gadget_rx_work;
++	u16			gadget_rx_eps;	/* RX endpoints with a waiting packet */
+ 	u16			hwvers;
+ 
+ 	u16			intrrxe;
+diff --git a/drivers/usb/musb/musb_gadget.c b/drivers/usb/musb/musb_gadget.c
+index 016d3f3fc1e0..8e4b1fd6bea4 100644
+--- a/drivers/usb/musb/musb_gadget.c
++++ b/drivers/usb/musb/musb_gadget.c
+@@ -1170,11 +1170,52 @@ void musb_ep_restart(struct musb *musb, struct musb_request *req)
+ 	if (req->tx) {
+ 		txstate(musb, req);
+ 	} else {
++		/*
++		 * A packet that arrived before this request was queued is
++		 * still in the FIFO: musb_g_rx() found no request and left
++		 * it. The host has acknowledged it and will not send it
++		 * again, so do not flush it. Unloading it here could call
++		 * ->complete() from within usb_ep_queue(), so hand it to a
++		 * bottom half work, which runs musb_g_rx() as the interrupt
++		 * would have. The controller is active here; keep it so
++		 * until the work has run.
++		 */
+ 		csr = musb_readw(epio, MUSB_RXCSR);
+-		csr |= MUSB_RXCSR_FLUSHFIFO | MUSB_RXCSR_P_WZC_BITS;
+-		musb_writew(epio, MUSB_RXCSR, csr);
+-		musb_writew(epio, MUSB_RXCSR, csr);
++		if (csr & MUSB_RXCSR_RXPKTRDY) {
++			musb->gadget_rx_eps |= BIT(req->epnum);
++			pm_runtime_get_noresume(musb->controller);
++			if (!queue_work(system_bh_wq, &musb->gadget_rx_work))
++				pm_runtime_put_noidle(musb->controller);
++		}
++	}
++}
++
++/*
++ * Unload the packets that were waiting when their request was queued.
++ * Runs in softirq context, so a ->complete() callback sees the same context
++ * as from the interrupt and netif_rx() does not toggle the bottom halves.
++ * It cannot sleep and does not resume the controller: musb_ep_restart()
++ * ran with the controller active and holds a reference until the work
++ * has run.
++ */
++static void musb_gadget_rx_work(struct work_struct *work)
++{
++	struct musb *musb = container_of(work, struct musb, gadget_rx_work);
++	unsigned long flags;
++	unsigned long eps;
++	unsigned int epnum;
++
++	spin_lock_irqsave(&musb->lock, flags);
++	eps = musb->gadget_rx_eps;
++	musb->gadget_rx_eps = 0;
++	for_each_set_bit(epnum, &eps, BITS_PER_LONG) {
++		musb_ep_select(musb->mregs, epnum);
++		if (musb_readw(musb->endpoints[epnum].regs, MUSB_RXCSR) &
++		    MUSB_RXCSR_RXPKTRDY)
++			musb_g_rx(musb, epnum);
+ 	}
++	spin_unlock_irqrestore(&musb->lock, flags);
++	pm_runtime_put_autosuspend(musb->controller);
+ }
+ 
+ static int musb_ep_restart_resume_work(struct musb *musb, void *data)
+@@ -1787,6 +1828,7 @@ int musb_gadget_setup(struct musb *musb)
+ 	/* don't support otg protocols */
+ 	musb->g.is_otg = 0;
+ 	INIT_DELAYED_WORK(&musb->gadget_work, musb_gadget_work);
++	INIT_WORK(&musb->gadget_rx_work, musb_gadget_rx_work);
+ 	musb_g_init_endpoints(musb);
+ 
+ 	musb->is_active = 0;
+@@ -1810,6 +1852,8 @@ void musb_gadget_cleanup(struct musb *musb)
+ 
+ 	cancel_delayed_work_sync(&musb->gadget_work);
+ 	usb_del_gadget_udc(&musb->g);
++	if (cancel_work_sync(&musb->gadget_rx_work))
++		pm_runtime_put_noidle(musb->controller);
+ }
+ 
+ /*

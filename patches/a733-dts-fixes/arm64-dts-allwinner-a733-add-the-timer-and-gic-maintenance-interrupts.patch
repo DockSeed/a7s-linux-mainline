@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 3 Oct 2026 16:34:04 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the timer and GIC
+ maintenance interrupts
+
+The dtsi lacks two private interrupts of the A733: the hypervisor virtual
+timer, PPI 12, as the fifth arch timer interrupt, and the GIC maintenance
+interrupt, PPI 9, which KVM's virtual GIC needs. Add both.
+
+Tested on Radxa Cubie A7S: booted at EL2 on two boards; arch_timer runs on
+the EL2 virtual timer (INTID 28), its interrupt has fired on all eight
+CPUs, and KVM initializes the vgic with its maintenance interrupt.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 31c6e7e023c2..4937ff109db2 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -110,7 +110,8 @@ timer {
+ 		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_HIGH>,
+ 			     <GIC_PPI 14 IRQ_TYPE_LEVEL_HIGH>,
+ 			     <GIC_PPI 11 IRQ_TYPE_LEVEL_HIGH>,
+-			     <GIC_PPI 10 IRQ_TYPE_LEVEL_HIGH>;
++			     <GIC_PPI 10 IRQ_TYPE_LEVEL_HIGH>,
++			     <GIC_PPI 12 IRQ_TYPE_LEVEL_HIGH>;
+ 	};
+ 
+ 	soc@0 {
+@@ -175,6 +176,7 @@ gic: interrupt-controller@3400000 {
+ 			interrupt-controller;
+ 			reg = <0x03400000 0x10000>,
+ 			      <0x03460000 0x100000>;
++			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
+ 
+ 		mmc0: mmc@4020000 {

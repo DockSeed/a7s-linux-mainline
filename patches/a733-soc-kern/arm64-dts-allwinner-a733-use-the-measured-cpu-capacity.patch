@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:56:39 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Use the measured CPU capacity
+
+The capacity-dmips-mhz of 530 for the Cortex-A55 cores was not measured on
+the A733. Here an A76 core does 2.26 times the work of an A55 core at the
+same clock, so set the A55 cores to 454, which is 1024 divided by 2.26. The
+A76 cores stay at 1024.
+
+Tested on Radxa Cubie A7S: booted on two boards; cpu_capacity reads 454 on
+the A55 cores and 1024 on the A76 cores.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 7d6fd3962e8e..14dbf8f7bd58 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -57,7 +57,7 @@ cpu0: cpu@0 {
+ 			device_type = "cpu";
+ 			reg = <0x000>;
+ 			enable-method = "psci";
+-			capacity-dmips-mhz = <530>;
++			capacity-dmips-mhz = <454>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <128>;
+@@ -72,7 +72,7 @@ cpu1: cpu@100 {
+ 			device_type = "cpu";
+ 			reg = <0x100>;
+ 			enable-method = "psci";
+-			capacity-dmips-mhz = <530>;
++			capacity-dmips-mhz = <454>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <128>;
+@@ -87,7 +87,7 @@ cpu2: cpu@200 {
+ 			device_type = "cpu";
+ 			reg = <0x200>;
+ 			enable-method = "psci";
+-			capacity-dmips-mhz = <530>;
++			capacity-dmips-mhz = <454>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <128>;
+@@ -102,7 +102,7 @@ cpu3: cpu@300 {
+ 			device_type = "cpu";
+ 			reg = <0x300>;
+ 			enable-method = "psci";
+-			capacity-dmips-mhz = <530>;
++			capacity-dmips-mhz = <454>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <128>;
+@@ -117,7 +117,7 @@ cpu4: cpu@400 {
+ 			device_type = "cpu";
+ 			reg = <0x400>;
+ 			enable-method = "psci";
+-			capacity-dmips-mhz = <530>;
++			capacity-dmips-mhz = <454>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <128>;
+@@ -132,7 +132,7 @@ cpu5: cpu@500 {
+ 			device_type = "cpu";
+ 			reg = <0x500>;
+ 			enable-method = "psci";
+-			capacity-dmips-mhz = <530>;
++			capacity-dmips-mhz = <454>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <128>;

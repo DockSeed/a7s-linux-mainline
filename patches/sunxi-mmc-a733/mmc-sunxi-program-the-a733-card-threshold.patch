@@ -1,0 +1,119 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:07:51 +0200
+Subject: [PATCH] mmc: sunxi: Program the A733 card threshold
+
+SMHC_THLD resets with a threshold size of 0, so the card clock may stop
+in the middle of a block.
+
+Set the threshold to the block size for each data request, for the
+direction in use, so that the clock stops only at a block gap (see
+SMHC_SFC). Only controllers with a FIFO size in their config are
+touched.
+
+Tested on Radxa Cubie A7S: booted on two boards; under read load
+SMHC_THLD reads 0x02000001 on the SD and the eMMC controller.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 45 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 45 insertions(+)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 39f48f98187f..4da9a751c6f6 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -9,6 +9,7 @@
+  * (C) Copyright 2017 Sootech SA
+  */
+ 
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/clk/sunxi-ng.h>
+ #include <linux/delay.h>
+@@ -72,6 +73,7 @@
+ #define SDXC_REG_DRV_DL		0x140 /* Drive Delay Control Register */
+ #define SDXC_REG_SAMP_DL_REG	0x144 /* SMC sample delay control */
+ #define SDXC_REG_DS_DL_REG	0x148 /* SMC data strobe delay control */
++#define SDXC_REG_THLD		0x100 /* SMC Card Threshold Control */
+ #define SDXC_REG_A23A		0x108 /* SMC Auto Command 23 Argument */
+ #define SDXC_REG_ECMD		0x138 /* SMC Extended Command */
+ #define SDXC_REG_ERESP		0x13C /* SMC Extended Response */
+@@ -156,6 +158,15 @@
+ 	(SDXC_AUTO_COMMAND_DONE | SDXC_DATA_OVER | \
+ 	 SDXC_COMMAND_DONE | SDXC_VOLTAGE_CHANGE_DONE)
+ 
++/* FIFO water level, 32-bit words */
++#define SDXC_FIFOTH_RX_TL		GENMASK(26, 16)
++#define SDXC_FIFOTH_TX_TL		GENMASK(10, 0)
++
++/* card threshold control */
++#define SDXC_CARD_THLD_SIZE		GENMASK(28, 16)
++#define SDXC_CARD_WR_THLD_ENB		BIT(2)
++#define SDXC_CARD_RD_THLD_ENB		BIT(0)
++
+ /* extended command */
+ #define SDXC_AUTO_CMD23_EN		BIT(0)
+ 
+@@ -278,6 +289,9 @@ struct sunxi_mmc_cfg {
+ 
+ 	/* controller sends CMD23 by itself (SMHC_A23A, SMHC_ECMD) */
+ 	bool can_auto_cmd23;
++
++	/* FIFO size in bytes, for the card threshold (SMHC_THLD) */
++	u32 thld_fifo_bytes;
+ };
+ 
+ struct sunxi_mmc_host {
+@@ -1040,6 +1054,34 @@ static void sunxi_mmc_hw_reset(struct mmc_host *mmc)
+ 	udelay(300);
+ }
+ 
++/*
++ * Start a read only when a whole block fits into the receive FIFO, and a
++ * write only when a whole block is in the transmit FIFO, so that the card
++ * clock can only be stopped between blocks.
++ */
++static void sunxi_mmc_set_card_threshold(struct sunxi_mmc_host *host,
++					 struct mmc_data *data)
++{
++	u32 fifoth = host->cfg->fifoth;
++	u32 rx_bytes = FIELD_GET(SDXC_FIFOTH_RX_TL, fifoth) * 4;
++	u32 tx_bytes = FIELD_GET(SDXC_FIFOTH_TX_TL, fifoth) * 4;
++	u32 rval = 0;
++
++	if (data->flags & MMC_DATA_WRITE) {
++		if (data->blksz <= tx_bytes)
++			rval = SDXC_CARD_WR_THLD_ENB;
++	} else if (data->blksz + rx_bytes <= host->cfg->thld_fifo_bytes) {
++		rval = SDXC_CARD_RD_THLD_ENB;
++	}
++
++	if (rval && data->blksz <= FIELD_MAX(SDXC_CARD_THLD_SIZE))
++		rval |= FIELD_PREP(SDXC_CARD_THLD_SIZE, data->blksz);
++	else
++		rval = 0;
++
++	mmc_writel(host, REG_THLD, rval);
++}
++
+ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ {
+ 	struct sunxi_mmc_host *host = mmc_priv(mmc);
+@@ -1125,6 +1167,8 @@ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ 	if (data) {
+ 		mmc_writel(host, REG_BLKSZ, data->blksz);
+ 		mmc_writel(host, REG_BCNTR, data->blksz * data->blocks);
++		if (host->cfg->thld_fifo_bytes)
++			sunxi_mmc_set_card_threshold(host, data);
+ 		sunxi_mmc_start_dma(host, data);
+ 	}
+ 
+@@ -1258,6 +1302,7 @@ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	/* burst 16, RX trigger level 15, TX trigger level 240 */
+ 	.fifoth = 0x300f00f0,
+ 	.can_auto_cmd23 = true,
++	.thld_fifo_bytes = 1024,
+ };
+ 
+ static const struct of_device_id sunxi_mmc_of_match[] = {

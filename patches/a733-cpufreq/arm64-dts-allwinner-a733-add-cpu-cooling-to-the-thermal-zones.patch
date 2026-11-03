@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 05:45:04 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add CPU cooling to the thermal
+ zones
+
+The CPU thermal zones only have a critical trip, which powers the
+system off, and nothing cools the CPUs before it. Add a passive trip at
+90 degrees C with a hysteresis of 2 degrees to cpub-thermal and
+cpul-thermal, poll them every 500 ms while it is active, and map it to
+the cpufreq cooling device of the cluster the zone belongs to: cpu6 for
+the Cortex-A76 cores, cpu0 for the Cortex-A55 cores. Both CPUs get a
+cooling-cells property of 2, as the first CPU of a cluster owns the
+cluster's cpufreq policy.
+
+The zones of the DDR, the GPU and the NPU keep only their critical trip,
+as nothing can cool them yet.
+
+The trip is 25 degrees C under the 115 degrees C that the datasheet
+allows for continuous operation, and 20 under the critical trip. The
+temperature sensors are rated at 3 degrees C, so a reading of 90 means
+at most 93.
+
+Not covered: a trend filter. The step_wise governor acts on every raw
+sample of the sensor.
+
+Tested on Radxa Cubie A7S: booted on two boards; with the temperature of
+the A76 zone forced above its passive trip, the cooling device of the
+A76 cluster limits the cluster below its top rate and releases it when
+the forced temperature is withdrawn (the A55 zone was not forced).
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 33 +++++++++++++++++--
+ 1 file changed, 31 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 5052e2369eb8..2035741da74b 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -10,6 +10,7 @@
+ #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h>
++#include <dt-bindings/thermal/thermal.h>
+ 
+ / {
+ 	interrupt-parent = <&gic>;
+@@ -64,6 +65,7 @@ cpu0: cpu@0 {
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
++			#cooling-cells = <2>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <128>;
+@@ -166,6 +168,7 @@ cpu6: cpu@600 {
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
+ 			cpu-idle-states = <&cpu_sleep_a76>;
++			#cooling-cells = <2>;
+ 			i-cache-size = <65536>;
+ 			i-cache-line-size = <64>;
+ 			i-cache-sets = <256>;
+@@ -1082,32 +1085,58 @@ cpu_ccu: clock-controller@8870000 {
+ 	thermal-zones {
+ 		/* sensor 3 sits next to the Cortex-A76 cores */
+ 		cpub-thermal {
+-			polling-delay-passive = <0>;
++			polling-delay-passive = <500>;
+ 			polling-delay = <1000>;
+ 			thermal-sensors = <&ths 3>;
+ 
+ 			trips {
++				cpub_passive: cpub-passive {
++					temperature = <90000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
+ 				cpub-crit {
+ 					temperature = <110000>;
+ 					hysteresis = <0>;
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&cpub_passive>;
++					cooling-device = <&cpu6 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		/* sensor 0 sits next to the Cortex-A55 cores */
+ 		cpul-thermal {
+-			polling-delay-passive = <0>;
++			polling-delay-passive = <500>;
+ 			polling-delay = <1000>;
+ 			thermal-sensors = <&ths 0>;
+ 
+ 			trips {
++				cpul_passive: cpul-passive {
++					temperature = <90000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
+ 				cpul-crit {
+ 					temperature = <110000>;
+ 					hysteresis = <0>;
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&cpul_passive>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		ddr-thermal {

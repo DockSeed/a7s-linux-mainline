@@ -1,0 +1,163 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:26:20 +0200
+Subject: [PATCH] dt-bindings: display: allwinner: Add the A733 DisplayPort
+ transmitter
+
+The A733 has a DisplayPort 1.4 / eDP 1.4 transmitter with one, two or
+four main link lanes at up to 5.4 Gb/s per lane (user manual section
+15.4.1). Its controller registers and the link and video clock gates of
+the block are two windows of its 256 KiB region (section 15.4.6). It
+takes its video from TCON TV1, its main link lanes from the first combo
+PHY of the SERDES block and its AUX channel from the AUX PHY beside it.
+
+Add a binding for it. On a board with DisplayPort over USB Type-C, the
+output port connects to the SBU port of the connector. The interrupt is
+required as the block has one; it is not used yet, the driver polls AUX.
+
+Tested on Radxa Cubie A7S: booted on one board with a device tree that
+uses this binding; the transmitter probes and dtbs_check reports
+nothing.
+
+Assisted-by: LLM
+---
+ .../display/allwinner,sun60i-a733-dp.yaml     | 130 ++++++++++++++++++
+ 1 file changed, 130 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml
+
+diff --git a/Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml b/Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml
+new file mode 100644
+index 000000000000..7983157ab8df
+--- /dev/null
++++ b/Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml
+@@ -0,0 +1,130 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/display/allwinner,sun60i-a733-dp.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Allwinner A733 DisplayPort transmitter
++
++maintainers:
++  - Norman Herms <dockseed@proton.me>
++
++description: |
++  The A733 has a DisplayPort 1.4 / eDP 1.4 transmitter with one to four
++  main link lanes at up to 5.4 Gb/s per lane. It takes its video from
++  TCON TV1, sends the main link through the first combo PHY of the SERDES
++  block and the AUX channel through the AUX PHY beside it.
++
++properties:
++  compatible:
++    const: allwinner,sun60i-a733-dp
++
++  reg:
++    items:
++      - description: Transmitter controller registers
++      - description: Link and video clock gates of the transmitter
++
++  reg-names:
++    items:
++      - const: dp
++      - const: pad
++
++  interrupts:
++    maxItems: 1
++
++  clocks:
++    items:
++      - description: Bus clock
++
++  clock-names:
++    items:
++      - const: bus
++
++  resets:
++    maxItems: 1
++
++  phys:
++    items:
++      - description: AUX channel PHY
++      - description: Main link PHY
++
++  phy-names:
++    items:
++      - const: aux
++      - const: dp
++
++  power-domains:
++    maxItems: 1
++
++  ports:
++    $ref: /schemas/graph.yaml#/properties/ports
++
++    properties:
++      port@0:
++        $ref: /schemas/graph.yaml#/properties/port
++        description: Video input, from the TCON
++
++      port@1:
++        $ref: /schemas/graph.yaml#/properties/port
++        description:
++          Output, to the connector, or to the SBU port of a USB Type-C
++          connector in DisplayPort alternate mode
++
++    required:
++      - port@0
++      - port@1
++
++required:
++  - compatible
++  - reg
++  - reg-names
++  - interrupts
++  - clocks
++  - clock-names
++  - resets
++  - phys
++  - phy-names
++  - ports
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
++    #include <dt-bindings/interrupt-controller/arm-gic.h>
++    #include <dt-bindings/phy/phy.h>
++    #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
++
++    displayport@5740000 {
++        compatible = "allwinner,sun60i-a733-dp";
++        reg = <0x05740000 0x1000>,
++              <0x05760000 0x1000>;
++        reg-names = "dp", "pad";
++        interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>;
++        clocks = <&ccu CLK_BUS_EDP_TV>;
++        clock-names = "bus";
++        resets = <&ccu RST_BUS_EDP>;
++        phys = <&dp_aux_phy>, <&combophy0 PHY_TYPE_DP>;
++        phy-names = "aux", "dp";
++
++        ports {
++            #address-cells = <1>;
++            #size-cells = <0>;
++
++            port@0 {
++                reg = <0>;
++
++                endpoint {
++                    remote-endpoint = <&tcon_tv1_out_dp>;
++                };
++            };
++
++            port@1 {
++                reg = <1>;
++
++                endpoint {
++                    remote-endpoint = <&usb_c_sbu>;
++                };
++            };
++        };
++    };

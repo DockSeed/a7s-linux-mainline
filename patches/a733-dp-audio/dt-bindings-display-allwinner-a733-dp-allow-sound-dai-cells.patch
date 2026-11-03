@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 18:31:05 +0200
+Subject: [PATCH] dt-bindings: display: allwinner: a733-dp: Allow
+ #sound-dai-cells
+
+The transmitter has an audio half, fed by the I2S3 controller over an
+internal connection (user manual sections 17.1.1 and 15.4.7.66). The
+driver registers an HDMI codec under the transmitter's device, and a
+sound card names that codec with the phandle of the node, so the node is
+a sound DAI with a single DAI and no cell.
+
+Allow #sound-dai-cells = <0> and take the common DAI properties, which
+turns additionalProperties into unevaluatedProperties.
+
+Tested on Radxa Cubie A7S: the sound card binds to the transmitter; audio
+not heard, no DisplayPort sink with speakers was at hand.
+
+Assisted-by: LLM
+---
+ .../bindings/display/allwinner,sun60i-a733-dp.yaml       | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml b/Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml
+index 7983157ab8df..12639ff0ec7b 100644
+--- a/Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml
++++ b/Documentation/devicetree/bindings/display/allwinner,sun60i-a733-dp.yaml
+@@ -15,6 +15,9 @@ description: |
+   TCON TV1, sends the main link through the first combo PHY of the SERDES
+   block and the AUX channel through the AUX PHY beside it.
+ 
++allOf:
++  - $ref: /schemas/sound/dai-common.yaml#
++
+ properties:
+   compatible:
+     const: allwinner,sun60i-a733-dp
+@@ -56,6 +59,9 @@ properties:
+   power-domains:
+     maxItems: 1
+ 
++  "#sound-dai-cells":
++    const: 0
++
+   ports:
+     $ref: /schemas/graph.yaml#/properties/ports
+ 
+@@ -86,7 +92,7 @@ required:
+   - phy-names
+   - ports
+ 
+-additionalProperties: false
++unevaluatedProperties: false
+ 
+ examples:
+   - |
+@@ -106,6 +112,7 @@ examples:
+         resets = <&ccu RST_BUS_EDP>;
+         phys = <&dp_aux_phy>, <&combophy0 PHY_TYPE_DP>;
+         phy-names = "aux", "dp";
++        #sound-dai-cells = <0>;
+ 
+         ports {
+             #address-cells = <1>;

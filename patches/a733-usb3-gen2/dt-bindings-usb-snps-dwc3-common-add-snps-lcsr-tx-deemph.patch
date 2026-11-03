@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 21:20:00 +0200
+Subject: [PATCH] dt-bindings: usb: snps,dwc3-common: Add snps,lcsr-tx-deemph
+
+The DWC_usb31 core drives the Gen2 TxDeemph on the PIPE interface from
+its LCSR_TX_DEEMPH register. On the Allwinner A733 the reset value of
+that register makes Gen2 writes fail. Add a property for the value.
+
+Tested on Radxa Cubie A7S: booted on two boards; the property is
+accepted on the controller node and reads 00 00 34 c1 in the device
+tree.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/usb/snps,dwc3-common.yaml         | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml b/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
+index 35f2d0949871..e4fd1cba406b 100644
+--- a/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
++++ b/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
+@@ -214,6 +214,14 @@ properties:
+       devices link at Gen1 on Allwinner A733.
+     type: boolean
+ 
++  snps,lcsr-tx-deemph:
++    description:
++      18-bit TxDeemph value the controller drives on the PIPE interface for
++      USB 3.2 Gen2 operation (LCSR_TX_DEEMPH). When absent, the register keeps
++      its reset value.
++    $ref: /schemas/types.yaml#/definitions/uint32
++    maximum: 0x3ffff
++
+   snps,gfladj-refclk-lpm-sel-quirk:
+     description:
+       When set, run the SOF/ITP counter based on ref_clk.

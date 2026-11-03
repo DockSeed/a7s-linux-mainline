@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:59:49 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable the PRCM I2C
+ buses
+
+On the Cubie A7S the AXP318W PMIC is wired to S_TWI0 on PL0/PL1 and
+the HUSB311 Type-C port controller to S_TWI1 on PL12/PL13.
+
+Enable both buses with these pins, so that the PMIC and the port
+controller can be described on them.
+
+The PMIC and the port controller nodes come with the PMIC and the USB
+support.
+
+Tested on Radxa Cubie A7S: booted on two boards; PL0/PL1 and PL12/PL13
+are muxed to r_i2c0 and r_i2c1, and the Type-C controller answers at
+0x4e on the second bus.
+
+Assisted-by: LLM
+---
+ .../boot/dts/allwinner/sun60i-a733-cubie-a7s.dts     | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index d812f45e1751..ad82a4425039 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -98,6 +98,18 @@ &osc {
+ 	clock-frequency = <26000000>;
+ };
+ 
++&r_i2c0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&r_i2c0_pl_pins>;
++	status = "okay";
++};
++
++&r_i2c1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&r_i2c1_pl12_pins>;
++	status = "okay";
++};
++
+ &rtc {
+ 	clocks = <&r_ccu CLK_BUS_R_RTC>, <&osc>,
+ 		 <&r_ccu CLK_R_AHB>, <&ext_osc32k>;

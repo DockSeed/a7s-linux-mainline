@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 3 Oct 2026 16:34:05 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the pin mux values, move the
+ UART0 pins
+
+The A733 pinctrl binding requires allwinner,pinmux, and the driver skips a
+group without it. Add it to the MMC0 and UART0 groups, and move the UART0
+group into the dtsi, where the other Allwinner SoCs keep their pin groups.
+
+Tested on Radxa Cubie A7S: booted on two boards; ttyS0 at 0x2500000 is the
+console, with PB9 and PB10 muxed to uart0.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 9 +--------
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi          | 7 +++++++
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index c5ad3faab5db..fbd9d84ff0e4 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -38,15 +38,8 @@ &osc {
+ 	clock-frequency = <26000000>;
+ };
+ 
+-&pio {
+-	uart0_pb9_pb10_pins: uart0-pb9-pb10-pins {
+-		pins = "PB9", "PB10";
+-		function = "uart0";
+-	};
+-};
+-
+ &uart0 {
+ 	pinctrl-names = "default";
+-	pinctrl-0 = <&uart0_pb9_pb10_pins>;
++	pinctrl-0 = <&uart0_pb_pins>;
+ 	status = "okay";
+ };
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 17799725089f..908219081e5d 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -133,10 +133,17 @@ pio: pinctrl@2000000 {
+ 			mmc0_pins: mmc0-pins {
+ 				pins = "PF0", "PF1", "PF2",
+ 				       "PF3", "PF4", "PF5";
++				allwinner,pinmux = <2>;
+ 				function = "mmc0";
+ 				drive-strength = <30>;
+ 				bias-pull-up;
+ 			};
++
++			uart0_pb_pins: uart0-pb-pins {
++				pins = "PB9", "PB10";
++				allwinner,pinmux = <2>;
++				function = "uart0";
++			};
+ 		};
+ 
+ 		ccu: clock-controller@2002000 {

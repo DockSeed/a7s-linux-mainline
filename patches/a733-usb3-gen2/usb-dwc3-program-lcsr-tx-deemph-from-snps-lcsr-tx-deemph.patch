@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 21:20:00 +0200
+Subject: [PATCH] usb: dwc3: Program LCSR_TX_DEEMPH from snps,lcsr-tx-deemph
+
+The DWC_usb31 core drives the 18-bit Gen2 TxDeemph on the PIPE interface
+from LCSR_TX_DEEMPH. With the reset value, Gen2 writes on the Allwinner
+A733 end in USB transaction errors and the device is lost.
+
+Write the value of snps,lcsr-tx-deemph to the register of every
+SuperSpeed port in dwc3_config_soc_bus(), so it is also restored on
+resume. It is limited to DWC_usb31, the only core it was seen on.
+
+Tested on Radxa Cubie A7S: booted on two boards; LCSR_TX_DEEMPH holds
+the value of the property after boot and after each of two unbind and
+bind cycles in both plug orientations; with it and
+snps,inv-sync-hdr-quirk removed the link came up at SuperSpeed only on
+one board, and on one board the stick dropped off the bus during a write
+in the reverse direction.
+
+Assisted-by: LLM
+---
+ drivers/usb/dwc3/core.c | 18 ++++++++++++++++++
+ drivers/usb/dwc3/core.h |  8 ++++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index e81fa75cc489..075ea9adafa6 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -642,6 +642,20 @@ static void dwc3_config_soc_bus(struct dwc3 *dwc)
+ 		reg |= DWC3_GSBUSCFG0_REQINFO(dwc->gsbuscfg0_reqinfo);
+ 		dwc3_writel(dwc, DWC3_GSBUSCFG0, reg);
+ 	}
++
++	/* dwc3_core_init() calls this on probe and on resume */
++	if (dwc->lcsr_tx_deemph != DWC3_LCSR_TX_DEEMPH_UNSPECIFIED &&
++	    DWC3_IP_IS(DWC31)) {
++		u32 reg;
++		int i;
++
++		for (i = 0; i < dwc->num_usb3_ports; i++) {
++			reg = dwc3_readl(dwc, DWC3_LCSR_TX_DEEMPH(i));
++			reg &= ~DWC3_LCSR_TX_DEEMPH_MASK(~0);
++			reg |= DWC3_LCSR_TX_DEEMPH_MASK(dwc->lcsr_tx_deemph);
++			dwc3_writel(dwc, DWC3_LCSR_TX_DEEMPH(i), reg);
++		}
++	}
+ }
+ 
+ static int dwc3_core_ulpi_init(struct dwc3 *dwc)
+@@ -1892,6 +1906,10 @@ static void dwc3_get_properties(struct dwc3 *dwc)
+ 	dwc->inv_sync_hdr_quirk = device_property_read_bool(dev,
+ 				"snps,inv-sync-hdr-quirk");
+ 
++	dwc->lcsr_tx_deemph = DWC3_LCSR_TX_DEEMPH_UNSPECIFIED;
++	device_property_read_u32(dev, "snps,lcsr-tx-deemph",
++				 &dwc->lcsr_tx_deemph);
++
+ 	dwc->lpm_nyet_threshold = lpm_nyet_threshold;
+ 	dwc->tx_de_emphasis = tx_de_emphasis;
+ 
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+index 6bbf40037678..3915940e06bb 100644
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -181,6 +181,7 @@
+ #define DWC3_OSTS		0xcc10
+ 
+ #define DWC3_LLUCTL(n)		(0xd024 + ((n) * 0x80))
++#define DWC3_LCSR_TX_DEEMPH(n)	(0xd060 + ((n) * 0x80))
+ 
+ /* Bit fields */
+ 
+@@ -199,6 +200,10 @@
+ #define DWC3_GSBUSCFG0_REQINFO(n)	(((n) & 0xffff) << 16)
+ #define DWC3_GSBUSCFG0_REQINFO_UNSPECIFIED	0xffffffff
+ 
++/* LCSR_TX_DEEMPH: 18-bit TxDeemph driven on the PIPE for Gen2 */
++#define DWC3_LCSR_TX_DEEMPH_MASK(n)		((n) & 0x3ffff)
++#define DWC3_LCSR_TX_DEEMPH_UNSPECIFIED		0xffffffff
++
+ /* Global Debug LSP MUX Select */
+ #define DWC3_GDBGLSPMUX_ENDBC		BIT(15)	/* Host only */
+ #define DWC3_GDBGLSPMUX_HOSTSELECT(n)	((n) & 0x3fff)
+@@ -1199,6 +1204,8 @@ struct dwc3_glue_ops {
+  * @num_ep_resized: carries the current number endpoints which have had its tx
+  *		    fifo resized.
+  * @debug_root: root debugfs directory for this device to put its files in.
++ * @lcsr_tx_deemph: TxDeemph for Gen2 operation, written to LCSR_TX_DEEMPH(n)
++ *	of every SuperSpeed port, or DWC3_LCSR_TX_DEEMPH_UNSPECIFIED
+  * @gsbuscfg0_reqinfo: store GSBUSCFG0.DATRDREQINFO, DESRDREQINFO,
+  *		       DATWRREQINFO, and DESWRREQINFO value passed from
+  *		       glue driver.
+@@ -1455,6 +1462,7 @@ struct dwc3 {
+ 	int			num_ep_resized;
+ 	struct dentry		*debug_root;
+ 	u32			gsbuscfg0_reqinfo;
++	u32			lcsr_tx_deemph;
+ 	u32			wakeup_pending_funcs;
+ };
+ 

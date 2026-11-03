@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 10:00:00 +0200
+Subject: [PATCH] dt-bindings: usb: allwinner,sun4i-a10-musb: Add the A733
+ compatible
+
+The USB0 port of the A733 has a MUSB OTG controller behind PHY 0 of
+the Allwinner USB PHY, as the A523 has. Add an A733 compatible with the
+A33 compatible as its fallback, like the A523.
+
+Tested on Radxa Cubie A7S: booted with a device tree that uses this
+binding; the USB0 node binds and dtbs_check reports nothing.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/usb/allwinner,sun4i-a10-musb.yaml        | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/allwinner,sun4i-a10-musb.yaml b/Documentation/devicetree/bindings/usb/allwinner,sun4i-a10-musb.yaml
+index 7ffcd236d7bb..33b8721c09aa 100644
+--- a/Documentation/devicetree/bindings/usb/allwinner,sun4i-a10-musb.yaml
++++ b/Documentation/devicetree/bindings/usb/allwinner,sun4i-a10-musb.yaml
+@@ -26,6 +26,7 @@ properties:
+               - allwinner,sun50i-a100-musb
+               - allwinner,sun50i-h6-musb
+               - allwinner,sun55i-a523-musb
++              - allwinner,sun60i-a733-musb
+           - const: allwinner,sun8i-a33-musb
+       - items:
+           - const: allwinner,sun50i-h616-musb

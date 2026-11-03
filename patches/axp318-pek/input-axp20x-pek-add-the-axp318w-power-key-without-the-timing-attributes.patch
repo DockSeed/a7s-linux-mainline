@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 17:58:28 +0200
+Subject: [PATCH] Input: axp20x-pek - Add the AXP318W power key without the
+ timing attributes
+
+The startup and shutdown attributes of this driver read and write the
+PEK_KEY register of the AXP202, which is register 0x36. This is not the
+power key register of every PMIC that has a power key. On the AXP318W
+register 0x36 is AXP318_DLDO3_CONTROL, which is writable, so a write to
+an attribute would change the DLDO3 output.
+
+Add the "axp318-pek" platform device id with an info that has no
+start-up time table, and make the attributes invisible for such an info.
+The power key of the AXP318W reports through the same PEK_DBR and
+PEK_DBF edge interrupts as the other variants, so the input device needs
+no other change.
+
+The AXP318W power key time fields (POK_CTRL, 0x57) are not described in
+the AXP318W brief or in the upstream AXP318W register definitions, so
+they are not exposed here.
+
+Not covered: the start-up and shutdown time of the AXP318W, and the
+AXP717, which also uses "axp20x-pek" for its power key.
+
+Tested on Radxa Cubie A7S: booted on one board; the power key binds as
+axp318-pek without the startup and shutdown attributes, and a press
+reaches user space as KEY_POWER.
+
+Assisted-by: LLM
+---
+ drivers/input/misc/axp20x-pek.c | 28 +++++++++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/input/misc/axp20x-pek.c b/drivers/input/misc/axp20x-pek.c
+index 24f9e9d893de..19a4d80f6989 100644
+--- a/drivers/input/misc/axp20x-pek.c
++++ b/drivers/input/misc/axp20x-pek.c
+@@ -85,6 +85,10 @@ static const struct axp20x_info axp221_info = {
+ 	.shutdown_mask = AXP20X_PEK_SHUTDOWN_MASK,
+ };
+ 
++static const struct axp20x_info axp318_info = {
++	/* No documented start-up and shut-down time fields: no attributes. */
++};
++
+ static ssize_t axp20x_show_attr(struct device *dev,
+ 				const struct axp20x_time *time,
+ 				unsigned int mask, char *buf)
+@@ -193,7 +197,25 @@ static struct attribute *axp20x_attrs[] = {
+ 	&dev_attr_shutdown.attr,
+ 	NULL,
+ };
+-ATTRIBUTE_GROUPS(axp20x);
++
++static umode_t axp20x_attr_is_visible(struct kobject *kobj,
++				      struct attribute *attr, int n)
++{
++	struct device *dev = kobj_to_dev(kobj);
++	struct axp20x_pek *axp20x_pek = dev_get_drvdata(dev);
++
++	/* The attributes access PEK_KEY, so hide them if there is none. */
++	if (!axp20x_pek->info->startup_time)
++		return 0;
++
++	return attr->mode;
++}
++
++static const struct attribute_group axp20x_group = {
++	.attrs = axp20x_attrs,
++	.is_visible = axp20x_attr_is_visible,
++};
++__ATTRIBUTE_GROUPS(axp20x);
+ 
+ static irqreturn_t axp20x_pek_irq(int irq, void *pwr)
+ {
+@@ -393,6 +415,10 @@ static const struct platform_device_id axp_pek_id_match[] = {
+ 		.name = "axp221-pek",
+ 		.driver_data = (kernel_ulong_t)&axp221_info,
+ 	},
++	{
++		.name = "axp318-pek",
++		.driver_data = (kernel_ulong_t)&axp318_info,
++	},
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(platform, axp_pek_id_match);

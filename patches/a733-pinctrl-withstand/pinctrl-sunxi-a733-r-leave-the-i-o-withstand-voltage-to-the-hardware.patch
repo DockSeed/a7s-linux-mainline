@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 09:30:00 +0200
+Subject: [PATCH] pinctrl: sunxi: a733-r: Leave the I/O withstand voltage to
+ the hardware
+
+The A733 r-pinctrl shares the A523 r-pinctrl driver, and with it the
+A523 way of programming the I/O withstand voltage: one bit per bank in
+the register at 0x340, plus a control register at 0x344. On the A733,
+SGPIO_POW_MOD_SEL at 0x340 has two bits per bank (PL at bits 1:0, PM
+at bits 3:2; 0b00 and 0b10 select 3.3 V, 0b01 the adaptive mode, 0b11
+1.8 V), and the manual documents no register at 0x344 (A733 User
+Manual V1.00, 18.14.7.20, PDF p. 1836).
+
+The Cubie A7S names no supply for these banks today, so nothing is
+written yet. Without this, a 3.3 V supply for bank PL in the DT would
+set bit 0 and turn the reset value 0b10 into 0b11, the 1.8 V mode on a
+3.3 V bank, and a supply for bank PM would write into the PL field.
+
+Give the A733 r-pinctrl its own description without the withstand
+voltage handling, as the main A733 pin controller already does. The
+withstand voltage stays as the boot chain set it.
+
+Tested on Radxa Cubie A7S: with a 1.8 V dummy supply named for bank PM
+in a test DT, the withstand voltage register keeps the value of the boot
+chain; without this patch the same DT clears a bit of the PL field.
+
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sun55i-a523-r.c | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun55i-a523-r.c b/drivers/pinctrl/sunxi/pinctrl-sun55i-a523-r.c
+index cffc1e53eef1..21aaff247e07 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun55i-a523-r.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun55i-a523-r.c
+@@ -30,11 +30,26 @@ static struct sunxi_pinctrl_desc a523_r_pinctrl_data = {
+ 	.pin_base = PL_BASE,
+ };
+ 
++/*
++ * The A733 withstand voltage register has two bits per bank, so it cannot
++ * use the A523 one-bit layout: leave the withstand voltage to the hardware.
++ */
++static struct sunxi_pinctrl_desc a733_r_pinctrl_data = {
++	.irq_banks = ARRAY_SIZE(a523_r_irq_bank_map),
++	.irq_bank_map = a523_r_irq_bank_map,
++	.pin_base = PL_BASE,
++};
++
+ static int a523_r_pinctrl_probe(struct platform_device *pdev)
+ {
++	struct sunxi_pinctrl_desc *desc = &a523_r_pinctrl_data;
++
++	if (of_device_is_compatible(pdev->dev.of_node,
++				    "allwinner,sun60i-a733-r-pinctrl"))
++		desc = &a733_r_pinctrl_data;
++
+ 	return sunxi_pinctrl_dt_table_init(pdev, a523_r_nr_bank_pins,
+-					   a523_r_irq_bank_muxes,
+-					   &a523_r_pinctrl_data,
++					   a523_r_irq_bank_muxes, desc,
+ 					   SUNXI_PINCTRL_NCAT2_REG_LAYOUT);
+ }
+ 

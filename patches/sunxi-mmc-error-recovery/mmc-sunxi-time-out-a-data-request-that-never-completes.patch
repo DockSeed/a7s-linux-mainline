@@ -1,0 +1,229 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 13:27:31 +0200
+Subject: [PATCH] mmc: sunxi: Time out a data request that never completes
+
+When the controller never signals the end of a data transfer, the
+request stays open for ever and the task waiting for it sits in D state
+until a power cycle. Nothing bounds it: SMHC_TMOUT's data timeout only
+covers the wait for a start bit, and the block layer keeps re-arming
+its own timer for a host without command queueing
+(mmc_mq_timed_out() returns BLK_EH_RESET_TIMER).
+
+Arm a delayed work for every data request. If the request is still the
+current one when it runs, log the controller state, mark a data timeout
+and finish the request through the existing error path: the stop
+command where the transfer needs one, the controller reset when the
+stop fails, the request completed with -ETIMEDOUT for the block layer
+to retry. A transfer that needs no stop but leaves the data state
+machine busy gets the same controller reset.
+
+The timeout follows sdhci's software data timer: the card's access time
+per block from mmc_set_data_timeout(), times the block count, plus
+twice the bus time of one block, plus 10 ms, with a floor of 1 s for a
+request that carries no access time. The access time is the worst case
+the card allows, so this ends a hang and does not fail a slow card.
+
+Commands without data are not covered: their response timeout is the
+controller's own.
+
+Tested on Radxa Cubie A7S: booted on two boards with a test-only change
+that masks the completion of a data request; a 128-block read fails
+after the computed timeout and an 8-block read after the 1 s floor, both
+through the stop path, on the SD card and the eMMC.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 123 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 123 insertions(+)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index cf2880069a52..f89c985c9a1a 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -36,6 +36,7 @@
+ #include <linux/scatterlist.h>
+ #include <linux/slab.h>
+ #include <linux/spinlock.h>
++#include <linux/workqueue.h>
+ 
+ /* register offset definitions */
+ #define SDXC_REG_GCTRL	(0x00) /* SMC Global Control Register */
+@@ -267,6 +268,9 @@
+ 
+ #define SDXC_CAL_TIMEOUT	3	/* in seconds, 3s is enough*/
+ 
++/* Floor of the software timeout of a data request without access time */
++#define SDXC_DATA_SW_TIMEOUT_MIN_MS	1000
++
+ struct sunxi_mmc_clk_delay {
+ 	u32 output;
+ 	u32 sample;
+@@ -352,6 +356,13 @@ struct sunxi_mmc_host {
+ 	struct mmc_request *manual_stop_mrq;
+ 	int		ferror;
+ 
++	/* software timeout of a data request, see sunxi_mmc_data_work() */
++	u32		req_seq;
++	u32		data_seq;
++	unsigned int	data_timeout_ms;
++	unsigned long	data_deadline;
++	struct delayed_work data_work;
++
+ 	/* vqmmc */
+ 	bool		vqmmc_enabled;
+ 
+@@ -604,6 +615,7 @@ static irqreturn_t sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
+ 
+ 	mmc_writel(host, REG_IMASK, host->sdio_imask);
+ 	mmc_writel(host, REG_IDIE, 0);
++	cancel_delayed_work(&host->data_work);
+ 
+ 	if ((host->int_sum & SDXC_INTERRUPT_ERROR_BIT) || host->idma_err) {
+ 		sunxi_mmc_dump_errinfo(host);
+@@ -777,6 +789,74 @@ static irqreturn_t sunxi_mmc_handle_manual_stop(int irq, void *dev_id)
+ 	return IRQ_HANDLED;
+ }
+ 
++/*
++ * A data request whose completion has not arrived within its software
++ * timeout. Nothing else ends it: the controller's data timeout only
++ * covers the wait for a start bit, and the block layer keeps re-arming
++ * its own timer for a host without command queueing. Fail the request
++ * as a data timeout the controller reported, through the same path: the
++ * stop command where one is needed, the controller reset where the stop
++ * fails.
++ *
++ * req_seq and data_seq tell whether the request this was armed for is
++ * still the current one. The deadline covers an expiry that was already
++ * waiting for the lock while the next request was started and armed.
++ */
++static void sunxi_mmc_data_work(struct work_struct *work)
++{
++	struct sunxi_mmc_host *host = container_of(to_delayed_work(work),
++						   struct sunxi_mmc_host,
++						   data_work);
++	struct mmc_request *mrq;
++	unsigned long iflags;
++	irqreturn_t ret;
++	bool fsm_busy;
++
++	spin_lock_irqsave(&host->lock, iflags);
++	mrq = host->mrq;
++	if (!mrq || !mrq->data || host->req_seq != host->data_seq ||
++	    time_before(jiffies, host->data_deadline)) {
++		spin_unlock_irqrestore(&host->lock, iflags);
++		return;
++	}
++
++	dev_err(mmc_dev(host->mmc),
++		"cmd %d %s: no completion after %u ms, int_sum %08x rint %08x status %08x idst %08x%s\n",
++		mrq->cmd->opcode,
++		mrq->data->flags & MMC_DATA_WRITE ? "WR" : "RD",
++		host->data_timeout_ms, host->int_sum,
++		mmc_readl(host, REG_RINTR), mmc_readl(host, REG_STAS),
++		mmc_readl(host, REG_IDST),
++		host->wait_dma ? ", IDMAC not done" : "");
++
++	host->int_sum |= SDXC_DATA_TIMEOUT;
++	ret = sunxi_mmc_finalize_request(host);
++	fsm_busy = ret == IRQ_HANDLED &&
++		   (mmc_readl(host, REG_STAS) & SDXC_DATA_FSM_BUSY);
++	spin_unlock_irqrestore(&host->lock, iflags);
++
++	if (ret == IRQ_WAKE_THREAD) {
++		sunxi_mmc_handle_manual_stop(host->irq, host);
++		return;
++	}
++
++	/*
++	 * A transfer that takes no stop command can leave the data state
++	 * machine busy, and the next command would wait behind it.
++	 */
++	if (fsm_busy) {
++		if (sunxi_mmc_reinit_host(host))
++			dev_err(mmc_dev(host->mmc),
++				"controller reset after the data timeout did not complete\n");
++		else
++			dev_err(mmc_dev(host->mmc),
++				"controller reset after the data timeout, status %08x\n",
++				mmc_readl(host, REG_STAS));
++	}
++
++	mmc_request_done(host->mmc, mrq);
++}
++
+ static int sunxi_mmc_oclk_onoff(struct sunxi_mmc_host *host, u32 oclk_en)
+ {
+ 	unsigned long expire = jiffies + msecs_to_jiffies(750);
+@@ -1213,6 +1293,37 @@ static void sunxi_mmc_set_card_threshold(struct sunxi_mmc_host *host,
+ 	mmc_writel(host, REG_THLD, rval);
+ }
+ 
++/*
++ * Software timeout of the bus phase of a data request, computed as sdhci
++ * computes its own: the card's access time per block, from timeout_ns and
++ * timeout_clks as mmc_set_data_timeout() set them, times the block count,
++ * plus twice the time one block takes on the bus, plus 10 ms. The access
++ * time is the worst case the card allows, so this ends a hang and does
++ * not judge a slow card. A request without an access time gets a floor.
++ */
++static unsigned int sunxi_mmc_data_timeout_ms(struct sunxi_mmc_host *host,
++					      struct mmc_data *data)
++{
++	struct mmc_ios *ios = &host->mmc->ios;
++	u64 clock = host->mmc->actual_clock ? : ios->clock;
++	u64 block_ns = data->timeout_ns;
++	u64 total_ns = 10 * NSEC_PER_MSEC;
++
++	if (clock) {
++		if (data->timeout_clks)
++			block_ns += DIV64_U64_ROUND_UP((u64)data->timeout_clks *
++						       NSEC_PER_SEC, clock);
++		/* one block on 1 << bus_width data lines, twice */
++		total_ns += 2 * DIV64_U64_ROUND_UP((u64)data->blksz * 8 *
++						   NSEC_PER_SEC,
++						   clock << ios->bus_width);
++	}
++	total_ns += (u64)data->blocks * block_ns;
++
++	return max_t(u64, DIV_ROUND_UP_ULL(total_ns, NSEC_PER_MSEC),
++		     SDXC_DATA_SW_TIMEOUT_MIN_MS);
++}
++
+ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ {
+ 	struct sunxi_mmc_host *host = mmc_priv(mmc);
+@@ -1311,6 +1422,16 @@ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ 
+ 	host->mrq = mrq;
+ 	host->wait_dma = wait_dma;
++	host->req_seq++;
++
++	if (data) {
++		host->data_seq = host->req_seq;
++		host->data_timeout_ms = sunxi_mmc_data_timeout_ms(host, data);
++		host->data_deadline = jiffies +
++				      msecs_to_jiffies(host->data_timeout_ms);
++		mod_delayed_work(system_dfl_long_wq, &host->data_work,
++				 msecs_to_jiffies(host->data_timeout_ms) + 1);
++	}
+ 	mmc_writel(host, REG_IMASK, host->sdio_imask | imask);
+ 	mmc_writel(host, REG_CARG, cmd->arg);
+ 	mmc_writel(host, REG_CMDR, cmd_val);
+@@ -1674,6 +1795,7 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 	host->dev = &pdev->dev;
+ 	host->mmc = mmc;
+ 	spin_lock_init(&host->lock);
++	INIT_DELAYED_WORK(&host->data_work, sunxi_mmc_data_work);
+ 
+ 	ret = sunxi_mmc_resource_request(host, pdev);
+ 	if (ret)
+@@ -1803,6 +1925,7 @@ static void sunxi_mmc_remove(struct platform_device *pdev)
+ 	struct sunxi_mmc_host *host = mmc_priv(mmc);
+ 
+ 	mmc_remove_host(mmc);
++	cancel_delayed_work_sync(&host->data_work);
+ 	pm_runtime_disable(&pdev->dev);
+ 	if (!pm_runtime_status_suspended(&pdev->dev)) {
+ 		disable_irq(host->irq);

@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:49:13 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable the DSU PMU
+
+The boot firmware for the Cubie A7S sets ACTLR_EL3 bit 12 on every core
+at each reset, so the DSU PMU registers are accessible from EL2.
+
+Enable the DSU PMU. A boot firmware without that setting must leave the
+node disabled.
+
+Tested on Radxa Cubie A7S: booted on two boards with firmware that grants
+the access; arm_dsu_pmu probes arm_dsu_0 without an undefined
+instruction.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index e50a089056e7..0d5e8cb21ccd 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -130,6 +130,11 @@ &dsu {
+ 	dsu-supply = <&reg_dcdc5>;
+ };
+ 
++/* the boot firmware of this board sets ACTLR_EL3 bit 12 on every core */
++&dsu_pmu {
++	status = "okay";
++};
++
+ &ehci1 {
+ 	status = "okay";
+ };

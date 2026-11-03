@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 8 Oct 2026 21:00:00 +0200
+Subject: [PATCH] dt-bindings: sram: allwinner,sun4i-a10-system-control: Add
+ the A733
+
+The A733 has a system control block at 0x03000000 like the earlier
+SoCs, but none of the registers the A64 compatible stands for: its
+EMAC clock register lives in the GMAC itself. What it holds and Linux
+needs is the resistor calibration of the USB PHYs.
+
+Add a compatible of its own, without the A64 fallback.
+
+Tested on Radxa Cubie A7S: booted on two boards; the system control node
+with this compatible binds the driver without the A64 fallback.
+
+Assisted-by: LLM
+---
+ .../bindings/sram/allwinner,sun4i-a10-system-control.yaml        | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/sram/allwinner,sun4i-a10-system-control.yaml b/Documentation/devicetree/bindings/sram/allwinner,sun4i-a10-system-control.yaml
+index 6e6ab2168a2a..4d3445a87f14 100644
+--- a/Documentation/devicetree/bindings/sram/allwinner,sun4i-a10-system-control.yaml
++++ b/Documentation/devicetree/bindings/sram/allwinner,sun4i-a10-system-control.yaml
+@@ -37,6 +37,7 @@ properties:
+           - allwinner,sun50i-a64-system-control
+           - allwinner,sun50i-h5-system-control
+           - allwinner,sun50i-h616-system-control
++          - allwinner,sun60i-a733-system-control
+       - items:
+           - enum:
+               - allwinner,suniv-f1c100s-system-control

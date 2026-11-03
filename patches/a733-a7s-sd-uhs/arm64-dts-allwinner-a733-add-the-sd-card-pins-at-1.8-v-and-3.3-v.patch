@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:57:20 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the SD card pins at 1.8 V
+ and 3.3 V
+
+Bank PF of the A733 can run its pads from a 1.8 V or a 3.3 V supply,
+which an SD card needs for UHS signalling. Add copies of the mmc0 pin
+group that select the bank supply for either voltage.
+
+Tested on Radxa Cubie A7S: booted on two boards; the pin group for 1.8 V
+is applied when the card runs at SDR104 (GPIO_POW_VAL_SET_CTL bit 0
+reads 0), and the group for 3.3 V when a card came back in high-speed
+mode (bit 0 reads 1).
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 7c902f1ef1e6..a0c8fe89ff6a 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -379,6 +379,26 @@ mmc0_pins: mmc0-pins {
+ 				bias-pull-up;
+ 			};
+ 
++			/* mmc0_pins with the bank PF supply for 1.8 V signalling */
++			mmc0_1v8_pins: mmc0-1v8-pins {
++				pins = "PF0", "PF1", "PF3", "PF4", "PF5";
++				allwinner,pinmux = <2>;
++				function = "mmc0";
++				drive-strength = <10>;
++				bias-pull-up;
++				power-source = <1800000>;
++			};
++
++			/* mmc0_pins with the bank PF supply for 3.3 V signalling */
++			mmc0_3v3_pins: mmc0-3v3-pins {
++				pins = "PF0", "PF1", "PF3", "PF4", "PF5";
++				allwinner,pinmux = <2>;
++				function = "mmc0";
++				drive-strength = <10>;
++				bias-pull-up;
++				power-source = <3300000>;
++			};
++
+ 			/* RST and CLK */
+ 			mmc2_clk_rst_pins: mmc2-clk-rst-pins {
+ 				pins = "PC1", "PC5";

@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 20 Oct 2026 16:41:14 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Keep the video PLL VCO within its range
+
+The A733 manual gives PLL_VIDEO0, PLL_VIDEO1 and PLL_VIDEO2 a VCO range
+of 1.26 GHz to 2.52 GHz (section 4.1.3.2, Table 4-2). The VCO is
+24 MHz * N / M1, before the output dividers P0 and P1 (sections
+4.1.6.21, 4.1.6.26 and 4.1.6.31). The driver limits only N, so the rate
+search takes the lowest N and M1 that give the best rate, wherever that
+puts the VCO. Any consumer that sets a rate through a video PLL runs
+that search: the pixel clock of a DisplayPort monitor does, once edp-tv
+passes its rate request on to the parent.
+
+Seen on the Radxa Cubie A7S: 1920x1200 at 154 MHz on the DisplayPort
+left PLL_VIDEO0 at N 77 and M1 2 (VCO 924 MHz), 1024x768 at 65 MHz at
+N 65 and M1 2 (780 MHz). The PLL locked and the picture was stable, but
+the VCO was outside the range.
+
+Set min_rate and max_rate of the three PLLs to the range.
+ccu_nm_determine_rate() answers a request outside it with the nearest
+end, and inside it the search cannot leave the range: both ends are
+rates the PLL makes, 1260 MHz with N 105 and M1 2, 2520 MHz with N 105
+and M1 1. M1 stays free. Fixed at 1, as for PLL_GPU0, it would put the
+VCO on a 24 MHz grid, and the search would miss some pixel clocks next
+to a multiple of 24 MHz by more than the 0.5 % VESA DMT allows.
+
+Not covered: PLL_DDR, PLL_PERI0, PLL_PERI1, PLL_VE0, PLL_VE1, PLL_NPU
+and PLL_DE have the same range and are not limited here. PLL_GPU0 and
+PLL_AUDIO0 are limited by their own patches, PLL_AUDIO1 (1.8 GHz to
+3.1 GHz) is not. A video PLL that the boot chain left outside the range
+keeps its rate until a request changes it.
+
+Tested on Radxa Cubie A7S: booted on one board with a DisplayPort
+monitor, in two modes; PLL_VIDEO0 locked with its VCO within the range
+in both, and the CRC that the sink computes for a white picture was the
+same as without the patch.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 5c8420fbf3bd..416c7f98aa1b 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -255,12 +255,21 @@ static struct ccu_nkmp pll_gpu0_clk = {
+ 	},
+ };
+ 
++/*
++ * The VCO of the video PLLs, 24 MHz * N / M1, runs from 1.26 GHz to
++ * 2.52 GHz. The PLL can make both ends: N is 105 with M1 at 2 and at 1.
++ */
++#define SUN60I_A733_PLL_VIDEO_VCO_MIN	1260000000U
++#define SUN60I_A733_PLL_VIDEO_VCO_MAX	2520000000U
++
+ #define SUN60I_A733_PLL_VIDEO0_REG	0x120
+ static struct ccu_nm pll_video0_clk = {
+ 	.lock		= BIT(28),
+ 	/* N = PLL_N + 1, PLL_N 11 to 254 */
+ 	.n		= _SUNXI_CCU_MULT_OFFSET_MIN_MAX(8, 8, 1, 12, 255),
+ 	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.min_rate	= SUN60I_A733_PLL_VIDEO_VCO_MIN,
++	.max_rate	= SUN60I_A733_PLL_VIDEO_VCO_MAX,
+ 	.common		= {
+ 		.reg		= SUN60I_A733_PLL_VIDEO0_REG,
+ 		.hw.init	= CLK_HW_INIT_PARENTS_HW("pll-video0", pll_ref_hws,
+@@ -285,6 +294,8 @@ static struct ccu_nm pll_video1_clk = {
+ 	/* N = PLL_N + 1, PLL_N 11 to 254 */
+ 	.n		= _SUNXI_CCU_MULT_OFFSET_MIN_MAX(8, 8, 1, 12, 255),
+ 	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.min_rate	= SUN60I_A733_PLL_VIDEO_VCO_MIN,
++	.max_rate	= SUN60I_A733_PLL_VIDEO_VCO_MAX,
+ 	.common		= {
+ 		.reg		= SUN60I_A733_PLL_VIDEO1_REG,
+ 		.hw.init	= CLK_HW_INIT_PARENTS_HW("pll-video1", pll_ref_hws,
+@@ -309,6 +320,8 @@ static struct ccu_nm pll_video2_clk = {
+ 	/* N = PLL_N + 1, PLL_N 11 to 254 */
+ 	.n		= _SUNXI_CCU_MULT_OFFSET_MIN_MAX(8, 8, 1, 12, 255),
+ 	.m		= _SUNXI_CCU_DIV(1, 1), /* input divider */
++	.min_rate	= SUN60I_A733_PLL_VIDEO_VCO_MIN,
++	.max_rate	= SUN60I_A733_PLL_VIDEO_VCO_MAX,
+ 	.common		= {
+ 		.reg		= SUN60I_A733_PLL_VIDEO2_REG,
+ 		.hw.init	= CLK_HW_INIT_PARENTS_HW("pll-video2", pll_ref_hws,

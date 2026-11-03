@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:59:26 +0200
+Subject: [PATCH] drm/imagination: Set the core clock and its supply from an
+ OPP table
+
+The firmware reads the core clock rate once, when the driver starts it
+(pvr_fw_init()), and keeps no way to learn of a later change. A board
+that has to run the core at a fixed rate on a fixed voltage sets both
+outside the driver today: the rate with assigned-clock-rates, which the
+platform bus applies before the driver probes, and the voltage whenever
+its regulator happens to be set. Nothing orders the two.
+
+If the GPU node has operating-points-v2, take the OPP table, with the
+core clock and, if there is a gpu-supply, that regulator, and set the
+highest operating point once. The OPP core sets the supply before the
+rate when it goes up, and a regulator that is not yet available defers
+the probe before any rate is set. Do it in pvr_device_init(), after the
+clocks are looked up and before the first runtime resume enables them:
+the PLL behind the core clock of the A733 refuses a new rate while it is
+prepared, and the rate has to be final before the firmware starts.
+
+The rate is not set again on runtime resume, and there is no devfreq:
+the table is used for one point, as the firmware cannot follow a change.
+A node without operating-points-v2 is not touched, so the other users of
+the driver are unchanged.
+
+Not covered: more than one operating point; the highest one is taken
+without a governor.
+
+Tested on Radxa Cubie A7S: on two boards the GPU ran at the table's
+operating point after the driver probed, with the driver as a consumer
+of its regulator, and the firmware booted, also after reloading the
+driver.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/imagination/pvr_device.c | 68 ++++++++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+
+diff --git a/drivers/gpu/drm/imagination/pvr_device.c b/drivers/gpu/drm/imagination/pvr_device.c
+index 05c2c81521d8..cfae30d496c9 100644
+--- a/drivers/gpu/drm/imagination/pvr_device.c
++++ b/drivers/gpu/drm/imagination/pvr_device.c
+@@ -22,8 +22,10 @@
+ #include <linux/firmware.h>
+ #include <linux/gfp.h>
+ #include <linux/interrupt.h>
++#include <linux/limits.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_opp.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
+ #include <linux/slab.h>
+@@ -123,6 +125,67 @@ static int pvr_device_clk_init(struct pvr_device *pvr_dev)
+ 	return 0;
+ }
+ 
++/**
++ * pvr_device_opp_init() - Set the core clock and its supply from an OPP table
++ * @pvr_dev: Target PowerVR device.
++ *
++ * The firmware reads the core clock rate once when it starts and nothing
++ * tells it about a later change, so the rate has to be final before
++ * pvr_fw_init(). If the device tree gives the GPU an OPP table, set its
++ * highest operating point now, once: the OPP core raises the supply, if
++ * there is one, before it sets the rate.
++ *
++ * The rate may change only while the clocks are off, as the PLL behind the
++ * core clock refuses a new rate while it is prepared. Call this after the
++ * clocks are looked up and before the first power-on.
++ *
++ * Without an OPP table nothing is done.
++ *
++ * Return:
++ *  * 0 on success,
++ *  * Any error returned by dev_pm_opp_set_config(),
++ *  * Any error returned by dev_pm_opp_of_add_table(),
++ *  * Any error returned by dev_pm_opp_find_freq_floor(), or
++ *  * Any error returned by dev_pm_opp_set_rate().
++ */
++static int pvr_device_opp_init(struct pvr_device *pvr_dev)
++{
++	struct device *dev = from_pvr_device(pvr_dev)->dev;
++	const char * const clk_names[] = { "core", NULL };
++	const char * const supply_names[] = { "gpu", NULL };
++	struct dev_pm_opp_config config = {
++		.clk_names = clk_names,
++	};
++	struct dev_pm_opp *opp;
++	unsigned long rate = ULONG_MAX;
++	int err;
++
++	if (!of_property_present(dev->of_node, "operating-points-v2"))
++		return 0;
++
++	if (of_property_present(dev->of_node, "gpu-supply"))
++		config.regulator_names = supply_names;
++
++	err = devm_pm_opp_set_config(dev, &config);
++	if (err)
++		return dev_err_probe(dev, err, "failed to set up the OPP core\n");
++
++	err = devm_pm_opp_of_add_table(dev);
++	if (err)
++		return dev_err_probe(dev, err, "failed to add the OPP table\n");
++
++	opp = dev_pm_opp_find_freq_floor(dev, &rate);
++	if (IS_ERR(opp))
++		return dev_err_probe(dev, PTR_ERR(opp), "the OPP table has no rate\n");
++	dev_pm_opp_put(opp);
++
++	err = dev_pm_opp_set_rate(dev, rate);
++	if (err)
++		return dev_err_probe(dev, err, "failed to set the OPP rate %lu\n", rate);
++
++	return 0;
++}
++
+ /**
+  * pvr_device_process_active_queues() - Process all queue related events.
+  * @pvr_dev: PowerVR device to check
+@@ -768,6 +831,11 @@ pvr_device_init(struct pvr_device *pvr_dev)
+ 	if (err)
+ 		return err;
+ 
++	/* Set the core clock rate and its supply before any clock is enabled. */
++	err = pvr_device_opp_init(pvr_dev);
++	if (err)
++		return err;
++
+ 	err = pvr_dev->device_data->pwr_ops->init(pvr_dev);
+ 	if (err)
+ 		return err;

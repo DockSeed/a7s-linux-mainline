@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 6 Oct 2026 16:16:02 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Keep the audio PLL N factor within the
+ manual's range
+
+PLL_AUDIO0 and PLL_AUDIO1 take N = PLL_N + 1 from bits 15:8. The A733
+manual limits the field for both: PLL_N is from 0 to 254 and no less
+than 11, so N runs from 12 to 255. The driver allows N from 11 to 256,
+so the rate search can pick N = 11, and N = 256 writes a field value
+the manual does not allow.
+
+For PLL_AUDIO0 the manual's PLL table also gives a VCO range of
+1.26 GHz to 2.52 GHz, with AUDIO0PLL4X = 24 MHz * N / M1 / P0. The
+search can leave it: 24.576 MHz comes out exactly at N = 128 and
+P0 = 125, a VCO of 3072 MHz, and the audio module clocks keep their
+first exact parent, PLL_AUDIO0, ahead of PLL_AUDIO1.
+
+Limit N to 53..105 for PLL_AUDIO0, with M1 kept at 1 as probe sets it,
+so its VCO stays within the range; P0 covers the lower rates. Limit N
+to 12..255 for PLL_AUDIO1. The rates in use do not change: the
+22.5792 MHz x 4 point takes N = 67 from the sigma-delta table, and
+PLL_AUDIO1 stays at N = 128. No integer N within the range gives
+24.576 MHz or a multiple of it, so the 48 kHz family stays on
+PLL_AUDIO1.
+
+Not covered: the PLL_AUDIO1 VCO range (1.8 GHz to 3.1 GHz) is not
+enforced; the other PLLs keep N from 11 to 256.
+
+Tested on Radxa Cubie A7S: with I2S0 in loopback from 8 kHz to
+192 kHz, PLL_AUDIO0 and PLL_AUDIO1 read an N within the range at
+every rate.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index ec5213b58d72..f175d402b936 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -368,7 +368,11 @@ static struct ccu_sdm_setting pll_audio0_sdm_table[] = {
+ static struct ccu_nm pll_audio0_4x_clk = {
+ 	.enable		= BIT(27),
+ 	.lock		= BIT(28),
+-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	/*
++	 * The VCO (24 MHz * N / M1, M1 kept at 1) must stay within 1.26 GHz
++	 * to 2.52 GHz: keep N within 53 to 105.
++	 */
++	.n		= _SUNXI_CCU_MULT_OFFSET_MIN_MAX(8, 8, 1, 53, 105),
+ 	.m		= _SUNXI_CCU_DIV(16, 7),
+ 	.sdm		= _SUNXI_CCU_SDM_DUAL_PAT(pll_audio0_sdm_table, 0,
+ 						  0x268, BIT(31),
+@@ -386,7 +390,8 @@ static struct ccu_nm pll_audio0_4x_clk = {
+ static struct ccu_nm pll_audio1_clk = {
+ 	.enable		= BIT(27),
+ 	.lock		= BIT(28),
+-	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
++	/* N = PLL_N + 1, PLL_N 11 to 254 */
++	.n		= _SUNXI_CCU_MULT_OFFSET_MIN_MAX(8, 8, 1, 12, 255),
+ 	.m		= _SUNXI_CCU_DIV(1, 1),	/* input divider */
+ 	.sdm		= {
+ 		/* PLL_AUDIO1 does not use fractional rates. */

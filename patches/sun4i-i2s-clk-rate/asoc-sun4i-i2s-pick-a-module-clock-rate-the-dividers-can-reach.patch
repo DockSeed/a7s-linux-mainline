@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 19 Oct 2026 17:27:04 +0200
+Subject: [PATCH] ASoC: sun4i-i2s: Pick a module clock rate the dividers can
+ reach
+
+sun4i_i2s_set_clk_rate() runs the module clock at 22.5792 MHz for the
+44.1 kHz family and at 24.576 MHz for the 48 kHz family. Without this,
+a rate whose MCLK or BCLK is not a divider step below that clock fails:
+at 256 fs, 32 kHz needs 24.576 / 8.192 = 3, and 176.4 kHz and 192 kHz
+need more than the module clock. Seen on the Radxa Cubie A7S at 32 kHz
+with mclk-fs = <256>:
+
+  sun4i-i2s 2532000.i2s: Unsupported MCLK divider: -22
+
+Keep the usual rate when both dividers are exact. Otherwise try the
+MCLK rate times each MCLK divider step, in table order, and take the
+first rate for which the BCLK divider is exact too and which the
+module clock can run at exactly (clk_round_rate()). If none fits, the
+usual rate is set and the error stays as before. get_bclk_parent_rate()
+now takes the module clock rate, so the BCLK divider can be checked
+before the rate is set.
+
+Not covered: at 176.4 kHz and 192 kHz with 256 fs the MCLK output runs
+at 45.1584 and 49.152 MHz. The driver has no per-variant MCLK limit,
+and the A733 manual gives none.
+
+Tested on Radxa Cubie A7S: I2S0 in loopback plays and records 8 kHz
+to 192 kHz at 256 fs, 32, 176.4 and 192 kHz included, without the
+divider error.
+
+Assisted-by: LLM
+---
+ sound/soc/sunxi/sun4i-i2s.c | 93 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 86 insertions(+), 7 deletions(-)
+
+diff --git a/sound/soc/sunxi/sun4i-i2s.c b/sound/soc/sunxi/sun4i-i2s.c
+index 125509030658..a1f35b41d5a3 100644
+--- a/sound/soc/sunxi/sun4i-i2s.c
++++ b/sound/soc/sunxi/sun4i-i2s.c
+@@ -11,6 +11,7 @@
+ #include <linux/dmaengine.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/overflow.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+@@ -168,7 +169,8 @@ struct sun4i_i2s;
+  * @num_bclk_dividers: number of bit clock dividers
+  * @mclk_dividers: mclk dividers array
+  * @num_mclk_dividers: number of mclk dividers
+- * @get_bclk_parent_rate: callback to get bclk parent rate
++ * @get_bclk_parent_rate: callback to get bclk parent rate for a module
++ *			  clock rate
+  * @get_sr: callback to get sample resolution
+  * @get_wss: callback to get word select size
+  * @set_chan_cfg: callback to set channel configuration
+@@ -193,7 +195,8 @@ struct sun4i_i2s_quirks {
+ 	const struct sun4i_i2s_clk_div	*mclk_dividers;
+ 	unsigned int			num_mclk_dividers;
+ 
+-	unsigned long (*get_bclk_parent_rate)(const struct sun4i_i2s *i2s);
++	unsigned long (*get_bclk_parent_rate)(const struct sun4i_i2s *i2s,
++					      unsigned long clk_rate);
+ 	int	(*get_sr)(unsigned int width);
+ 	int	(*get_wss)(unsigned int width);
+ 
+@@ -275,14 +278,16 @@ static const struct sun4i_i2s_clk_div sun8i_i2s_clk_div[] = {
+ 	{ .div = 192, .val = 15 },
+ };
+ 
+-static unsigned long sun4i_i2s_get_bclk_parent_rate(const struct sun4i_i2s *i2s)
++static unsigned long sun4i_i2s_get_bclk_parent_rate(const struct sun4i_i2s *i2s,
++						    unsigned long clk_rate)
+ {
+ 	return i2s->mclk_freq;
+ }
+ 
+-static unsigned long sun8i_i2s_get_bclk_parent_rate(const struct sun4i_i2s *i2s)
++static unsigned long sun8i_i2s_get_bclk_parent_rate(const struct sun4i_i2s *i2s,
++						    unsigned long clk_rate)
+ {
+-	return clk_get_rate(i2s->mod_clk);
++	return clk_rate;
+ }
+ 
+ static int sun4i_i2s_get_bclk_div(struct sun4i_i2s *i2s,
+@@ -323,6 +328,75 @@ static int sun4i_i2s_get_mclk_div(struct sun4i_i2s *i2s,
+ 	return -EINVAL;
+ }
+ 
++static bool sun4i_i2s_div_is_exact(const struct sun4i_i2s_clk_div *dividers,
++				   unsigned int num_dividers,
++				   unsigned long parent_rate,
++				   unsigned long rate)
++{
++	unsigned int i;
++
++	if (!rate || parent_rate % rate)
++		return false;
++
++	for (i = 0; i < num_dividers; i++)
++		if (dividers[i].div == parent_rate / rate)
++			return true;
++
++	return false;
++}
++
++static bool sun4i_i2s_clk_rate_is_exact(const struct sun4i_i2s *i2s,
++					unsigned long clk_rate,
++					unsigned int rate,
++					unsigned int slots,
++					unsigned int slot_width)
++{
++	const struct sun4i_i2s_quirks *variant = i2s->variant;
++	unsigned long bclk_rate = (unsigned long)rate * slots * slot_width;
++
++	return sun4i_i2s_div_is_exact(variant->mclk_dividers,
++				      variant->num_mclk_dividers,
++				      clk_rate, i2s->mclk_freq) &&
++	       sun4i_i2s_div_is_exact(variant->bclk_dividers,
++				      variant->num_bclk_dividers,
++				      variant->get_bclk_parent_rate(i2s, clk_rate),
++				      bclk_rate);
++}
++
++/*
++ * The module clock runs at 22.5792 or 24.576 MHz for the usual rates. Where
++ * the MCLK or BCLK divider for that rate is not in the table, try the MCLK
++ * rate times each MCLK divider instead, and take the first that the module
++ * clock can run at exactly.
++ */
++static unsigned long sun4i_i2s_choose_clk_rate(struct sun4i_i2s *i2s,
++					       unsigned long base_rate,
++					       unsigned int rate,
++					       unsigned int slots,
++					       unsigned int slot_width)
++{
++	const struct sun4i_i2s_quirks *variant = i2s->variant;
++	unsigned long clk_rate;
++	unsigned int i;
++
++	if (sun4i_i2s_clk_rate_is_exact(i2s, base_rate, rate, slots, slot_width))
++		return base_rate;
++
++	for (i = 0; i < variant->num_mclk_dividers; i++) {
++		if (check_mul_overflow((unsigned long)i2s->mclk_freq,
++				       (unsigned long)variant->mclk_dividers[i].div,
++				       &clk_rate))
++			break;
++
++		if (sun4i_i2s_clk_rate_is_exact(i2s, clk_rate, rate, slots,
++						slot_width) &&
++		    clk_round_rate(i2s->mod_clk, clk_rate) == clk_rate)
++			return clk_rate;
++	}
++
++	return base_rate;
++}
++
+ static int sun4i_i2s_oversample_rates[] = { 128, 192, 256, 384, 512, 768 };
+ static bool sun4i_i2s_oversample_is_valid(unsigned int oversample)
+ {
+@@ -341,7 +415,8 @@ static int sun4i_i2s_set_clk_rate(struct snd_soc_dai *dai,
+ 				  unsigned int slot_width)
+ {
+ 	struct sun4i_i2s *i2s = snd_soc_dai_get_drvdata(dai);
+-	unsigned int oversample_rate, clk_rate, bclk_parent_rate;
++	unsigned long clk_rate, bclk_parent_rate;
++	unsigned int oversample_rate;
+ 	int bclk_div, mclk_div;
+ 	int ret;
+ 
+@@ -372,6 +447,9 @@ static int sun4i_i2s_set_clk_rate(struct snd_soc_dai *dai,
+ 		return -EINVAL;
+ 	}
+ 
++	clk_rate = sun4i_i2s_choose_clk_rate(i2s, clk_rate, rate, slots,
++					     slot_width);
++
+ 	ret = clk_set_rate(i2s->mod_clk, clk_rate);
+ 	if (ret)
+ 		return ret;
+@@ -383,7 +461,8 @@ static int sun4i_i2s_set_clk_rate(struct snd_soc_dai *dai,
+ 		return -EINVAL;
+ 	}
+ 
+-	bclk_parent_rate = i2s->variant->get_bclk_parent_rate(i2s);
++	bclk_parent_rate = i2s->variant->get_bclk_parent_rate(i2s,
++							      clk_get_rate(i2s->mod_clk));
+ 	bclk_div = sun4i_i2s_get_bclk_div(i2s, bclk_parent_rate,
+ 					  rate, slots, slot_width);
+ 	if (bclk_div < 0) {

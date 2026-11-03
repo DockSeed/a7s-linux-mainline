@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:18 +0200
+Subject: [PATCH] dt-bindings: display: sun8i-a83t-de2-mixer: Add the A733
+ mixer
+
+The A733 display engine uses the DE33 register layout of the H616
+mixer, with the same three register windows (layers, top, display).
+Its registers sit in a power domain (DE_SYS) that the power controller
+switches off when no device claims it.
+
+Add the A733 compatible to the DE33 branch and allow a power domain.
+
+Tested on Radxa Cubie A7S: booted on one board with a device tree that
+uses this binding; the mixer probes and dtbs_check reports nothing.
+
+Assisted-by: LLM
+---
+ .../bindings/display/allwinner,sun8i-a83t-de2-mixer.yaml     | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/display/allwinner,sun8i-a83t-de2-mixer.yaml b/Documentation/devicetree/bindings/display/allwinner,sun8i-a83t-de2-mixer.yaml
+index cbd18fd83e52..570d53935cb8 100644
+--- a/Documentation/devicetree/bindings/display/allwinner,sun8i-a83t-de2-mixer.yaml
++++ b/Documentation/devicetree/bindings/display/allwinner,sun8i-a83t-de2-mixer.yaml
+@@ -25,6 +25,7 @@ properties:
+       - allwinner,sun50i-a64-de2-mixer-1
+       - allwinner,sun50i-h6-de3-mixer-0
+       - allwinner,sun50i-h616-de33-mixer-0
++      - allwinner,sun60i-a733-de-mixer-0
+ 
+   reg: true
+ 
+@@ -43,6 +44,9 @@ properties:
+   iommus:
+     maxItems: 1
+ 
++  power-domains:
++    maxItems: 1
++
+   resets:
+     maxItems: 1
+ 
+@@ -70,6 +74,7 @@ allOf:
+           contains:
+             enum:
+               - allwinner,sun50i-h616-de33-mixer-0
++              - allwinner,sun60i-a733-de-mixer-0
+     then:
+       properties:
+         reg:

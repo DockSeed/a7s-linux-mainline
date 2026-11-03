@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 3 Oct 2026 16:34:04 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the PRCM clock controller
+ and the RTC
+
+The A733 CCU binding takes "losc", "iosc" and "losc-fanout" from the RTC,
+but the dtsi has fixed clocks instead and describes neither the RTC nor the
+PRCM CCU that clocks it.
+
+Add the PRCM CCU and the RTC, take the three clocks from the RTC in the CCU
+and the pin controller, and drop the fixed clocks.
+
+Tested on Radxa Cubie A7S: booted on two boards; the PRCM CCU at 0x7010000
+probes, and the RTC registers as rtc0.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 58 +++++++++++++------
+ 1 file changed, 41 insertions(+), 17 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 4286bc9f80ba..6e3cac577e0b 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -2,7 +2,10 @@
+ 
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
++#include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
++#include <dt-bindings/clock/sun6i-rtc.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
++#include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
+ 
+ / {
+ 	interrupt-parent = <&gic>;
+@@ -85,20 +88,6 @@ osc: osc-clk {
+ 		clock-output-names = "hosc";
+ 	};
+ 
+-	osc32k: osc32k-clk {
+-		#clock-cells = <0>;
+-		compatible = "fixed-clock";
+-		clock-frequency = <32768>;
+-		clock-output-names = "osc32k";
+-	};
+-
+-	iosc: internal-osc-clk {
+-		#clock-cells = <0>;
+-		compatible = "fixed-clock";
+-		clock-frequency = <16000000>;
+-		clock-output-names = "iosc";
+-	};
+-
+ 	psci {
+ 		compatible = "arm,psci-1.0", "arm,psci-0.2";
+ 		method = "smc";
+@@ -134,7 +123,7 @@ pio: pinctrl@2000000 {
+ 				     <GIC_SPI 83 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <GIC_SPI 85 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <GIC_SPI 87 IRQ_TYPE_LEVEL_HIGH>;
+-			clocks = <&ccu CLK_APB1>, <&ccu CLK_SYS_24M>, <&osc32k>;
++			clocks = <&ccu CLK_APB1>, <&ccu CLK_SYS_24M>, <&rtc CLK_OSC32K>;
+ 			clock-names = "apb", "hosc", "losc";
+ 			gpio-controller;
+ 			#gpio-cells = <3>;
+@@ -153,8 +142,10 @@ mmc0_pins: mmc0-pins {
+ 		ccu: clock-controller@2002000 {
+ 			compatible = "allwinner,sun60i-a733-ccu";
+ 			reg = <0x02002000 0x2000>;
+-			clocks = <&osc>, <&osc32k>, <&iosc>;
+-			clock-names = "hosc", "losc", "iosc";
++			clocks = <&osc>, <&rtc CLK_OSC32K>,
++				 <&rtc CLK_IOSC>, <&rtc CLK_OSC32K_FANOUT>;
++			clock-names = "hosc", "losc",
++				      "iosc", "losc-fanout";
+ 			#clock-cells = <1>;
+ 			#reset-cells = <1>;
+ 		};
+@@ -196,5 +187,38 @@ mmc0: mmc@4020000 {
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 		};
++
++		r_ccu: clock-controller@7010000 {
++			compatible = "allwinner,sun60i-a733-r-ccu";
++			reg = <0x07010000 0x230>;
++			clocks = <&osc>,
++				 <&rtc CLK_OSC32K>,
++				 <&rtc CLK_IOSC>,
++				 <&ccu CLK_SYS_24M>,
++				 <&ccu CLK_PLL_PERIPH0_200M>,
++				 <&ccu CLK_PLL_PERIPH0_300M>,
++				 <&ccu CLK_PLL_PERIPH1_300M>;
++			clock-names = "hosc",
++				      "losc",
++				      "iosc",
++				      "sys-24m",
++				      "pll-periph0-200m",
++				      "pll-periph0-300m",
++				      "pll-periph1-300m";
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++		};
++
++		rtc: rtc@7090000 {
++			compatible = "allwinner,sun60i-a733-rtc",
++				     "allwinner,sun50i-r329-rtc";
++			reg = <0x07090000 0x400>;
++			interrupts = <GIC_SPI 196 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_BUS_R_RTC>,
++				 <&osc>,
++				 <&r_ccu CLK_R_AHB>;
++			clock-names = "bus", "hosc", "ahb";
++			#clock-cells = <1>;
++		};
+ 	};
+ };

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 17:08:46 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the NMI interrupt controller
+
+The A733 has the NMI controller of the A523 in the PRCM block, at offset
+0x320 with the same control, enable and pending registers. The PMIC
+interrupt of the boards reaches the SoC through its NMI pad.
+
+Add the node. The registers sit in the PRCM at 0x07010320 (manual
+section 4.2.5.28 to 4.2.5.30), the controller raises interrupt 220, GIC
+SPI 188 (manual section 12.1, interrupt sources).
+
+Tested on Radxa Cubie A7S: booted on two boards; the controller is
+enabled towards the application CPUs only, not the RISC-V core, and
+stays clear at rest; on one board a short of the power key test pads
+raised the PMIC interrupt through it.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 892c50f16680..e4cc492a5565 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1292,6 +1292,15 @@ r_ccu: clock-controller@7010000 {
+ 			#reset-cells = <1>;
+ 		};
+ 
++		nmi_intc: interrupt-controller@7010320 {
++			compatible = "allwinner,sun60i-a733-nmi",
++				     "allwinner,sun55i-a523-nmi";
++			reg = <0x07010320 0xc>;
++			interrupt-controller;
++			#interrupt-cells = <2>;
++			interrupts = <GIC_SPI 188 IRQ_TYPE_LEVEL_HIGH 0>;
++		};
++
+ 		r_wdt: watchdog@7021000 {
+ 			compatible = "allwinner,sun60i-a733-wdt",
+ 				     "allwinner,sun55i-a523-wdt";

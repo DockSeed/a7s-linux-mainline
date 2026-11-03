@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 20:36:22 +0200
+Subject: [PATCH] arm64: defconfig: Enable the Allwinner A733 PCIe controller
+
+The Allwinner A733 has a DesignWare PCIe controller whose lane runs
+through the second combo PHY of the SERDES block. Enable the controller
+driver, which can only be built in, and the PHY driver as a module.
+
+Tested on Radxa Cubie A7S: booted on one board; the kernel built with this
+option bound the host driver, and the NVMe drive enumerated and was read.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 3f73dc0ed104..4ea04aba246f 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -247,6 +247,7 @@ CONFIG_PCIE_QCOM=y
+ CONFIG_PCIE_RCAR_GEN4_HOST=m
+ CONFIG_PCIE_RCAR_GEN4_EP=m
+ CONFIG_PCIE_ROCKCHIP_DW_HOST=y
++CONFIG_PCIE_SUN60I_A733=y
+ CONFIG_PCIE_VISCONTI_HOST=y
+ CONFIG_PCIE_LAYERSCAPE_GEN4=y
+ CONFIG_PCI_ENDPOINT=y
+@@ -1765,6 +1766,7 @@ CONFIG_PHY_XGENE=y
+ CONFIG_PHY_SUN4I_USB=y
+ CONFIG_PHY_SUN60I_A733_USB2=m
+ CONFIG_PHY_SUN60I_A733_COMBO=m
++CONFIG_PHY_SUN60I_A733_PCIE_COMBO=m
+ CONFIG_PHY_CADENCE_TORRENT=m
+ CONFIG_PHY_CADENCE_DPHY=m
+ CONFIG_PHY_CADENCE_DPHY_RX=m

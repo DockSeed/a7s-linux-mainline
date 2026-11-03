@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 19:30:00 +0200
+Subject: [PATCH] drm/etnaviv: free the PPU flop reset buffer only when it was
+ allocated
+
+etnaviv_gpu_init() allocates priv->flop_reset_data_ppu only for a core
+that needs the PPU flop reset, so for every other core it stays NULL.
+etnaviv_unbind() passes it to etnaviv_cmdbuf_free() unconditionally,
+which reads cmdbuf->size before it looks at the suballocator.
+
+Without this, unbinding etnaviv on such a core oopses, because
+etnaviv_cmdbuf_free() dereferences the NULL buffer. Seen on the Radxa
+Cubie A7S (Allwinner A733 NPU, model 0x9000) on rmmod etnaviv: NULL
+pointer dereference at 0x18, pc etnaviv_cmdbuf_free+0x18, called from
+etnaviv_unbind; the module stays loaded.
+
+Free the buffer only when it was allocated.
+
+Tested on Radxa Cubie A7S: rmmod etnaviv after the NPU bound no longer
+oopses, and the module loads and binds the NPU again.
+
+Fixes: 85ba57ad88cf ("drm/etnaviv: Add PPU flop reset")
+Assisted-by: LLM
+---
+ drivers/gpu/drm/etnaviv/etnaviv_drv.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_drv.c b/drivers/gpu/drm/etnaviv/etnaviv_drv.c
+index 08aca9035fc1..ec1352c1b09f 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_drv.c
++++ b/drivers/gpu/drm/etnaviv/etnaviv_drv.c
+@@ -601,8 +601,10 @@ static void etnaviv_unbind(struct device *dev)
+ 
+ 	component_unbind_all(dev, drm);
+ 
+-	etnaviv_cmdbuf_free(priv->flop_reset_data_ppu);
+-	kfree(priv->flop_reset_data_ppu);
++	if (priv->flop_reset_data_ppu) {
++		etnaviv_cmdbuf_free(priv->flop_reset_data_ppu);
++		kfree(priv->flop_reset_data_ppu);
++	}
+ 
+ 	etnaviv_cmdbuf_suballoc_destroy(priv->cmdbuf_suballoc);
+ 

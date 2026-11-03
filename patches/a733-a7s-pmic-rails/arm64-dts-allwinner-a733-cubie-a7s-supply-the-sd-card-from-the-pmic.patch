@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:23:31 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Supply the SD card
+ from the PMIC
+
+The SD card's vmmc is a fixed 3.3 V regulator. On the board VCC-CARD is
+SWOUT2 of the AXP318W, the same switch output that feeds the eMMC.
+
+Name SWOUT2 as the SD card's vmmc. It reports the 3.3 V of DCDC1, so the
+OCR mask does not change, and it stays always-on. The fixed regulator
+loses its last user and goes.
+
+Not covered: UHS signalling. The SD card keeps 3.3 V I/O.
+
+Tested on Radxa Cubie A7S: booted on two boards; mmc0 takes vmmc from
+vcc-io, the DCDC1 voltage register in the PMIC reads back 3.3 V, and
+both boards read 256 MiB from the SD card without errors.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 10 +---------
+ 1 file changed, 1 insertion(+), 9 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index b2cfae1c0449..fc2dcd3a0aec 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -57,14 +57,6 @@ scp@48100000 {
+ 			no-map;
+ 		};
+ 	};
+-
+-	reg_vcc3v3: vcc3v3 {
+-		compatible = "regulator-fixed";
+-		regulator-name = "vcc-3v3";
+-		regulator-min-microvolt = <3300000>;
+-		regulator-max-microvolt = <3300000>;
+-		regulator-always-on;
+-	};
+ };
+ 
+ &gmac0 {
+@@ -96,7 +88,7 @@ ext_rgmii_phy: ethernet-phy@1 {
+ };
+ 
+ &mmc0 {
+-	vmmc-supply = <&reg_vcc3v3>;
++	vmmc-supply = <&reg_swout2>;
+ 	cd-gpios = <&pio 5 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; /* PF6 */
+ 	bus-width = <4>;
+ 	no-mmc;

@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:36:24 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the SERDES CCU
+
+Describe the clock and reset unit at the start of the SERDES block, fed
+by the SERDES bus matrix gates, the USB2_U2_PIPE clock and the SERDES
+reset of the main CCU. Its register window ends before the PHY registers
+of the block.
+
+Tested on Radxa Cubie A7S: booted on two boards; the node probes and
+provides the clocks and resets that the USB3 controller and the PCIe
+controller use, the USB3 controller binds, and the PCIe link to an NVMe
+drive comes up.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 3f4669489515..f05a5c584006 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -3,10 +3,12 @@
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
++#include <dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h>
+ #include <dt-bindings/clock/sun6i-rtc.h>
+ #include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
++#include <dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h>
+ 
+ / {
+ 	interrupt-parent = <&gic>;
+@@ -730,6 +732,17 @@ dma: dma-controller@4601000 {
+ 			#dma-cells = <1>;
+ 		};
+ 
++		serdes_ccu: clock-controller@6c00000 {
++			compatible = "allwinner,sun60i-a733-serdes-ccu";
++			reg = <0x06c00000 0x10>;
++			clocks = <&ccu CLK_AHB_SERDES>, <&ccu CLK_MBUS_SERDES>,
++				 <&ccu CLK_USB2_U2_PIPE>;
++			clock-names = "ahb", "mbus", "usb2-u2-pipe";
++			resets = <&ccu RST_BUS_SERDES>;
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++		};
++
+ 		r_ccu: clock-controller@7010000 {
+ 			compatible = "allwinner,sun60i-a733-r-ccu";
+ 			reg = <0x07010000 0x230>;

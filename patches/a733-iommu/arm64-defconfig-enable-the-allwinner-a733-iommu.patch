@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:26:50 +0200
+Subject: [PATCH] arm64: defconfig: Enable the Allwinner A733 IOMMU
+
+Enable the driver for the two IOMMUs of the Allwinner A733, as used on
+the Radxa Cubie A7S. The option is a bool, as SUN50I_IOMMU is, so the
+driver is built in.
+
+Tested on Radxa Cubie A7S: booted on two boards; the kernel carries
+CONFIG_SUN60I_IOMMU=y and both instances bind.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 6ec8d3a69c98..271ccabfc378 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -1618,6 +1618,7 @@ CONFIG_ARM_SMMU=y
+ CONFIG_ARM_SMMU_V3=y
+ CONFIG_QCOM_IOMMU=y
+ CONFIG_ROCKCHIP_IOMMU=y
++CONFIG_SUN60I_IOMMU=y
+ CONFIG_TEGRA_IOMMU_SMMU=y
+ CONFIG_APPLE_DART=m
+ CONFIG_MTK_IOMMU=y

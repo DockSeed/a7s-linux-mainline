@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 06:18:57 +0200
+Subject: [PATCH] arm64: defconfig: Enable CPU idle injection cooling
+
+The A733 device tree adds idle injection as the cooling stage between
+cpufreq throttling and the critical trip, through thermal-idle nodes in
+the CPU nodes. The i.MX8MP, RK3399 and R-Car V4H Sparrow Hawk device
+trees have such nodes too, but the arm64 defconfig registers no cooling
+device for any of them.
+
+Enable the idle injection framework, the powercap menu it sits in and
+the CPU idle cooling device. All three are bool.
+
+Tested on Radxa Cubie A7S: the idle cooling devices of cpu2 to cpu7
+registered and the thermal core drove them.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 1ac0dd2f665f..3f73dc0ed104 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -775,6 +775,7 @@ CONFIG_SENSORS_INA3221=m
+ CONFIG_SENSORS_TMP102=m
+ CONFIG_THERMAL_GOV_POWER_ALLOCATOR=y
+ CONFIG_CPU_THERMAL=y
++CONFIG_CPU_IDLE_THERMAL=y
+ CONFIG_DEVFREQ_THERMAL=y
+ CONFIG_THERMAL_EMULATION=y
+ CONFIG_IMX_SC_THERMAL=m
+@@ -1815,6 +1816,8 @@ CONFIG_PHY_AM654_SERDES=m
+ CONFIG_PHY_J721E_WIZ=m
+ CONFIG_OMAP_USB2=m
+ CONFIG_PHY_XILINX_ZYNQMP=m
++CONFIG_POWERCAP=y
++CONFIG_IDLE_INJECT=y
+ CONFIG_ARM_CCI_PMU=m
+ CONFIG_ARM_CCN=m
+ CONFIG_ARM_CMN=m

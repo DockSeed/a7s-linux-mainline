@@ -1,0 +1,763 @@
+# Kernel patch series, applied in this order to the pristine kernel.org
+# tarball. This file is the only place that defines the order; file names
+# carry no numbers.
+#
+# One directory per upstream series, as it was sent or would be: its
+# patches follow each other in the series' own order (bindings, drivers,
+# device tree, then "arm64: defconfig"). Series by other authors come
+# first, then ours. A comment line above each series names its author,
+# version and state upstream, with a lore link where there is one.
+#
+# One patch path per line, relative to this directory. Lines starting with
+# '#' are comments.
+
+# pinctrl: sunxi: Add Allwinner A733 support -- Andre Przywara, v1, applied for 7.4
+# (linusw/linux-pinctrl.git devel, 8b6c66cfd..0535bfbfa)
+# https://lore.kernel.org/all/20260910133519.459011-1-andre.przywara@arm.com/
+a733-pinctrl/pinctrl-sunxi-rename-sunxi-pinctrl-new-reg-layout.patch
+a733-pinctrl/pinctrl-sunxi-only-use-portk-special-handling-on-a523.patch
+a733-pinctrl/pinctrl-sunxi-refactor-irq-register-accessors.patch
+a733-pinctrl/pinctrl-sunxi-support-a733-generation-mmio-register-layout.patch
+a733-pinctrl/dt-bindings-pinctrl-add-compatible-for-allwinner-a733.patch
+a733-pinctrl/pinctrl-sunxi-a523-r-add-a733-r-compatible-string.patch
+a733-pinctrl/pinctrl-sunxi-add-support-for-the-allwinner-a733.patch
+
+# clk: sunxi-ng: a523: Fix single-divider clocks -- Junhui Liu, v1, applied for 7.4
+# (sunxi/linux.git sunxi/clk-for-7.4, f43bed1fb..1002cc9d6)
+# https://lore.kernel.org/all/20260906-sunxi-clk-no-p-v1-0-cbde21c9fe69@pigmoral.tech/
+a523-clk-single-divider/clk-sunxi-ng-div-add-feature-support-to-m-clock-macro.patch
+a523-clk-single-divider/clk-sunxi-ng-sun55i-a523-ccu-use-m-only-clocks-for-mbus-iommu-and-dram.patch
+a523-clk-single-divider/clk-sunxi-ng-sun55i-a523-ccu-use-p-only-clocks-for-high-speed-timers.patch
+a523-clk-single-divider/clk-sunxi-ng-sun55i-a523-r-ccu-use-p-only-clocks-for-timers.patch
+
+# clk: sunxi-ng: ccu_common: Use readl_relaxed_poll_timeout_atomic for PLL lock
+# -- Alastair D'Silva, v2, applied for 7.4
+# (sunxi/linux.git sunxi/clk-for-7.4, 9ef62592b80c)
+# https://lore.kernel.org/all/20260916042910.382744-1-alastair@d-silva.org/
+sunxi-ccu-pll-lock-atomic/clk-sunxi-ng-ccu-common-use-readl-relaxed-poll-timeout-atomic-for-pll-lock.patch
+
+# clk: sunxi-ng: Add support for Allwinner A733 CCU and PRCM -- Junhui Liu, v6, under review
+# https://lore.kernel.org/all/20261009-a733-clk-v6-0-ae8178fce7e8@pigmoral.tech/
+a733-ccu/dt-bindings-clk-sun60i-a733-ccu-add-allwinner-a733-support.patch
+a733-ccu/clk-sunxi-ng-sdm-add-dual-patterns-support.patch
+a733-ccu/clk-sunxi-ng-a733-add-prcm-ccu.patch
+a733-ccu/clk-sunxi-ng-a733-add-pll-clocks-support.patch
+a733-ccu/clk-sunxi-ng-a733-add-bus-clocks-support.patch
+a733-ccu/clk-sunxi-ng-a733-add-mod-clocks-support.patch
+a733-ccu/clk-sunxi-ng-a733-add-bus-clock-gates.patch
+a733-ccu/clk-sunxi-ng-a733-add-reset-lines.patch
+
+# arm64: dts: allwinner: add A733/Cubie A7S DTS support -- Enzo Adriano, v1, under review
+# (patches 1, 3 and 4 of 4; 2/4, the MMC binding, is in mainline in another form;
+# 3/4 adapted to the CCU v6 header names, see its "[ adapted" note)
+# https://lore.kernel.org/all/20260613-a733-dts-v1-public-ready-v1-0-7787c94681db@gmail.com/
+a733-dts/dt-bindings-arm-sunxi-add-radxa-cubie-a7s.patch
+a733-dts/arm64-dts-allwinner-add-allwinner-a733-soc.patch
+a733-dts/arm64-dts-allwinner-add-radxa-cubie-a7s.patch
+
+# dt-bindings: i2c: mv64xxx: Add Allwinner A733 compatible string -- Jerome Brunet, v2, applied for 7.4
+# (andi.shyti/linux.git i2c/i2c, 0da2c96cf69d; in linux-next)
+# https://lore.kernel.org/all/20260924-allwinner-a733-i2c-compatible-v2-1-0f5f1e9af969@baylibre.com/
+a733-i2c-binding/dt-bindings-i2c-mv64xxx-add-allwinner-a733-compatible-string.patch
+
+# regulator: Add X-Powers AXP318W PMIC support -- Jerome Brunet (3/5, 4/5, 5/5 by Andre Przywara), v8, under review
+# (Chen-Yu Tsai asked Lee Jones on 2026-09-20 to take the series through mfd; not in lee/mfd for-mfd-next)
+# https://lore.kernel.org/all/20260910-axp318-regulator-v8-0-e906a61a7f3d@baylibre.com/
+x-powers-axp318w/mfd-axp20x-constify-axp313-and-axp717-cells.patch
+x-powers-axp318w/mfd-axp20x-i2c-fix-i2c-instantiation.patch
+x-powers-axp318w/dt-bindings-mfd-x-powers-axp152-document-axp318w.patch
+x-powers-axp318w/mfd-axp20x-add-support-for-axp318w-pmic.patch
+x-powers-axp318w/regulator-axp20x-add-support-for-the-axp318w.patch
+
+# Device tree changes on top of Enzo Adriano's v1 for CCU v6, pinctrl, the RTC
+# and the review of v1 -- ours, not posted
+a733-dts-fixes/arm64-dts-allwinner-a733-name-the-bus-node-soc-0.patch
+a733-dts-fixes/arm64-dts-allwinner-a733-add-the-timer-and-gic-maintenance-interrupts.patch
+a733-dts-fixes/arm64-dts-allwinner-a733-describe-the-oscillator-at-its-board-rate.patch
+a733-dts-fixes/arm64-dts-allwinner-a733-add-the-prcm-clock-controller-and-the-rtc.patch
+a733-dts-fixes/arm64-dts-allwinner-a733-add-the-prcm-pin-controller.patch
+a733-dts-fixes/arm64-dts-allwinner-a733-add-the-pin-mux-values-move-the-uart0-pins.patch
+a733-dts-fixes/arm64-dts-allwinner-a733-cubie-a7s-run-the-rtc-from-the-32k-crystal.patch
+a733-dts-fixes/arm64-dts-allwinner-a733-cubie-a7s-reserve-the-scp-firmware-memory.patch
+
+# A733 SoC core: CPU topology and caches, CPU capacity, Timer1, watchdogs
+# -- ours, not posted
+a733-soc-kern/dt-bindings-watchdog-sun4i-a10-wdt-add-allwinner-a733.patch
+a733-soc-kern/dt-bindings-timer-sun4i-a10-timer-add-allwinner-a733.patch
+a733-soc-kern/arm64-dts-allwinner-a733-add-the-cpu-topology-and-caches.patch
+a733-soc-kern/arm64-dts-allwinner-a733-use-the-measured-cpu-capacity.patch
+a733-soc-kern/arm64-dts-allwinner-a733-add-timer1.patch
+a733-soc-kern/arm64-dts-allwinner-a733-add-the-watchdogs.patch
+
+# pinctrl fixes for the A733: port K among the interrupt banks, no remux
+# when reading an interrupt pin -- ours, not posted
+a733-pinctrl-fixes/pinctrl-sunxi-a733-count-port-k-among-the-interrupt-banks.patch
+a733-pinctrl-fixes/pinctrl-sunxi-a733-do-not-remux-an-interrupt-pin-to-read-it.patch
+
+# Board additions for the Cubie A7S: UART2/UART4 controllers, LEDs
+# -- ours, not posted
+a733-board/arm64-dts-allwinner-a733-add-the-uart2-and-uart4-controllers.patch
+a733-board/arm64-dts-allwinner-a733-cubie-a7s-add-the-leds.patch
+
+# MMC: SD pin drive strength, eMMC controller and board eMMC, SD card
+# detect GPIO -- ours, not posted
+a733-mmc/arm64-dts-allwinner-a733-set-the-sd-pin-drive-strength-per-pin.patch
+a733-mmc/arm64-dts-allwinner-a733-add-the-emmc-controller.patch
+a733-mmc/arm64-dts-allwinner-a733-cubie-a7s-enable-the-emmc.patch
+a733-mmc/arm64-dts-allwinner-a733-cubie-a7s-add-the-sd-card-detect-gpio.patch
+
+# A733 PRCM I2C controllers, Cubie A7S PMIC -- ours, not posted
+a733-power-a7s/arm64-dts-allwinner-a733-add-the-prcm-i2c-controllers.patch
+a733-power-a7s/arm64-dts-allwinner-a733-cubie-a7s-enable-the-prcm-i2c-buses.patch
+a733-power-a7s/arm64-dts-allwinner-a733-cubie-a7s-add-the-axp318w-pmic.patch
+
+# mmc: sunxi: probe error paths unwound, runtime resume fails when the
+# controller does not reset -- ours, not posted
+sunxi-mmc-probe-fixes/mmc-sunxi-unwind-the-probe-error-paths.patch
+sunxi-mmc-probe-fixes/mmc-sunxi-fail-the-runtime-resume-if-the-controller-does-not-reset.patch
+
+# mmc: sunxi: A733 support: DMA mask, single-block stop, A733 config with
+# FIFO thresholds, automatic CMD23, card threshold -- ours, not posted
+# (needs a733-ccu v6 for the SMHC clocks)
+sunxi-mmc-a733/mmc-sunxi-set-the-dma-mask-from-the-descriptor-address-shift.patch
+sunxi-mmc-a733/mmc-sunxi-send-no-stop-command-after-a-failed-single-block-transfer.patch
+sunxi-mmc-a733/mmc-sunxi-add-support-for-the-allwinner-a733.patch
+sunxi-mmc-a733/mmc-sunxi-use-the-a733-controller-s-automatic-cmd23.patch
+sunxi-mmc-a733/mmc-sunxi-program-the-a733-card-threshold.patch
+
+# mmc: sunxi: A733 HS400 with data strobe tuning and enhanced strobe, and
+# HS400 on the Cubie A7S eMMC -- ours, not posted (needs sunxi-mmc-a733
+# and the a733-mmc device tree)
+sunxi-mmc-a733-hs400/mmc-sunxi-add-hs400-support-for-the-a733.patch
+sunxi-mmc-a733-hs400/mmc-sunxi-tune-the-hs400-data-strobe-delay.patch
+sunxi-mmc-a733-hs400/mmc-sunxi-support-hs400-enhanced-strobe-on-the-a733.patch
+sunxi-mmc-a733-hs400/arm64-dts-allwinner-a733-cubie-a7s-enable-hs400-on-the-emmc.patch
+
+# mmc: sunxi: fail a request on an IDMAC bus error or a missing descriptor
+# -- ours, not posted (first patch of the error path series)
+sunxi-mmc-idmac-errors/mmc-sunxi-fail-a-request-on-an-idmac-bus-error.patch
+
+# A733 SID (eFuse): binding and node, used by the thermal sensor and
+# later by cpufreq -- ours, not posted
+a733-sid/dt-bindings-nvmem-sid-add-binding-for-a733-sid-controller.patch
+a733-sid/arm64-dts-allwinner-a733-add-the-sid.patch
+# Thermal: A733 THS binding, sun8i_thermal support with SID calibration,
+# sensor and thermal zones -- ours, not posted
+a733-ths/dt-bindings-thermal-sun8i-add-a733-ths-controller.patch
+a733-ths/thermal-drivers-sun8i-add-support-for-the-a733-ths.patch
+a733-ths/arm64-dts-allwinner-a733-add-the-thermal-sensor-and-zones.patch
+
+# arm64: lib: clear_user: branch to the loop body, not to its alignment
+# padding -- ours, not posted (generic arm64)
+arm64-clear-user/arm64-lib-clear_user-branch-to-the-loop-body-not-to-its-padding.patch
+# pmdomain: sunxi: sun55i-pck600: set the controller of each domain, or
+# the error path of a power transition dereferences NULL; read each
+# domain's state at probe instead of registering every domain as on
+# -- ours, not posted
+a733-pck600-fix/pmdomain-sunxi-sun55i-pck600-set-the-controller-of-each-domain.patch
+a733-pck600-fix/pmdomain-sunxi-sun55i-pck600-read-the-domain-state-at-probe.patch
+# A733 PCK-600 power controller node (needs a733-pck600-fix) -- ours,
+# not posted
+a733-pck600/arm64-dts-allwinner-a733-add-the-pck-600-power-controller.patch
+# cpuidle: psci: keep the PSCI idle states unusable when the firmware
+# reports no CPU_SUSPEND -- ours, not posted (generic PSCI)
+cpuidle-psci-no-suspend/cpuidle-psci-mark-the-idle-states-unusable-without-cpu-suspend.patch
+# A733 CPU core idle states (PSCI CPU_SUSPEND, which the boot chain
+# provides) -- ours, not posted
+a733-cpu-idle/arm64-dts-allwinner-a733-add-the-cpu-core-idle-states.patch
+
+
+# mmc: sunxi: error paths: auto-CMD12 argument on the A733, controller reset
+# after a failed stop command, software timeout of a data request -- ours,
+# not posted (needs sunxi-mmc-a733)
+sunxi-mmc-error-recovery/mmc-sunxi-initialise-the-auto-cmd12-argument-on-the-a733.patch
+sunxi-mmc-error-recovery/mmc-sunxi-reset-the-controller-when-the-stop-command-fails.patch
+sunxi-mmc-error-recovery/mmc-sunxi-time-out-a-data-request-that-never-completes.patch
+
+# A733 GIC with four interrupt cells, CPU PMUs per core type through PPI
+# partitions, DSU PMU, disabled (a board enables it with a boot chain that
+# sets ACTLR_EL3 bit 12) -- ours, not posted
+a733-pmu/arm64-dts-allwinner-a733-use-four-interrupt-cells-for-the-gic.patch
+a733-pmu/arm64-dts-allwinner-a733-add-the-cpu-pmus.patch
+a733-pmu/arm64-dts-allwinner-a733-add-the-dsu-pmu.patch
+
+# mmc: sunxi: busy wait in the host, R1b busy timed by the controller and
+# the host software queue on the A733 -- ours, not posted (needs
+# sunxi-mmc-error-recovery)
+sunxi-mmc-busy-hsq/mmc-sunxi-wait-for-the-cards-busy-in-the-host-on-the-a733.patch
+sunxi-mmc-busy-hsq/mmc-sunxi-let-the-controller-time-the-r1b-busy-on-the-a733.patch
+sunxi-mmc-busy-hsq/mmc-sunxi-use-the-host-software-queue-on-the-a733.patch
+
+# A733 CCU: keep the MSI_LITE0 bus bridge (GMAC0, DMAC0, crypto engine)
+# running -- ours, not posted (needs a733-ccu v6)
+a733-ccu-msi-lite0/clk-sunxi-ng-a733-keep-the-msi-lite0-bus-matrix-gates-running.patch
+
+# net: stmmac: Add support for Allwinner A733 GMAC210 -- Jerome Brunet, net-next v3, under review (2026-09-23; no newer version, last mail 2026-09-29)
+# https://lore.kernel.org/all/20260923-allwinner-a733-gmac-support-v3-0-15735155a789@baylibre.com/
+a733-gmac210/dt-bindings-net-sun8i-emac-add-a733-gmac210-compatible.patch
+a733-gmac210/net-stmmac-sun55i-add-per-compatible-match-data.patch
+a733-gmac210/net-stmmac-sun55i-make-the-delay-step-configurable.patch
+a733-gmac210/net-stmmac-sun55i-support-tx-delay-extension-bits.patch
+a733-gmac210/net-stmmac-sun55i-add-support-for-allwinner-a733-gmac210.patch
+# A733 GMAC0, Cubie A7S Ethernet (needs a733-gmac210 and the AXP318W SWOUT1/SWOUT2 nodes) -- ours,
+# not posted
+a733-gmac-a7s/arm64-dts-allwinner-a733-add-the-gmac0-ethernet-controller.patch
+a733-gmac-a7s/arm64-dts-allwinner-a733-cubie-a7s-enable-ethernet.patch
+
+# dmaengine: sun6i-dma: Add support for Allwinner A733 -- Yuanshen Cao, v5, applied for 7.4
+# (vkoul/dmaengine.git next, 3b18c8e46..779867c3a; the applied commits add
+# Frank Li's Reviewed-by, the patches here are v5 as posted)
+# https://lore.kernel.org/all/20260826-sun60i-a733-dma-v5-0-abc5229b441e@gmail.com/
+a733-dma/dmaengine-sun6i-dma-refactor-to-support-a733-interrupt-and-register-handling.patch
+a733-dma/dmaengine-sun6i-dma-support-variable-address-widths-using-masks.patch
+a733-dma/dmaengine-sun6i-dma-add-num_channels_per_reg-for-flexible-interrupt-mapping.patch
+a733-dma/dt-bindings-dmaengine-sun50i-a64-dma-add-allwinner-sun60i-a733-dma-compatible-string.patch
+a733-dma/dmaengine-sun6i-dma-implement-support-for-allwinner-a733-dma-controller.patch
+# A733 DMA: channel interrupt index and pause bit on top of v5, DMAC0 node --
+# ours, not posted (needs a733-dma)
+a733-dma-a7s/dmaengine-sun6i-dma-complete-the-channel-that-raised-the-interrupt.patch
+a733-dma-a7s/dmaengine-sun6i-dma-use-bit-0-to-pause-an-a733-channel.patch
+a733-dma-a7s/arm64-dts-allwinner-a733-add-the-dma-controller.patch
+
+# Cubie A7S: eMMC and SD card on the AXP318W rails -- ours, not posted
+# (needs the AXP318W node)
+a733-a7s-pmic-rails/arm64-dts-allwinner-a733-cubie-a7s-supply-the-emmc-from-the-pmic.patch
+a733-a7s-pmic-rails/arm64-dts-allwinner-a733-cubie-a7s-supply-the-sd-card-from-the-pmic.patch
+
+# A733 IOMMU: binding, driver (sun60i-iommu, not a sun50i-iommu variant),
+# both IOMMU nodes without consumers, defconfig -- ours, not posted (needs
+# a733-ccu v6 for the clock/reset ids and a733-pmu for the four-cell GIC)
+a733-iommu/dt-bindings-iommu-add-allwinner-a733-iommu.patch
+a733-iommu/iommu-add-allwinner-a733-iommu-driver.patch
+a733-iommu/arm64-dts-allwinner-a733-add-the-iommus.patch
+a733-iommu/arm64-defconfig-enable-the-allwinner-a733-iommu.patch
+# A733 CCU: gates of the USB PHY reference clocks (0x1340/0x1348 bit 31)
+# -- ours, not posted, fix on top of a733-ccu v6
+a733-ccu-usb-ref/clk-sunxi-ng-a733-add-the-gates-of-the-usb-phy-reference-clocks.patch
+# A733 CCU: keep the MSI_LITE2 bus bridge (USB0/USB1, USB3, PCIe) running
+# -- ours, not posted, fix on top of a733-ccu v6; before a733-usb2
+a733-ccu-msi-lite2/clk-sunxi-ng-a733-keep-the-msi-lite2-bus-matrix-gate-running.patch
+# A733 USB 2.0 host (USB0/USB1 EHCI/OHCI + PHY), Cubie A7S USB-A port via
+# the on-board hub (PM5: port VBUS only) -- ours, not posted (needs a733-ccu v6)
+a733-usb2/dt-bindings-phy-sun50i-a64-usb-phy-add-the-a733-usb-phy.patch
+a733-usb2/dt-bindings-usb-add-the-allwinner-a733-ehci-and-ohci-controllers.patch
+a733-usb2/arm64-dts-allwinner-a733-add-the-usb-2-0-host-controllers.patch
+a733-usb2/arm64-dts-allwinner-a733-cubie-a7s-enable-the-usb-a-port.patch
+# A733 SERDES CCU at 0x06c00000 (USB3 bus gates, USB3 PIPE clock select, USB3
+# USB2-PHY reset)
+# -- ours, not posted (needs a733-ccu v6)
+a733-serdes-ccu/dt-bindings-clock-sun60i-a733-ccu-add-the-serdes-ccu.patch
+a733-serdes-ccu/clk-sunxi-ng-add-the-a733-serdes-ccu.patch
+a733-serdes-ccu/arm64-dts-allwinner-a733-add-the-serdes-ccu.patch
+# A733 system control block (SYSCTRL @0x03000000): binding, sunxi_sram variant
+# exposing only the USB resistor calibration registers, dtsi node -- ours, not
+# posted
+sunxi-sram-a733/dt-bindings-sram-allwinner-sun4i-a10-system-control-add-the-a733.patch
+sunxi-sram-a733/soc-sunxi-sram-add-the-a733-system-control.patch
+sunxi-sram-a733/arm64-dts-allwinner-a733-add-the-system-control-block.patch
+# A733 USB2 PHY of the USB3 controller (UTMI PHY @0x06b00000, RESCAL in SYSCTRL
+# through the system control regmap) -- ours, not posted (needs a733-serdes-ccu,
+# sunxi-sram-a733)
+a733-usb3-u2phy/dt-bindings-phy-add-the-allwinner-a733-usb2-phy-of-the-usb3-controller.patch
+a733-usb3-u2phy/phy-allwinner-add-a-driver-for-the-a733-usb2-phy-of-the-usb3-controller.patch
+a733-usb3-u2phy/arm64-dts-allwinner-a733-add-the-usb2-phy-of-the-usb3-controller.patch
+a733-usb3-u2phy/arm64-defconfig-enable-the-allwinner-a733-usb2-phy-of-the-usb3-controller.patch
+# A733 USB3 combo PHY COMB0 (USB3 only, Type-C orientation switch, no DP)
+# -- ours, not posted (needs a733-usb3-u2phy for Kconfig/defconfig context)
+a733-usb3-combophy/dt-bindings-mfd-syscon-add-the-allwinner-a733-serdes-top-registers.patch
+a733-usb3-combophy/dt-bindings-phy-add-the-allwinner-a733-usb3-combo-phy.patch
+a733-usb3-combophy/phy-allwinner-add-a-driver-for-the-a733-usb3-combo-phy.patch
+a733-usb3-combophy/arm64-dts-allwinner-a733-add-the-usb3-combo-phy.patch
+a733-usb3-combophy/arm64-defconfig-enable-the-allwinner-a733-usb3-combo-phy.patch
+# A733 DWC3 USB3 controller via dwc3-generic-plat (flat node, PD_USB2)
+# -- ours, not posted (needs a733-ccu-usb-ref, a733-serdes-ccu, a733-usb3-u2phy, a733-usb3-combophy)
+a733-dwc3/dt-bindings-usb-add-the-allwinner-a733-dwc3-controller.patch
+a733-dwc3/usb-dwc3-generic-plat-add-the-allwinner-a733.patch
+a733-dwc3/arm64-dts-allwinner-a733-add-the-usb3-controller.patch
+# Cubie A7S USB-C port J4: HUSB311 on r_i2c1, VBUS PL2, USB3 host
+# -- ours, not posted (needs a733-dwc3)
+a733-a7s-usbc/arm64-dts-allwinner-a733-cubie-a7s-enable-the-usb-c-port.patch
+
+# pinctrl: sunxi: power-source for the A733 bank PF supply switch -- ours,
+# not posted (needs a733-pinctrl)
+sunxi-pinctrl-power-source/dt-bindings-pinctrl-sun55i-a523-allow-power-source-in-pin-groups.patch
+sunxi-pinctrl-power-source/pinctrl-sunxi-parse-the-power-source-property.patch
+sunxi-pinctrl-power-source/pinctrl-sunxi-a733-switch-the-i-o-voltage-of-bank-pf.patch
+# mmc: sunxi: pad I/O voltage through pinctrl states -- ours, not posted
+sunxi-mmc-pad-voltage/mmc-sunxi-switch-the-pad-i-o-voltage-through-pinctrl-states.patch
+# A733 SD pins at 1.8/3.3 V, Cubie A7S SD UHS -- ours, not posted (needs
+# sunxi-pinctrl-power-source, sunxi-mmc-pad-voltage, a733-a7s-pmic-rails)
+a733-a7s-sd-uhs/arm64-dts-allwinner-a733-add-the-sd-card-pins-at-1.8-v-and-3.3-v.patch
+a733-a7s-sd-uhs/arm64-dts-allwinner-a733-cubie-a7s-enable-uhs-on-the-sd-card.patch
+
+# pinctrl: sunxi: a733, a733-r: leave the withstand voltage to the hardware --
+# ours, not posted (fix on a733-pinctrl; context needs sunxi-pinctrl-power-source)
+a733-pinctrl-withstand/pinctrl-sunxi-a733-leave-the-i-o-withstand-voltage-to-the-hardware.patch
+a733-pinctrl-withstand/pinctrl-sunxi-a733-r-leave-the-i-o-withstand-voltage-to-the-hardware.patch
+# pinctrl: sunxi: a733: bank PF withstand mode with its supply -- ours, not
+# posted (needs sunxi-pinctrl-power-source)
+a733-pinctrl-pf-withstand/pinctrl-sunxi-a733-set-the-withstand-mode-of-bank-pf-with-its-supply.patch
+# Cubie A7S pin bank supplies -- ours, not posted (needs a733-pinctrl-withstand,
+# a733-a7s-pmic-rails)
+a733-a7s-bank-supplies/arm64-dts-allwinner-a733-cubie-a7s-add-the-pin-bank-supplies.patch
+# A733 USB3 Gen2: LLUCTL bit 30 (snps,inv-sync-hdr-quirk) and LCSR_TX_DEEMPH
+# (snps,lcsr-tx-deemph) -- ours, not posted (needs a733-a7s-usbc)
+a733-usb3-gen2/dt-bindings-usb-snps-dwc3-common-add-snps-inv-sync-hdr-quirk.patch
+a733-usb3-gen2/usb-dwc3-add-snps-inv-sync-hdr-quirk.patch
+a733-usb3-gen2/dt-bindings-usb-snps-dwc3-common-add-snps-lcsr-tx-deemph.patch
+a733-usb3-gen2/usb-dwc3-program-lcsr-tx-deemph-from-snps-lcsr-tx-deemph.patch
+a733-usb3-gen2/arm64-dts-allwinner-a733-cubie-a7s-set-up-gen2-on-the-usb-c-port.patch
+
+# Cubie A7S CPU cluster supplies: DCDC3 and DCDC5 with the voltage window --
+# ours, not posted (needs a733-power-a7s)
+a733-cpu-supply-a7s/arm64-dts-allwinner-a733-cubie-a7s-add-the-cpu-cluster-supplies.patch
+
+# A733 CCU audio: the manual's PLL_AUDIO0 point, the OWA RX parent and the
+# audio PLL N range (PLL_AUDIO0 by its VCO range) -- ours, not posted
+# (fixes on a733-ccu v6)
+a733-ccu-audio/clk-sunxi-ng-a733-use-the-manual-s-pll_audio0-point-for-22.5792-mhz.patch
+a733-ccu-audio/clk-sunxi-ng-a733-limit-the-owa-rx-clock-to-its-documented-parent.patch
+a733-ccu-audio/clk-sunxi-ng-a733-keep-pll_audio1-at-its-reset-rate.patch
+a733-ccu-audio/clk-sunxi-ng-a733-let-the-audio-module-clocks-set-pll_audio0.patch
+a733-ccu-audio/clk-sunxi-ng-a733-keep-the-audio-pll-n-factor-within-the-manual-s-range.patch
+# A733 audio: bindings, DT nodes, defconfig -- ours, not posted (needs a733-ccu v6; on the board with a733-ccu-audio)
+a733-audio/asoc-dt-bindings-sun4i-i2s-add-the-allwinner-a733.patch
+a733-audio/asoc-dt-bindings-sun4i-spdif-add-the-allwinner-a733.patch
+a733-audio/asoc-dt-bindings-sun50i-dmic-add-the-allwinner-a733.patch
+a733-audio/arm64-dts-allwinner-a733-add-the-audio-controllers.patch
+a733-audio/arm64-defconfig-enable-the-allwinner-dmic-driver.patch
+
+# A733 CCU: PLL_GPU0 VCO range, the GPU bus-matrix gates kept running --
+# ours, not posted (fixes on a733-ccu v6)
+a733-ccu-gpu/clk-sunxi-ng-a733-keep-the-pll_gpu0-vco-within-its-range.patch
+a733-ccu-gpu/clk-sunxi-ng-a733-keep-the-bus-matrix-master-gates-enabled.patch
+# drm/imagination: device loss, hard reset, runtime idle, timeout -- ours, not posted
+pvr-recovery/drm-imagination-unplug-a-lost-device-from-a-worker.patch
+pvr-recovery/drm-imagination-force-the-firmware-stop-on-a-hard-reset.patch
+pvr-recovery/drm-imagination-ask-for-idle-again-when-nobody-holds-the-gpu.patch
+pvr-recovery/drm-imagination-check-the-job-s-done-fence-on-a-timeout.patch
+# A733 GPU: binding, BVNC, SoC and board nodes -- ours, not posted (needs
+# a733-ccu-gpu; firmware rogue_36.56.104.183_v1.fw not in linux-firmware)
+a733-gpu/dt-bindings-gpu-img-powervr-rogue-add-the-allwinner-a733-gpu.patch
+a733-gpu/drm-imagination-add-the-bxm-4-64-mc1-of-the-allwinner-a733.patch
+a733-gpu/arm64-dts-allwinner-a733-add-the-gpu.patch
+a733-gpu/arm64-dts-allwinner-a733-cubie-a7s-enable-the-gpu.patch
+# A733 CPU CCU: binding, driver with the park on the backup PLL and on
+# PERI0_600M, the DSU AXI clock, the CPU CCU node and the CPU clocks -- ours,
+# not posted (needs a733-ccu v6)
+a733-cpu-ccu/dt-bindings-clock-sun60i-a733-ccu-add-the-a733-cpu-ccu.patch
+a733-cpu-ccu/clk-sunxi-ng-add-support-for-the-a733-cpu-ccu.patch
+a733-cpu-ccu/clk-sunxi-ng-a733-cpu-park-the-core-clusters-on-the-backup-pll.patch
+a733-cpu-ccu/clk-sunxi-ng-a733-cpu-park-the-dsu-on-the-600-mhz-peripheral-clock.patch
+a733-cpu-ccu/clk-sunxi-ng-a733-cpu-add-the-dsus-axi-clock.patch
+a733-cpu-ccu/arm64-dts-allwinner-a733-add-the-cpu-ccu-and-the-cpu-clocks.patch
+
+# A733 cpufreq: operating points per speed bin, the speed bin from the eFuse,
+# CPU cooling and the CPU power coefficients -- ours, not posted (needs
+# a733-cpu-ccu, a733-cpu-supply-a7s, a733-sid and a733-ths)
+a733-cpufreq/dt-bindings-opp-allwinner-sun50i-h6-operating-points-add-the-a733.patch
+a733-cpufreq/cpufreq-sun50i-add-the-allwinner-a733.patch
+a733-cpufreq/arm64-dts-allwinner-a733-add-the-cpu-speed-bin-cell-to-the-sid.patch
+a733-cpufreq/arm64-dts-allwinner-a733-add-the-cpu-operating-points.patch
+a733-cpufreq/arm64-dts-allwinner-a733-cubie-a7s-use-the-cpu-operating-points.patch
+a733-cpufreq/arm64-dts-allwinner-a733-add-cpu-cooling-to-the-thermal-zones.patch
+a733-cpufreq/arm64-dts-allwinner-a733-add-the-cpu-dynamic-power-coefficients.patch
+
+# A733 DSU devfreq: the L3 cache clock follows the CPU policies at no less
+# than three quarters of the fastest core, capped by the A55 voltage,
+# operating points per speed bin -- ours, not posted
+# (needs a733-cpu-ccu, a733-cpu-supply-a7s, a733-cpufreq and a733-sid)
+a733-dsu-devfreq/dt-bindings-interconnect-add-the-allwinner-a733-dsu.patch
+a733-dsu-devfreq/pm-devfreq-add-the-allwinner-a733-dsu-driver.patch
+a733-dsu-devfreq/arm64-dts-allwinner-a733-add-the-dsu-operating-points.patch
+a733-dsu-devfreq/arm64-dts-allwinner-a733-cubie-a7s-use-the-dsu-operating-points.patch
+a733-dsu-devfreq/arm64-defconfig-enable-the-allwinner-a733-dsu-devfreq-driver.patch
+
+# Cubie A7S: DSU PMU on, its boot chain sets ACTLR_EL3 bit 12 -- ours,
+# not posted (needs a733-pmu; after a733-dsu-devfreq for the &dsu context)
+a733-dsu-pmu-a7s/arm64-dts-allwinner-a733-cubie-a7s-enable-the-dsu-pmu.patch
+
+# A733 CCU against the manual: the MBUS, IR TX and G2D parents, the PLL N
+# range and the video PLL VCO range -- ours, not posted (fixes on a733-ccu v6)
+a733-ccu-um/clk-sunxi-ng-a733-take-the-mbus-clock-from-pll_peri0.patch
+a733-ccu-um/clk-sunxi-ng-a733-take-the-ir-tx-clock-from-the-24-mhz-system-clock.patch
+a733-ccu-um/clk-sunxi-ng-a733-keep-the-pll-n-factor-within-the-manual-s-range.patch
+a733-ccu-um/clk-sunxi-ng-a733-keep-the-video-pll-vco-within-its-range.patch
+a733-ccu-um/clk-sunxi-ng-a733-take-the-g2d-clock-source-order-from-the-manual.patch
+
+# A733 thermal stages: trend filter for step_wise, idle injection between
+# cpufreq cooling and the critical trip, defconfig -- ours, not posted
+# (needs a733-ths, a733-cpu-idle and a733-cpufreq)
+a733-thermal-stages/thermal-drivers-sun8i-filter-the-a733-trend-for-step_wise.patch
+a733-thermal-stages/arm64-dts-allwinner-a733-add-idle-injection-cooling.patch
+a733-thermal-stages/arm64-defconfig-enable-cpu-idle-injection-cooling.patch
+
+# A733 PCIe: SERDES CCU gates, COMB1 PCIe PHY, DesignWare host with Root Port
+# events on SII, VPD removed, link-down recovery, Cubie A7S FPC connector J3,
+# defconfig -- ours, not posted (needs a733-serdes-ccu, a733-usb3-combophy for
+# the SERDES top page, a733-pck600 and a733-pmu)
+a733-pcie/dt-bindings-clock-sun60i-a733-ccu-add-the-pcie-clocks-of-the-serdes-ccu.patch
+a733-pcie/clk-sunxi-ng-a733-serdes-add-the-pcie-bus-gates-and-the-comb1-reference.patch
+a733-pcie/dt-bindings-phy-add-the-allwinner-a733-pcie-combo-phy.patch
+a733-pcie/phy-allwinner-add-a-driver-for-the-a733-pcie-combo-phy.patch
+a733-pcie/dt-bindings-pci-add-the-allwinner-a733-pcie-controller.patch
+a733-pcie/pci-sun60i-a733-add-the-allwinner-a733-pcie-host-controller.patch
+a733-pcie/pci-sun60i-a733-deliver-the-root-port-s-aer-pme-and-bandwidth-events.patch
+a733-pcie/pci-sun60i-a733-remove-the-root-port-s-vpd-capability.patch
+a733-pcie/pci-sun60i-a733-recover-the-root-port-after-a-link-down-reset.patch
+a733-pcie/arm64-dts-allwinner-a733-add-the-pcie-controller-and-its-combo-phy.patch
+a733-pcie/arm64-dts-allwinner-a733-cubie-a7s-enable-pcie-on-the-fpc-connector.patch
+a733-pcie/arm64-defconfig-enable-the-allwinner-a733-pcie-controller.patch
+
+# A733 eMMC controller compatible: the SD controller keeps the SD feature
+# set, the eMMC controller keeps its own -- ours, not posted
+a733-emmc-compatible/dt-bindings-mmc-sunxi-add-the-allwinner-a733-emmc-controller.patch
+a733-emmc-compatible/mmc-sunxi-add-the-a733-emmc-controller.patch
+a733-emmc-compatible/arm64-dts-allwinner-a733-use-the-emmc-compatible-for-mmc2.patch
+a733-emmc-compatible/mmc-sunxi-keep-the-a733-sd-controller-off-the-emmc-features.patch
+
+# mmc: sunxi: sample delay tuning (SDR104/HS200) -- ours, not posted
+sunxi-mmc-tuning/mmc-sunxi-tune-the-sample-delay-instead-of-running-it-at-zero.patch
+
+# arm64: defconfig: the sun50i cpufreq driver built in, it has no device
+# through which a module would load -- ours, not posted
+sunxi-cpufreq-builtin/arm64-defconfig-build-in-the-allwinner-sun50i-cpufreq-driver.patch
+
+# ASoC: sun4i-i2s: keep the FIFO across a pause -- ours, not posted
+sun4i-i2s-pause/asoc-sun4i-i2s-keep-the-fifo-across-a-pause.patch
+
+# A733 CCU: PLL_GPU0 relocked and settled after a rate change -- ours, not
+# posted (PLL notifier delay: sunxi-ng common)
+a733-ccu-gpu-pll/clk-sunxi-ng-a733-relock-pll_gpu0-after-a-rate-change.patch
+a733-ccu-gpu-pll/clk-sunxi-ng-let-the-pll-notifier-wait-for-the-pll-to-settle.patch
+a733-ccu-gpu-pll/clk-sunxi-ng-a733-let-pll_gpu0-settle-after-it-relocks.patch
+
+# A733 GPU: core clock and VDD-GPU from an OPP table, set once before the
+# firmware starts -- ours, not posted
+a733-gpu-opp/clk-sunxi-ng-a733-let-the-gpu0-clock-set-the-rate-of-pll_gpu0.patch
+a733-gpu-opp/dt-bindings-gpu-img-powervr-rogue-add-an-opp-table-and-a-supply.patch
+a733-gpu-opp/drm-imagination-set-the-core-clock-and-its-supply-from-an-opp-table.patch
+a733-gpu-opp/arm64-dts-allwinner-a733-take-the-gpu-rate-and-voltage-from-an-opp-table.patch
+
+# A733 display engine: DE top block (display and MBUS resets and clocks,
+# DE-to-TCON mux), DE33 mixer, TCON TV1, display engine -- ours, not
+# posted (needs a733-ccu and a733-pck600)
+a733-display/dt-bindings-display-allwinner-add-the-a733-display-engine-top-block.patch
+a733-display/dt-bindings-display-sun8i-a83t-de2-mixer-add-the-a733-mixer.patch
+a733-display/dt-bindings-display-sun4i-a10-tcon-add-the-a733-tcon-tv.patch
+a733-display/dt-bindings-display-sun4i-a10-display-engine-add-the-a733.patch
+a733-display/drm-sun4i-add-a-driver-for-the-a733-display-engine-top-block.patch
+a733-display/drm-sun4i-mixer-allow-mixers-that-keep-the-channel-csc-off.patch
+a733-display/drm-sun4i-mixer-add-the-a733-mixer.patch
+a733-display/drm-sun4i-tcon-add-the-a733-tcon-tv.patch
+a733-display/drm-sun4i-add-the-a733-display-engine.patch
+a733-display/arm64-dts-allwinner-a733-add-the-display-engine.patch
+
+# A733 DisplayPort over USB Type-C: COMB0 DisplayPort mode and Type-C mode
+# switch, AUX PHY, video output 1 clock unit, TCON pixel clock and timing
+# checks, DisplayPort transmitter, HPD
+# bridge on the port controller, sink CRC capture, Cubie A7S alternate
+# mode, defconfig -- ours, not posted (needs a733-display, a733-serdes-ccu,
+# a733-usb3-combophy and a733-a7s-usbc)
+a733-dp/dt-bindings-phy-allwinner-sun60i-a733-usb3-combophy-add-displayport.patch
+a733-dp/dt-bindings-phy-add-the-allwinner-a733-displayport-aux-phy.patch
+a733-dp/dt-bindings-clock-add-the-allwinner-a733-video-output-1-clock-unit.patch
+a733-dp/dt-bindings-display-allwinner-add-the-a733-displayport-transmitter.patch
+a733-dp/phy-allwinner-a733-combophy-select-the-function-by-phy-type.patch
+a733-dp/phy-allwinner-a733-combophy-add-displayport.patch
+a733-dp/phy-allwinner-a733-combophy-add-displayport-at-1-62-and-5-4-gb-s.patch
+a733-dp/phy-allwinner-add-a-driver-for-the-a733-displayport-aux-phy.patch
+a733-dp/usb-typec-tcpm-restart-discovery-after-a-response-timeout.patch
+a733-dp/usb-typec-tcpci-rt1711h-register-a-displayport-hpd-bridge.patch
+a733-dp/clk-sunxi-ng-add-the-a733-video-output-1-clock-unit.patch
+a733-dp/drm-sun4i-crtc-refuse-modes-the-tcon-cannot-make-a-pixel-clock-for.patch
+a733-dp/drm-sun4i-tcon-refuse-modes-the-a733-tcon-tv-cannot-time.patch
+a733-dp/drm-sun4i-add-the-a733-displayport-transmitter.patch
+a733-dp/drm-sun4i-sun60i-dp-add-link-training-and-the-video-stream.patch
+a733-dp/drm-sun4i-drv-stop-the-pipeline-walk-at-usb-type-c-connectors.patch
+a733-dp/drm-sun4i-crtc-capture-the-frame-crcs-of-a-displayport-sink.patch
+a733-dp/arm64-dts-allwinner-a733-add-the-displayport-transmitter.patch
+a733-dp/arm64-dts-allwinner-a733-cubie-a7s-enable-displayport-alternate-mode.patch
+a733-dp/arm64-defconfig-enable-the-allwinner-a733-displayport-transmitter.patch
+# ASoC: sun4i-i2s: sync only known registers of the H6 register map -- ours, not posted
+sun4i-i2s-h6-cache/asoc-sun4i-i2s-sync-only-known-registers-of-the-h6-register-map.patch
+# PCK-600 on the A733: GPU_CORE registered by its PPU state -- ours, not posted
+a733-pck600-gpu-core/pmdomain-sunxi-sun55i-pck600-register-the-a733-gpu_core-domain-by-its-state.patch
+# A733: PLL_AUDIO0 at its 22.5792 MHz x 4 point from boot -- ours, not posted
+a733-audio-pll-boot/arm64-dts-allwinner-a733-set-pll_audio0-to-its-22.5792-mhz-x-4-point.patch
+# net: stmmac: retry a failed RX refill from a timer -- ours, not posted
+stmmac-rx-refill/net-stmmac-retry-a-failed-rx-refill-from-a-timer.patch
+# A7S: on-board USB hub and the WiFi/BT module power (onboard_usb_dev) -- ours, not posted
+a7s-usb-hub/dt-bindings-net-wireless-add-aicsemi-aic8800d80-usb.patch
+a7s-usb-hub/dt-bindings-usb-wch-ch334-allow-hard-wired-devices-on-the-ports.patch
+a7s-usb-hub/usb-misc-onboard_usb_dev-add-the-aicsemi-aic8800d80.patch
+a7s-usb-hub/arm64-dts-allwinner-a733-cubie-a7s-describe-the-usb-hub-and-the-wifi-module.patch
+# A733 NMI controller and the PMIC interrupt of the Cubie A7S -- ours, not posted
+a733-nmi/arm64-dts-allwinner-a733-add-the-nmi-interrupt-controller.patch
+a733-nmi/arm64-dts-allwinner-a733-cubie-a7s-wire-up-the-pmic-interrupt.patch
+# A733 NPU for etnaviv: all four resets, hwdb row (vendor feature DB), bus-npu
+# under ahb-npu (on top of a733-ccu v6: the register path needs both gates),
+# the node -- ours, not posted
+a733-npu/dt-bindings-gpu-vivante-gc-allow-up-to-four-resets.patch
+a733-npu/drm-etnaviv-take-all-resets-of-the-core.patch
+a733-npu/drm-etnaviv-add-the-hwdb-entry-for-the-allwinner-a733-npu.patch
+a733-npu/clk-sunxi-ng-a733-make-bus-npu-a-child-of-ahb-npu.patch
+a733-npu/arm64-dts-allwinner-a733-add-the-npu.patch
+# A733 edp-tv: pass a rate request on to the video PLL -- ours, not posted
+a733-ccu-edp-tv/clk-sunxi-ng-a733-let-edp-tv-set-the-rate-of-its-parent.patch
+# X-Powers AXP318W power key (axp20x-pek without the AXP202 timing attributes) -- ours, not posted
+axp318-pek/input-axp20x-pek-add-the-axp318w-power-key-without-the-timing-attributes.patch
+axp318-pek/mfd-axp20x-add-the-power-key-cell-to-the-axp318w.patch
+axp318-pek/arm64-defconfig-enable-the-x-powers-pmic-power-key-driver.patch
+# A7S: VCC5V0_SYS and LDO2V5-INPUT as the inputs of the VBUS switches and the PMIC -- ours, not posted
+a7s-5v-sys/arm64-dts-allwinner-a733-cubie-a7s-describe-the-pmic-input-supplies.patch
+# net: stmmac: dwmac4: RBUE out of the default channel interrupt mask (MAC IRQ storm on a dry RX ring) -- ours, not posted
+stmmac-rbue/net-stmmac-dwmac4-disable-rbue-in-the-default-channel-interrupt-mask.patch
+# A733 USB0 MUSB as a USB gadget on the Cubie A7S Type-C port J16 (peripheral
+# only) -- ours, not posted (needs a733-usb2 for the usbphy node)
+a733-usb0-gadget/phy-sun4i-usb-write-the-a733-phy0-control-bits-while-the-phy-is-in-reset.patch
+a733-usb0-gadget/dt-bindings-usb-allwinner-sun4i-a10-musb-add-the-a733-compatible.patch
+a733-usb0-gadget/arm64-dts-allwinner-a733-add-the-usb0-otg-controller.patch
+a733-usb0-gadget/arm64-dts-allwinner-a733-cubie-a7s-enable-usb0-as-a-usb-gadget.patch
+# drm/etnaviv: unbind oopses when no PPU flop reset buffer exists -- ours, not posted
+etnaviv-unbind-flop/drm-etnaviv-free-the-ppu-flop-reset-buffer-only-when-it-was-allocated.patch
+# drm/etnaviv: unbind leaves the clocks of the core enabled -- ours, not posted
+etnaviv-remove-rpm/drm-etnaviv-suspend-the-core-before-disabling-runtime-pm-on-remove.patch
+# A733 video engine, kernel side without a driver: binding, the IOMMU port gates
+# of its masters, the decoder and encoder nodes (disabled) -- ours, not posted
+a733-ve-base/dt-bindings-media-add-allwinner-a733-video-engine.patch
+a733-ve-base/arm64-dts-allwinner-a733-give-the-iommus-the-video-engine-port-gates.patch
+a733-ve-base/arm64-dts-allwinner-a733-add-the-video-engine.patch
+# A733 crypto engine: binding, sun8i-ce resets as an array, lock per flow,
+# support for the A733 task descriptors, the node, defconfig -- ours, not
+# posted (needs a733-ccu-msi-lite0 for the bridge gates)
+a733-crypto-engine/dt-bindings-crypto-allwinner-sun8i-ce-add-the-a733-compatible.patch
+a733-crypto-engine/crypto-sun8i-ce-take-the-resets-as-an-array.patch
+a733-crypto-engine/crypto-sun8i-ce-lock-per-flow-instead-of-the-rng-lock.patch
+a733-crypto-engine/crypto-sun8i-ce-add-support-for-the-a733.patch
+a733-crypto-engine/arm64-dts-allwinner-a733-add-the-crypto-engine.patch
+a733-crypto-engine/arm64-defconfig-enable-the-allwinner-crypto-engine-hash-and-trng.patch
+# watchdog: sunxi_wdt: 16 s as max_hw_heartbeat_ms, so the watchdog core
+# serves longer timeouts (systemd's 10 min reboot watchdog) -- ours, not
+# posted
+sunxi-wdt-heartbeat/watchdog-sunxi_wdt-let-the-watchdog-core-serve-timeouts-above-16-s.patch
+# A7S EEPROM on TWI0: the i2c0 node and pins, ALDO1 as VCC-PL/VCC-PG supply, the EEPROM
+# with the MAC address cell -- ours, not posted (needs a733-a7s-bank-supplies, a733-pinctrl-withstand)
+a733-eeprom-a7s/arm64-dts-allwinner-a733-add-the-twi0-controller.patch
+a733-eeprom-a7s/arm64-dts-allwinner-a733-cubie-a7s-describe-aldo1-as.patch
+a733-eeprom-a7s/arm64-dts-allwinner-a733-cubie-a7s-read-the-mac-address.patch
+# arm64: defconfig: USB Attached SCSI as a module -- ours, not posted
+usb-uas/arm64-defconfig-enable-usb-attached-scsi.patch
+# A733 GPADC and LRADC: bindings with the A733 compatibles (fallbacks to the
+# D1 GPADC and the R329 LRADC, no driver change), the nodes, the GPADC on the
+# Cubie A7S, defconfig -- ours, not posted
+a733-adc/dt-bindings-iio-adc-allwinner-sun20i-d1-gpadc-add-the-a733-compatible.patch
+a733-adc/dt-bindings-input-allwinner-sun4i-a10-lradc-keys-add-the-a733-compatible.patch
+a733-adc/arm64-dts-allwinner-a733-add-the-gpadc-and-the-lradc.patch
+a733-adc/arm64-dts-allwinner-a733-cubie-a7s-enable-the-gpadc.patch
+a733-adc/arm64-defconfig-enable-the-allwinner-gpadc-driver.patch
+# A733 pin header, Cubie A7S: TWI2, TWI7, SPI1, UART3, UART5, UART6 and SMHC1
+# nodes (disabled) with the pin groups that reach the board -- ours, not posted
+a733-header/arm64-dts-allwinner-a733-add-the-twi2-and-twi7-controllers.patch
+a733-header/arm64-dts-allwinner-a733-add-the-spi1-controller.patch
+a733-header/arm64-dts-allwinner-a733-add-the-uart3-uart5-and-uart6-controllers.patch
+a733-header/arm64-dts-allwinner-a733-add-the-smhc1-controller.patch
+# A733 display engine behind IOMMU1: the port gate of its master 2, the
+# mixer's "iommus" -- ours, not posted (needs a733-iommu, a733-ve-base for
+# the other port gates and a733-display for the mixer node)
+a733-de-iommu/arm64-dts-allwinner-a733-give-iommu1-the-display-engine-port-gate.patch
+a733-de-iommu/arm64-dts-allwinner-a733-put-the-display-engine-behind-iommu1.patch
+# pwm: Add Allwinner's D1/T113-S3/R329 SoCs PWM support
+# -- Aleksandr Shubin, v13, under review
+# (patches 1 and 2 of 3; 3/3 is the D1 riscv node)
+# https://lore.kernel.org/all/20260221183609.95403-1-privatesub2@gmail.com/
+# On top, ours, not posted: the period read back one cycle short, the A733
+# compatible, the channel register distance of the A733 (0x40, the D1 has
+# 0x20), the controller nodes and pin groups, defconfig
+a733-pwm/dt-bindings-pwm-add-binding-for-allwinner-d1-t113-s3.patch
+a733-pwm/pwm-add-allwinner-s-d1-t113-s3-r329-socs-pwm-support.patch
+a733-pwm/pwm-sun8i-count-the-extra-cycle-when-reading-the-per.patch
+a733-pwm/dt-bindings-pwm-allwinner-sun20i-d1-pwm-add-a733.patch
+a733-pwm/pwm-sun8i-add-a733-support.patch
+a733-pwm/arm64-dts-allwinner-a733-add-the-pwm-controllers.patch
+a733-pwm/arm64-defconfig-enable-the-allwinner-sun8i-pwm-drive.patch
+# Bluetooth: btusb reset GPIO only for the vendor reset handlers
+# -- ours, not posted
+btusb-reset-gpio/bluetooth-btusb-request-the-reset-gpio-only-where-a-handler-uses-it.patch
+# hwspinlock: sun6i: Allwinner D1 and T113 support -- Nguyen Minh Tien, v1,
+# under review; patches 1/3 and 2/3 (Acked-by Conor Dooley on 2/3 collected
+# from the list, 28.09.); 1/3 makes the driver bind to a node that follows
+# the binding
+# https://lore.kernel.org/all/20260927025626.69614-2-tien.nguyenminh@embeddedlinux.blog/
+hwspinlock-sun6i-d1/hwspinlock-sun6i-get-the-clock-and-the-reset-without-names.patch
+hwspinlock-sun6i-d1/dt-bindings-hwlock-sun6i-add-compatible-for-allwinner-d1.patch
+# A733 hardware spinlock: the A733 compatible in the enum of the D1 binding
+# (fallback to the A31 unit), the node, defconfig -- ours, not posted (needs
+# hwspinlock-sun6i-d1)
+a733-hwspinlock/dt-bindings-hwlock-sun6i-add-compatible-for-allwinner-a733.patch
+a733-hwspinlock/arm64-dts-allwinner-a733-add-the-hardware-spinlock.patch
+a733-hwspinlock/arm64-defconfig-enable-the-allwinner-hardware-spinlock-driver.patch
+# Cubie A7S ramoops: 1 MiB pstore region in DRAM at 0x60000000 -- ours,
+# not posted
+a733-ramoops-a7s/arm64-dts-allwinner-a733-cubie-a7s-add-a-ramoops-region.patch
+# A733 S_IR_RX: binding with the A733 compatible (fallback to the A31
+# receiver, no driver change), the node and the PL6 pin group -- ours, not
+# posted
+a733-ir/dt-bindings-media-allwinner-sun4i-a10-ir-add-the-a733-compatible.patch
+a733-ir/arm64-dts-allwinner-a733-add-the-s_ir_rx-controller.patch
+# gpiolib: a gpio-hog takes its line from the controller's of_xlate() again
+# -- ours, not posted (regression of d1d564ec4992, three-cell controllers)
+gpiolib-hog/gpiolib-take-a-hog-s-line-from-the-controller-s-of_xlate.patch
+# Cubie A7S remaining pin bank supplies: PE, PF, PJ, PK, PM and BLDO1 --
+# ours, not posted (needs a733-a7s-bank-supplies)
+a733-a7s-bank-supplies-2/arm64-dts-allwinner-a733-cubie-a7s-add-the-remaining-pin-bank-supplies.patch
+# A733 2D graphics accelerator (G2D), kernel side without a driver: binding,
+# the port gate of its IOMMU master, the node (disabled) -- ours, not posted
+# (needs a733-de-iommu, on whose master2 line the port gate follows)
+a733-g2d-base/dt-bindings-media-add-allwinner-a733-2d-graphics-accelerator.patch
+a733-g2d-base/arm64-dts-allwinner-a733-give-iommu1-the-2d-accelerator-port-gate.patch
+a733-g2d-base/arm64-dts-allwinner-a733-add-the-2d-graphics-accelerator.patch
+# usb: musb: gadget: a waiting RX packet is no longer flushed when its request
+# is queued (fix for 3fc137386c46, mass storage hang on USB0) -- ours, not
+# posted
+musb-gadget-rx-restart/usb-musb-gadget-do-not-flush-a-waiting-rx-packet-on-restart.patch
+# pinctrl: sunxi: two-bit POW_MOD_SEL withstand voltage variant, the A733
+# banks with a supply use it (PF excluded) -- ours, not posted (needs
+# a733-pinctrl-withstand, a733-pinctrl-pf-withstand)
+a733-pinctrl-pow-mod-sel-2bit/pinctrl-sunxi-add-a-two-bit-pow-mod-sel-withstand-voltage-variant.patch
+a733-pinctrl-pow-mod-sel-2bit/pinctrl-sunxi-a733-set-the-withstand-voltage-of-the-banks-with-a-supply.patch
+
+# A733 deinterlace unit (DI), kernel side without a driver: binding, the
+# port gate of its IOMMU master, the node (disabled) -- ours, not posted
+# (after a733-g2d-base: the port gate goes in before its master4 line)
+a733-di-base/dt-bindings-media-add-allwinner-a733-deinterlace-unit.patch
+a733-di-base/arm64-dts-allwinner-a733-give-iommu1-the-deinterlace-unit-port-gate.patch
+a733-di-base/arm64-dts-allwinner-a733-add-the-deinterlace-unit.patch
+
+# A733 S_PWM (PWM controller of the CPUS domain): the node (disabled) and the
+# pin groups of the header pins and the green LED, no driver change -- ours,
+# not posted (needs a733-pwm)
+a733-s-pwm/arm64-dts-allwinner-a733-add-the-s_pwm-controller.patch
+
+# A733 camera input (CSIC and ISP, camera connector J5), kernel side without
+# a driver: two bindings, the port gates of their IOMMU masters, the nodes
+# (disabled) -- ours, not posted (needs a733-ve-base, on whose master3 line
+# the port gates follow)
+a733-csi-isp-base/dt-bindings-media-add-allwinner-a733-camera-sensor-interface-controller.patch
+a733-csi-isp-base/dt-bindings-media-add-allwinner-a733-image-signal-processor.patch
+a733-csi-isp-base/arm64-dts-allwinner-a733-give-iommu0-the-csi-and-isp-port-gates.patch
+a733-csi-isp-base/arm64-dts-allwinner-a733-add-the-camera-sensor-interface-and-isp.patch
+
+# A733 CPUS-domain pin header functions of the Cubie A7S: S_UART0 and S_SPI0
+# on PL5 to PL7 (nodes and pin groups, disabled), and the board file built
+# with -@ so that overlays can refer to them -- ours, not posted
+a733-r-header/arm64-dts-allwinner-a733-add-the-s_uart0-controller.patch
+a733-r-header/arm64-dts-allwinner-a733-add-the-s_spi0-controller.patch
+a733-r-header/arm64-dts-allwinner-a733-build-the-cubie-a7s-device-tree-with-symbols.patch
+
+# A733 S_SPI0 DMA requests, DRQ port 53 of DMAC0 -- ours, not posted
+a733-r-spi0-dma/arm64-dts-allwinner-a733-add-the-dma-requests-of-s_spi0.patch
+
+# A733 CCU: bit 24 of the PLL control registers, the PLL_REF input of the
+# PLLs below it (not PLL_DDR), set in probe -- ours, not posted (fix on top
+# of a733-ccu v6)
+a733-ccu-pll-ref/clk-sunxi-ng-a733-select-pll_ref-as-the-input-of-the-plls.patch
+
+# A733 CPUS-domain functions on the second pin header of the Cubie A7S (J6,
+# with S_TWI2 split over J6 and J11): the S_UART0 pin group on PM3/PM4, and
+# S_UART1 and S_TWI2 (nodes and pin groups, disabled) -- ours, not posted
+# (needs a733-r-header)
+a733-j6-cpus/arm64-dts-allwinner-a733-add-the-s_uart0-pin-group-on-pm3-pm4.patch
+a733-j6-cpus/arm64-dts-allwinner-a733-add-the-s_uart1-controller.patch
+a733-j6-cpus/arm64-dts-allwinner-a733-add-the-s_twi2-controller.patch
+
+# sun8i mixer: the VI layers of DE3 and newer blend formats with alpha
+# pre-multiplied and offer it as their only pixel blend mode -- ours, not
+# posted (needs a733-display)
+a733-mixer-blend/drm-sun4i-vi_layer-blend-alpha-formats-pre-multiplied.patch
+
+# A733 Cubie A7S: the eMMC bus (SMHC2, eMMC footprint, not fitted on every
+# board) is MMC only: no-sd, no-sdio, no driver change -- ours, not posted
+# (after a733-a7s-pmic-rails, sunxi-mmc-a733-hs400)
+a733-emmc-card/arm64-dts-allwinner-a733-mark-the-emmc-bus-of-the-cubie-a7s-as-mmc-only.patch
+
+# sun4i display engine: the mode objects are managed by DRM (drmm) and
+# sun4i_drv no longer calls drm_mode_config_cleanup() itself, which oopsed
+# on the managed encoder of the DisplayPort transmitter when its component
+# was removed -- ours, not posted (needs a733-display, a733-dp, a733-mixer-blend)
+sun4i-drm-teardown/drm-sun4i-sun8i_dw_hdmi-set-up-the-bridge-in-probe.patch
+sun4i-drm-teardown/drm-sun4i-drv-do-not-call-drm_mode_config_cleanup.patch
+sun4i-drm-teardown/drm-sun4i-hdmi-let-drm-manage-the-encoder-and-its-me.patch
+sun4i-drm-teardown/drm-sun4i-crtc-let-drm-manage-the-crtc.patch
+sun4i-drm-teardown/drm-sun4i-layer-let-drm-manage-the-planes.patch
+sun4i-drm-teardown/drm-sun4i-ui_layer-vi_layer-let-drm-manage-the-planes.patch
+sun4i-drm-teardown/drm-sun4i-rgb-let-drm-manage-the-encoder-and-connect.patch
+sun4i-drm-teardown/drm-sun4i-lvds-let-drm-manage-the-encoder-and-connec.patch
+sun4i-drm-teardown/drm-sun4i-sun8i_dw_hdmi-let-drm-manage-the-encoder.patch
+sun4i-drm-teardown/drm-sun4i-sun6i_mipi_dsi-clean-up-the-encoder-and-co.patch
+
+# A733 DisplayPort bridge attach: register the AUX channel before the next
+# bridge and undo the steps in reverse order, aux.drm_dev cleared on failure
+# and on detach -- ours, not posted (needs a733-dp)
+a733-dp-attach/drm-sun4i-sun60i-dp-unwind-the-bridge-attach-on-failure.patch
+
+# A733 display engine: a second plane on VI channel 1, blender port 1
+# mapped to it in the DE top block -- ours, not posted (needs
+# a733-display, a733-mixer-blend)
+a733-de-vi1/drm-sun4i-sun60i-de-top-map-blender-port-1-to-vi-channel-1.patch
+a733-de-vi1/drm-sun4i-mixer-add-vi-channel-1-of-the-a733-as-an-overlay-plane.patch
+
+# A733 DisplayPort: pin assignment D, two lanes next to USB3 -- ours, not posted
+# (needs a733-dp)
+a733-dp-usb/drm-sun4i-sun60i-dp-limit-the-lanes-to-what-the-phy-offers.patch
+a733-dp-usb/phy-allwinner-a733-combophy-add-displayport-next-to-usb3.patch
+a733-dp-usb/arm64-dts-allwinner-a733-cubie-a7s-offer-displayport-pin-assignment-d.patch
+
+# A733 DisplayPort audio: sound DAI binding, stereo audio in the transmitter, I2S3 card on the Cubie A7S -- ours, not posted
+# (needs a733-dp, a733-audio and a733-ccu-audio)
+a733-dp-audio/dt-bindings-display-allwinner-a733-dp-allow-sound-dai-cells.patch
+a733-dp-audio/drm-sun4i-sun60i-dp-add-stereo-audio.patch
+a733-dp-audio/arm64-dts-allwinner-a733-cubie-a7s-add-displayport-audio.patch
+
+# A733 display after system suspend: the DE top block and the VO1 clock
+# unit restore their registers, the mixer is set up again at mode set
+# -- ours, not posted (needs a733-display, a733-dp, a733-de-vi1)
+a733-display-s2idle/drm-sun4i-sun60i-de-top-restore-the-registers-after-system-suspend.patch
+a733-display-s2idle/drm-sun4i-mixer-set-the-mixer-up-again-at-mode-set.patch
+a733-display-s2idle/clk-sunxi-ng-a733-vo1-restore-the-registers-after-system-suspend.patch
+
+# sun4i_tv: the -EPROBE_DEFER path of bind cleans up the encoder before
+# its memory is released -- ours, not posted
+sun4i-tv-defer/drm-sun4i-tv-clean-up-the-encoder-when-bind-defers.patch
+
+# drm/dp: the sink CRC worker is flushed before the capture stops, so it
+# no longer reads a stopped sink (WARN in drm_dp_aux_get_crc() on close,
+# fix for 79c1da7c3bf7), and it ends when the CRTC is turned off instead of
+# warning on every pass -- ours, not posted
+drm-dp-crc-stop/drm-dp-flush-the-crc-worker-before-stopping-the-sink-crc.patch
+drm-dp-crc-stop/drm-dp-end-the-crc-capture-when-the-crtc-is-off.patch
+
+# System suspend off: any system sleep resets the A7S and the firmware has no SYSTEM_SUSPEND (deep sleep);
+# hibernation and the system-sleep callbacks stay built -- ours, not posted
+a733-no-system-sleep/arm64-defconfig-switch-system-suspend-off.patch
+
+# sun4i-drm: the engine stops its layers when the CRTC is disabled, so a
+# CRTC enabled again does not fetch from a framebuffer freed while it was
+# off (IOMMU faults on the A733 display engine) -- ours, not posted
+sun4i-crtc-disable-planes/drm-sun4i-crtc-let-the-engine-stop-its-planes-when-the-crtc-is-disabled.patch
+sun4i-crtc-disable-planes/drm-sun4i-mixer-turn-the-layers-off-when-the-crtc-is-disabled.patch
+
+# mmc: an eMMC module on a microSD adapter in the SD slot of the Cubie A7S:
+# no eMMC DDR52 on the A733 SD controllers, no-mmc dropped on the board
+# -- ours, not posted
+a733-sd-slot-emmc/mmc-sunxi-do-not-offer-emmc-ddr52-on-the-a733-sd-controllers.patch
+a733-sd-slot-emmc/arm64-dts-allwinner-a733-cubie-a7s-allow-emmc-modules-in-the-sd-slot.patch
+
+# A733 CCU audio: the PLL_AUDIO0 point for 32 kHz and 192 kHz at 256 fs --
+# ours, not posted (needs a733-ccu-audio)
+a733-ccu-audio-rates/clk-sunxi-ng-a733-add-a-pll_audio0-point-for-32-khz-and-192-khz.patch
+
+# ASoC: sun4i-i2s: a module clock rate both dividers reach, set with the
+# module clock off -- ours, not posted
+sun4i-i2s-clk-rate/asoc-sun4i-i2s-pick-a-module-clock-rate-the-dividers-can-reach.patch
+sun4i-i2s-clk-rate/asoc-sun4i-i2s-set-the-module-clock-rate-with-the-module-clock-off.patch

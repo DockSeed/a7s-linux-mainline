@@ -1,0 +1,588 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 20:34:43 +0200
+Subject: [PATCH] PCI: sun60i-a733: Recover the Root Port after a link-down
+ reset
+
+When the link drops, the controller resets itself except for its sticky
+registers (A733 user manual V1.00, 18.3.8.55 and 18.3.8.63). The Root
+Port loses its Command register, bus numbers, Link and Root Control and
+AER Root Error Command, and the device behind it stays unreachable.
+
+SII_INT_1 bit 3 (LINK_REQ_RST_NOT) announces that reset. Unmask it on
+the SII interrupt and hand the event to pci_host_handle_link_down(), as
+the Rockchip and Qualcomm DesignWare drivers do.
+
+reset_root_port() holds the LTSSM, pulses PERST# and releases the LTSSM.
+Over a live link the hold is the first window of the controller's own
+hot reset (18.3.8.55): the reset begins only after the release and
+clears the port, while Data Link Layer Link Active still reads 1 from
+before. A port programmed after that stale link-up is lost. The end of
+the reset latches LINK_REQ_RST_NOT, and the LTSSM then waits in Detect.
+So over a live link, reset_root_port() waits for the latch, bounded at
+20 ms, holds the LTSSM again (the second window), programs the port with
+dw_pcie_setup_rc() and releases it, and the link trains with the
+programming. Without a live link, as in a link-down recovery, or if no
+reset comes, it waits for the link only to inform and then programs the
+port, whether or not the link came up, as before.
+
+The handling is armed after enumeration and only over a trained link.
+After every reset of the port, including a bus reset or an AER fatal
+recovery, it is armed again once Data Link Layer Link Active is set,
+checked every PCIE_LINK_WAIT_SLEEP_MS for PCIE_LINK_WAIT_MAX_RETRIES
+times from a delayed work; a link that stays down leaves the port
+disarmed with a warning. The link-up bits of SII_INT_1 latch and cannot
+decide this. Arming clears the latch, so the secondary bus number is
+checked after each arm. A reset of the port in progress holds the
+arming off under a mutex until it has programmed the port, so a delayed
+arm cannot land in the middle of it; a failed programming leaves the
+port disarmed with a warning. At most three recoveries run within 60
+seconds.
+
+Tegra194 pulses its core reset from the handler instead; a recovery
+that sleeps belongs in process context. Not covered: saving registers
+before the controller's reset.
+
+Tested on Radxa Cubie A7S: booted on one board; after a secondary bus
+reset of the NVMe requested through sysfs and after a link-down reset,
+the Root Port kept its programming, and the endpoint returned at Gen3 x1
+and read back the same data.
+
+Assisted-by: LLM
+---
+ drivers/pci/controller/dwc/Kconfig            |   1 +
+ drivers/pci/controller/dwc/pcie-sun60i-a733.c | 410 +++++++++++++++++-
+ 2 files changed, 403 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/Kconfig b/drivers/pci/controller/dwc/Kconfig
+index 1f73346f7f34..93da030b0b08 100644
+--- a/drivers/pci/controller/dwc/Kconfig
++++ b/drivers/pci/controller/dwc/Kconfig
+@@ -493,6 +493,7 @@ config PCIE_SUN60I_A733
+ 	depends on OF
+ 	depends on PCI_MSI
+ 	select PCIE_DW_HOST
++	select PCI_HOST_COMMON
+ 	help
+ 	  Enables support for the DesignWare-based PCIe controller of the
+ 	  Allwinner A733 SoC in host mode. The controller has one lane,
+diff --git a/drivers/pci/controller/dwc/pcie-sun60i-a733.c b/drivers/pci/controller/dwc/pcie-sun60i-a733.c
+index 106cfd5857ca..3899ee779de3 100644
+--- a/drivers/pci/controller/dwc/pcie-sun60i-a733.c
++++ b/drivers/pci/controller/dwc/pcie-sun60i-a733.c
+@@ -16,16 +16,21 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/init.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/irqchip/chained_irq.h>
+ #include <linux/irqdomain.h>
+ #include <linux/mod_devicetable.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/pci.h>
+ #include <linux/phy/phy.h>
+ #include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
++#include <linux/workqueue.h>
+ 
+ #include "../../pci.h"
++#include "../pci-host-common.h"
+ #include "pcie-designware.h"
+ 
+ /* PCIE_LTSSM_ENABLE, reset value 0x40: device type root complex */
+@@ -42,6 +47,12 @@
+ 
+ /* SII_INT_1 */
+ #define SUN60I_A733_PCIE_LINK_STAT		0x0e0c
++/*
++ * Reset request because the link went down or a hot reset was received
++ * (18.3.8.63); the controller then resets itself except for its sticky
++ * registers (18.3.8.55). Same bit in SII_INT_MASK_1.
++ */
++#define  SUN60I_A733_PCIE_LINK_REQ_RST_NOT	BIT(3)
+ 
+ /*
+  * The System Information Interface: sideband outputs of the core, latched
+@@ -75,6 +86,24 @@
+ /* Passes over the Root Port's events per SII interrupt */
+ #define SUN60I_A733_PCIE_SII_MAX_PASSES		4
+ 
++/* PERST# assertion for a reset of the Root Port, CEM T_PERST is >= 100 us */
++#define SUN60I_A733_PCIE_T_PERST_US		1000
++
++/*
++ * Wait for the controller's own reset after the LTSSM is released from a
++ * hold over a live link. Measured 1.4 ms after the release on the Cubie A7S;
++ * the bound only keeps a reset that never comes from stalling the recovery.
++ */
++#define SUN60I_A733_PCIE_CORE_RST_POLL_US	100
++#define SUN60I_A733_PCIE_CORE_RST_TIMEOUT_US	20000
++
++/*
++ * Link-down recoveries allowed per window. A channel that fails again right
++ * after each recovery would otherwise loop.
++ */
++#define SUN60I_A733_PCIE_LINKDOWN_BUDGET	3
++#define SUN60I_A733_PCIE_LINKDOWN_WINDOW_S	60
++
+ /*
+  * The AXI slave clock resets to PERI0_600M. At that rate a configuration
+  * read through the slave window does not complete and stalls the CPU that
+@@ -117,6 +146,15 @@ struct sun60i_a733_pcie {
+ 	raw_spinlock_t		sii_lock;
+ 	int			sii_irq;
+ 	u16			aer_cap;
++	struct work_struct	linkdown_work;
++	struct delayed_work	rearm_work;
++	/* protects rearm_tries and resets, serializes the arming after a reset */
++	struct mutex		rearm_lock;
++	unsigned int		rearm_tries;
++	unsigned int		resets;
++	unsigned long		linkdown_window;
++	unsigned int		linkdown_count;
++	bool			linkdown_off;
+ };
+ 
+ static struct sun60i_a733_pcie *to_sun60i_a733_pcie(struct dw_pcie *pci)
+@@ -251,6 +289,209 @@ static void sun60i_a733_pcie_handle_rp_events(struct sun60i_a733_pcie *pcie)
+ 				     pass);
+ }
+ 
++/*
++ * Link-down handling.
++ *
++ * When the link drops, the controller resets itself except for its sticky
++ * registers (18.3.8.55, 18.3.8.63): the Root Port's Command, bus numbers,
++ * Link Control, Root Control and AER Root Error Command are cleared, and
++ * nothing puts them back. The recovery uses the host bridge link-down
++ * mechanism: pci_host_handle_link_down() freezes the drivers below the port,
++ * resets the port through sun60i_a733_pcie_reset_root_port(), restores its
++ * saved config space, waits for the device and resumes the drivers.
++ */
++static void sun60i_a733_pcie_linkdown_mask(struct sun60i_a733_pcie *pcie,
++					   bool unmask)
++{
++	unsigned long flags;
++	u32 val;
++
++	raw_spin_lock_irqsave(&pcie->sii_lock, flags);
++	val = readl(pcie->app + SUN60I_A733_PCIE_SII_INT_MASK_1);
++	if (unmask) {
++		/* Clear, then unmask: a request after the clear raises the line */
++		writel(SUN60I_A733_PCIE_LINK_REQ_RST_NOT,
++		       pcie->app + SUN60I_A733_PCIE_LINK_STAT);
++		val |= SUN60I_A733_PCIE_LINK_REQ_RST_NOT;
++	} else {
++		val &= ~SUN60I_A733_PCIE_LINK_REQ_RST_NOT;
++	}
++	writel(val, pcie->app + SUN60I_A733_PCIE_SII_INT_MASK_1);
++	raw_spin_unlock_irqrestore(&pcie->sii_lock, flags);
++}
++
++static void sun60i_a733_pcie_linkdown_disarm(struct sun60i_a733_pcie *pcie)
++{
++	sun60i_a733_pcie_linkdown_mask(pcie, false);
++}
++
++/*
++ * Whether the controller has reset the Root Port's config space since it was
++ * last programmed: probe, dw_pcie_setup_rc() and the restore after a recovery
++ * leave the secondary bus number non-zero, the controller's reset clears it.
++ */
++static bool sun60i_a733_pcie_wiped(struct sun60i_a733_pcie *pcie)
++{
++	return !dw_pcie_readb_dbi(&pcie->pci, PCI_SECONDARY_BUS);
++}
++
++/*
++ * Arming clears the latch and with it a link drop latched while disarmed.
++ * The controller's reset and the retraining need no software, so such a
++ * drop leaves a trained link over a cleared port; the check after the unmask
++ * catches it and starts the recovery the latch would have.
++ */
++static void sun60i_a733_pcie_linkdown_arm(struct sun60i_a733_pcie *pcie)
++{
++	if (pcie->linkdown_off)
++		return;
++
++	sun60i_a733_pcie_linkdown_mask(pcie, true);
++
++	if (sun60i_a733_pcie_wiped(pcie)) {
++		dev_warn(pcie->pci.dev,
++			 "Root Port reset while link-down handling was disarmed, recovering\n");
++		sun60i_a733_pcie_linkdown_disarm(pcie);
++		queue_work(system_long_wq, &pcie->linkdown_work);
++	}
++}
++
++static int sun60i_a733_pcie_wait_dl_active(struct sun60i_a733_pcie *pcie)
++{
++	bool up;
++
++	return read_poll_timeout(sun60i_a733_pcie_link_up, up, up,
++				 PCIE_LINK_WAIT_SLEEP_MS * USEC_PER_MSEC,
++				 PCIE_LINK_WAIT_MAX_RETRIES *
++				 PCIE_LINK_WAIT_SLEEP_MS * USEC_PER_MSEC,
++				 false, &pcie->pci);
++}
++
++static void sun60i_a733_pcie_log_link(struct sun60i_a733_pcie *pcie,
++				      const char *when)
++{
++	u16 sta = dw_pcie_readw_dbi(&pcie->pci, pcie->exp_cap + PCI_EXP_LNKSTA);
++
++	dev_info(pcie->pci.dev, "%s: Gen%u x%u, DLLLA %d\n", when,
++		 FIELD_GET(PCI_EXP_LNKSTA_CLS, sta),
++		 FIELD_GET(PCI_EXP_LNKSTA_NLW, sta),
++		 !!(sta & PCI_EXP_LNKSTA_DLLLA));
++}
++
++/*
++ * Arm again after a reset of the Root Port, once the link is up: armed over
++ * a link that still trains, the reset request would fire at once. The
++ * link-up bits of SII_INT_1 latch, so Data Link Layer Link Active decides;
++ * it is checked every PCIE_LINK_WAIT_SLEEP_MS, PCIE_LINK_WAIT_MAX_RETRIES
++ * times, then the port stays disarmed. A reset of the Root Port in progress
++ * arms the port itself when it is done, so nothing is armed while one runs.
++ */
++static void sun60i_a733_pcie_rearm_check(struct sun60i_a733_pcie *pcie)
++{
++	lockdep_assert_held(&pcie->rearm_lock);
++
++	if (pcie->linkdown_off || pcie->resets)
++		return;
++
++	if (sun60i_a733_pcie_link_up(&pcie->pci)) {
++		if (pcie->rearm_tries)
++			sun60i_a733_pcie_log_link(pcie, "link up, armed late");
++		sun60i_a733_pcie_linkdown_arm(pcie);
++		return;
++	}
++
++	if (pcie->rearm_tries++ < PCIE_LINK_WAIT_MAX_RETRIES) {
++		queue_delayed_work(system_long_wq, &pcie->rearm_work,
++				   msecs_to_jiffies(PCIE_LINK_WAIT_SLEEP_MS));
++		return;
++	}
++
++	dev_warn(pcie->pci.dev,
++		 "link still down after the reset, link-down handling disarmed\n");
++}
++
++static void sun60i_a733_pcie_rearm_work(struct work_struct *work)
++{
++	struct sun60i_a733_pcie *pcie =
++		container_of(to_delayed_work(work), struct sun60i_a733_pcie,
++			     rearm_work);
++
++	mutex_lock(&pcie->rearm_lock);
++	sun60i_a733_pcie_rearm_check(pcie);
++	mutex_unlock(&pcie->rearm_lock);
++}
++
++static void sun60i_a733_pcie_rearm(struct sun60i_a733_pcie *pcie)
++{
++	cancel_delayed_work_sync(&pcie->rearm_work);
++	mutex_lock(&pcie->rearm_lock);
++	pcie->rearm_tries = 0;
++	sun60i_a733_pcie_rearm_check(pcie);
++	mutex_unlock(&pcie->rearm_lock);
++}
++
++/* Keep the arming out of a reset of the Root Port until it is done */
++static void sun60i_a733_pcie_reset_begin(struct sun60i_a733_pcie *pcie)
++{
++	mutex_lock(&pcie->rearm_lock);
++	pcie->resets++;
++	mutex_unlock(&pcie->rearm_lock);
++
++	cancel_delayed_work_sync(&pcie->rearm_work);
++}
++
++static void sun60i_a733_pcie_reset_end(struct sun60i_a733_pcie *pcie)
++{
++	mutex_lock(&pcie->rearm_lock);
++	pcie->resets--;
++	mutex_unlock(&pcie->rearm_lock);
++}
++
++/* Whether the recovery budget of the current window is used up */
++static bool sun60i_a733_pcie_linkdown_budget_spent(struct sun60i_a733_pcie *pcie)
++{
++	if (!pcie->linkdown_count ||
++	    time_after(jiffies, pcie->linkdown_window +
++				SUN60I_A733_PCIE_LINKDOWN_WINDOW_S * HZ)) {
++		pcie->linkdown_window = jiffies;
++		pcie->linkdown_count = 0;
++	}
++
++	return ++pcie->linkdown_count > SUN60I_A733_PCIE_LINKDOWN_BUDGET;
++}
++
++static void sun60i_a733_pcie_linkdown_work(struct work_struct *work)
++{
++	struct sun60i_a733_pcie *pcie =
++		container_of(work, struct sun60i_a733_pcie, linkdown_work);
++	struct pci_bus *bus = pcie->pci.pp.bridge->bus;
++	struct device *dev = pcie->pci.dev;
++	struct pci_dev *port;
++
++	if (pcie->linkdown_off)
++		return;
++
++	if (sun60i_a733_pcie_linkdown_budget_spent(pcie)) {
++		pcie->linkdown_off = true;
++		dev_err(dev,
++			"%d link-down recoveries within %d s, link-down handling off\n",
++			SUN60I_A733_PCIE_LINKDOWN_BUDGET,
++			SUN60I_A733_PCIE_LINKDOWN_WINDOW_S);
++		return;
++	}
++
++	dev_warn(dev, "link-down reset, recovering (%u of %d in %d s)\n",
++		 pcie->linkdown_count, SUN60I_A733_PCIE_LINKDOWN_BUDGET,
++		 SUN60I_A733_PCIE_LINKDOWN_WINDOW_S);
++
++	for_each_pci_bridge(port, bus)
++		if (pci_pcie_type(port) == PCI_EXP_TYPE_ROOT_PORT)
++			pci_host_handle_link_down(port);
++
++	/* The core's wait for the device may have outlasted the one after the reset */
++	sun60i_a733_pcie_rearm(pcie);
++}
++
+ static void sun60i_a733_pcie_sii_handler(struct irq_desc *desc)
+ {
+ 	struct sun60i_a733_pcie *pcie = irq_desc_get_handler_data(desc);
+@@ -263,6 +504,14 @@ static void sun60i_a733_pcie_sii_handler(struct irq_desc *desc)
+ 	    SUN60I_A733_PCIE_SII_RP_EVENTS)
+ 		sun60i_a733_pcie_handle_rp_events(pcie);
+ 
++	/* A link-down reset: disarm, and recover in process context */
++	if (readl(pcie->app + SUN60I_A733_PCIE_LINK_STAT) &
++	    readl(pcie->app + SUN60I_A733_PCIE_SII_INT_MASK_1) &
++	    SUN60I_A733_PCIE_LINK_REQ_RST_NOT) {
++		sun60i_a733_pcie_linkdown_disarm(pcie);
++		queue_work(system_long_wq, &pcie->linkdown_work);
++	}
++
+ 	chained_irq_exit(chip, desc);
+ }
+ 
+@@ -314,6 +563,117 @@ static const struct irq_domain_ops sun60i_a733_pcie_rp_domain_ops = {
+ 	.xlate	= irq_domain_xlate_onecell,
+ };
+ 
++/*
++ * The VPD capability: the core only pulses cfg_vpd_int (SII_INT_0 bit 0) and
++ * leaves the VPD transfer to the application, which the A733 does not have,
++ * so every VPD access would time out. Removed again after a reset of the
++ * Root Port, since the manual does not say whether that reset restores the
++ * capability list; if it does, the message says so.
++ */
++static void sun60i_a733_pcie_hide_vpd(struct sun60i_a733_pcie *pcie,
++				      bool again)
++{
++	struct dw_pcie *pci = &pcie->pci;
++
++	if (again && dw_pcie_find_capability(pci, PCI_CAP_ID_VPD))
++		dev_info(pci->dev, "VPD capability back after the reset\n");
++
++	dw_pcie_remove_capability(pci, PCI_CAP_ID_VPD);
++}
++
++/*
++ * pci_host_bridge::reset_root_port, reached from every reset of the Root
++ * Port's secondary bus: link-down recovery, AER fatal recovery and a bus
++ * reset for the device. A Secondary Bus Reset would drop the link, and the
++ * controller would clear the port in the middle of it.
++ *
++ * Hold the LTSSM, pulse PERST# and release the LTSSM. Over a live link the
++ * hold is the first window of the controller's own hot reset (18.3.8.55):
++ * the reset begins only after the release, and clears what was written
++ * before it. Its end latches LINK_REQ_RST_NOT; then the LTSSM is held again
++ * in Detect, the second window, the port is programmed and the link trains
++ * with it. Without a live link, or if no reset comes, the port is
++ * programmed once the link is up, as before. The wait for the link only
++ * informs; the wait that decides is the core's
++ * pci_bridge_wait_for_secondary_bus() after it restored the port.
++ */
++static int sun60i_a733_pcie_reset_root_port(struct pci_host_bridge *bridge,
++					    struct pci_dev *port)
++{
++	struct dw_pcie_rp *pp = bridge->bus->sysdata;
++	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
++	struct sun60i_a733_pcie *pcie = to_sun60i_a733_pcie(pci);
++	bool live;
++	int ret;
++	u32 val;
++
++	/* This reset drops the link itself */
++	sun60i_a733_pcie_reset_begin(pcie);
++	sun60i_a733_pcie_linkdown_disarm(pcie);
++
++	live = sun60i_a733_pcie_link_up(pci);
++	dw_pcie_stop_link(pci);
++	gpiod_set_value_cansleep(pcie->perst, 1);
++	usleep_range(SUN60I_A733_PCIE_T_PERST_US,
++		     2 * SUN60I_A733_PCIE_T_PERST_US);
++	gpiod_set_value_cansleep(pcie->perst, 0);
++	/* Wait after the release of PERST#, before the LTSSM is started */
++	msleep(PCIE_T_PVPERL_MS);
++	/* Disarmed, so the interrupt handler does not see this latch */
++	writel(SUN60I_A733_PCIE_LINK_REQ_RST_NOT,
++	       pcie->app + SUN60I_A733_PCIE_LINK_STAT);
++	dw_pcie_start_link(pci);
++
++	if (live && readl_poll_timeout(pcie->app + SUN60I_A733_PCIE_LINK_STAT,
++				       val,
++				       val & SUN60I_A733_PCIE_LINK_REQ_RST_NOT,
++				       SUN60I_A733_PCIE_CORE_RST_POLL_US,
++				       SUN60I_A733_PCIE_CORE_RST_TIMEOUT_US)) {
++		dev_warn(pci->dev,
++			 "no controller reset after the release, programming after the link\n");
++		live = false;
++	}
++
++	if (live) {
++		dw_pcie_stop_link(pci);
++		sun60i_a733_pcie_hide_vpd(pcie, true);
++		ret = dw_pcie_setup_rc(pp);
++		dw_pcie_start_link(pci);
++	}
++
++	if (sun60i_a733_pcie_wait_dl_active(pcie))
++		dev_info(pci->dev, "link not up yet after the reset\n");
++	else
++		sun60i_a733_pcie_log_link(pcie, "link after reset");
++
++	if (!live) {
++		sun60i_a733_pcie_hide_vpd(pcie, true);
++		ret = dw_pcie_setup_rc(pp);
++	}
++
++	/* A controller reset after the programming clears it again */
++	if (!ret && sun60i_a733_pcie_wiped(pcie)) {
++		dev_warn(pci->dev, "Root Port cleared after programming, programming again\n");
++		sun60i_a733_pcie_hide_vpd(pcie, true);
++		ret = dw_pcie_setup_rc(pp);
++	}
++
++	sun60i_a733_pcie_reset_end(pcie);
++
++	if (ret) {
++		dev_warn(pci->dev,
++			 "Root Port setup failed after the reset (%d), link-down handling disarmed\n",
++			 ret);
++		return ret;
++	}
++
++	if (sun60i_a733_pcie_link_up(&pcie->pci))
++		sun60i_a733_pcie_log_link(pcie, "link after setup");
++	sun60i_a733_pcie_rearm(pcie);
++
++	return 0;
++}
++
+ static int sun60i_a733_pcie_host_init(struct dw_pcie_rp *pp)
+ {
+ 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+@@ -338,12 +698,7 @@ static int sun60i_a733_pcie_host_init(struct dw_pcie_rp *pp)
+ 	writel(SUN60I_A733_PCIE_SII_RP_EVENTS,
+ 	       pcie->app + SUN60I_A733_PCIE_SII_INT_0);
+ 
+-	/*
+-	 * The core only pulses cfg_vpd_int (SII_INT_0 bit 0) and leaves the
+-	 * VPD transfer to the application, which the A733 does not have, so
+-	 * every VPD access would time out.
+-	 */
+-	dw_pcie_remove_capability(pci, PCI_CAP_ID_VPD);
++	sun60i_a733_pcie_hide_vpd(pcie, false);
+ 
+ 	pcie->exp_cap = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+ 	if (!pcie->exp_cap)
+@@ -351,6 +706,8 @@ static int sun60i_a733_pcie_host_init(struct dw_pcie_rp *pp)
+ 				     "no PCI Express capability\n");
+ 	pcie->aer_cap = dw_pcie_find_ext_capability(pci, PCI_EXT_CAP_ID_ERR);
+ 
++	pp->bridge->reset_root_port = sun60i_a733_pcie_reset_root_port;
++
+ 	intc = of_get_child_by_name(dev->of_node, "legacy-interrupt-controller");
+ 	if (!intc)
+ 		return dev_err_probe(dev, -EINVAL,
+@@ -377,13 +734,27 @@ static void sun60i_a733_pcie_host_deinit(struct dw_pcie_rp *pp)
+ 	struct sun60i_a733_pcie *pcie = to_sun60i_a733_pcie(pci);
+ 
+ 	writel(0, pcie->app + SUN60I_A733_PCIE_SII_INT_MASK_0);
++	writel(0, pcie->app + SUN60I_A733_PCIE_SII_INT_MASK_1);
+ 	irq_set_chained_handler_and_data(pcie->sii_irq, NULL, NULL);
+ 	irq_domain_remove(pcie->rp_domain);
+ }
+ 
++/* Armed after enumeration, and only over a link: there is nothing to recover */
++static void sun60i_a733_pcie_host_post_init(struct dw_pcie_rp *pp)
++{
++	struct sun60i_a733_pcie *pcie =
++		to_sun60i_a733_pcie(to_dw_pcie_from_pp(pp));
++
++	if (sun60i_a733_pcie_link_up(&pcie->pci))
++		sun60i_a733_pcie_linkdown_arm(pcie);
++	else
++		dev_info(pcie->pci.dev, "no link, link-down handling off\n");
++}
++
+ static const struct dw_pcie_host_ops sun60i_a733_pcie_host_ops = {
+-	.init	= sun60i_a733_pcie_host_init,
+-	.deinit	= sun60i_a733_pcie_host_deinit,
++	.init		= sun60i_a733_pcie_host_init,
++	.deinit		= sun60i_a733_pcie_host_deinit,
++	.post_init	= sun60i_a733_pcie_host_post_init,
+ };
+ 
+ static const struct dw_pcie_ops sun60i_a733_dw_pcie_ops = {
+@@ -547,6 +918,19 @@ static int sun60i_a733_pcie_get_resources(struct sun60i_a733_pcie *pcie)
+ 	return 0;
+ }
+ 
++/* No recovery may outlive the device */
++static void sun60i_a733_pcie_linkdown_stop(void *data)
++{
++	struct sun60i_a733_pcie *pcie = data;
++
++	pcie->linkdown_off = true;
++	sun60i_a733_pcie_linkdown_disarm(pcie);
++	/* A handler that read the mask before the disarm may still queue */
++	synchronize_irq(pcie->sii_irq);
++	cancel_work_sync(&pcie->linkdown_work);
++	cancel_delayed_work_sync(&pcie->rearm_work);
++}
++
+ static int sun60i_a733_pcie_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -561,6 +945,12 @@ static int sun60i_a733_pcie_probe(struct platform_device *pdev)
+ 	pcie->pci.ops = &sun60i_a733_dw_pcie_ops;
+ 	pcie->pci.pp.ops = &sun60i_a733_pcie_host_ops;
+ 	raw_spin_lock_init(&pcie->sii_lock);
++	INIT_WORK(&pcie->linkdown_work, sun60i_a733_pcie_linkdown_work);
++	INIT_DELAYED_WORK(&pcie->rearm_work, sun60i_a733_pcie_rearm_work);
++
++	ret = devm_mutex_init(dev, &pcie->rearm_lock);
++	if (ret)
++		return ret;
+ 
+ 	ret = sun60i_a733_pcie_get_resources(pcie);
+ 	if (ret)
+@@ -574,6 +964,10 @@ static int sun60i_a733_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = devm_add_action_or_reset(dev, sun60i_a733_pcie_linkdown_stop, pcie);
++	if (ret)
++		return ret;
++
+ 	ret = dw_pcie_host_init(&pcie->pci.pp);
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "failed to initialize host\n");

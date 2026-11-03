@@ -1,0 +1,156 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 13:26:06 +0200
+Subject: [PATCH] mmc: sunxi: Reset the controller when the stop command fails
+
+After a failed multiple-block transfer the driver sends CMD12 from the
+threaded interrupt handler. When that stop fails, it only logs the
+failure and completes the request. The card can still be in its data
+phase and the controller's data state machine stays busy, so every
+later command waits behind it: the host hangs until a power cycle.
+
+When the stop fails, reset the controller and program it again for the
+current ios. A soft reset is the only way to return the state machines
+to idle, and it takes register state with it, so the recovery reuses
+the sequence runtime resume already runs after every module reset:
+sunxi_mmc_init_host(), the bus width, and the clock with its timing.
+That sequence becomes sunxi_mmc_reinit_host(), used by both. It returns
+the error of sunxi_mmc_init_host(): a reset that does not complete is
+reported as such, and fails the runtime resume.
+
+The failure message now carries SMHC_RINTSTS, SMHC_STATUS and SMHC_CMD,
+which tell apart a stop the controller never ran, one it refused and
+one the card did not answer.
+
+Not covered: the order of the teardown and the stop. The data engine
+is still released in the hard interrupt handler before the stop is
+sent; sending the stop first does not make a card that has stopped
+answering respond, and the reset covers both cases.
+
+Tested on Radxa Cubie A7S: booted on two boards with a test-only change
+that masks the completion of a data request; neither the eMMC nor the SD
+card answers the stop command, the controller is reset without a failed
+reset, and reads afterwards return the same data as before, the eMMC
+still in HS400 enhanced strobe.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 60 ++++++++++++++++++++++++++++++------
+ 1 file changed, 51 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 731f5d3ad275..cf2880069a52 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -508,7 +508,8 @@ static void sunxi_mmc_start_dma(struct sunxi_mmc_host *host,
+ 		   SDXC_IDMAC_FIX_BURST | SDXC_IDMAC_IDMA_ON);
+ }
+ 
+-static void sunxi_mmc_send_manual_stop(struct sunxi_mmc_host *host,
++/* Returns true when the controller reports the stop command as done. */
++static bool sunxi_mmc_send_manual_stop(struct sunxi_mmc_host *host,
+ 				       struct mmc_request *req)
+ {
+ 	u32 arg, cmd_val, ri;
+@@ -535,15 +536,21 @@ static void sunxi_mmc_send_manual_stop(struct sunxi_mmc_host *host,
+ 		 time_before(jiffies, expire));
+ 
+ 	if (!(ri & SDXC_COMMAND_DONE) || (ri & SDXC_INTERRUPT_ERROR_BIT)) {
+-		dev_err(mmc_dev(host->mmc), "send stop command failed\n");
++		dev_err(mmc_dev(host->mmc),
++			"send stop command failed: rint %08x status %08x cmdr %08x\n",
++			ri, mmc_readl(host, REG_STAS),
++			mmc_readl(host, REG_CMDR));
+ 		if (req->stop)
+ 			req->stop->resp[0] = -ETIMEDOUT;
+-	} else {
+-		if (req->stop)
+-			req->stop->resp[0] = mmc_readl(host, REG_RESP0);
++		mmc_writel(host, REG_RINTR, 0xffff);
++		return false;
+ 	}
+ 
++	if (req->stop)
++		req->stop->resp[0] = mmc_readl(host, REG_RESP0);
++
+ 	mmc_writel(host, REG_RINTR, 0xffff);
++	return true;
+ }
+ 
+ static void sunxi_mmc_dump_errinfo(struct sunxi_mmc_host *host)
+@@ -717,6 +724,8 @@ static irqreturn_t sunxi_mmc_irq(int irq, void *dev_id)
+ 	return ret;
+ }
+ 
++static int sunxi_mmc_reinit_host(struct sunxi_mmc_host *host);
++
+ static irqreturn_t sunxi_mmc_handle_manual_stop(int irq, void *dev_id)
+ {
+ 	struct sunxi_mmc_host *host = dev_id;
+@@ -742,7 +751,22 @@ static irqreturn_t sunxi_mmc_handle_manual_stop(int irq, void *dev_id)
+ 	 * Additionally we have wait states within this function
+ 	 * so having it in a lock is a very bad idea.
+ 	 */
+-	sunxi_mmc_send_manual_stop(host, mrq);
++	if (!sunxi_mmc_send_manual_stop(host, mrq)) {
++		/*
++		 * The card may still be in its data phase, and the data
++		 * state machine stays busy: every later command would wait
++		 * behind it. Only a controller reset returns the state
++		 * machines to idle, and it takes the register setup with
++		 * it, so program the controller again.
++		 */
++		if (sunxi_mmc_reinit_host(host))
++			dev_err(mmc_dev(host->mmc),
++				"controller reset after the failed stop did not complete\n");
++		else
++			dev_err(mmc_dev(host->mmc),
++				"controller reset after the failed stop, status %08x\n",
++				mmc_readl(host, REG_STAS));
++	}
+ 
+ 	spin_lock_irqsave(&host->lock, iflags);
+ 	host->manual_stop_mrq = NULL;
+@@ -1034,6 +1058,26 @@ static void sunxi_mmc_set_clk(struct sunxi_mmc_host *host, struct mmc_ios *ios)
+ 	/* Android code had a usleep_range(50000, 55000); here */
+ }
+ 
++/*
++ * Reset the controller and program it for the current ios again: the
++ * register setup, the bus width and the clock with its timing, as
++ * runtime resume does after the module reset.
++ */
++static int sunxi_mmc_reinit_host(struct sunxi_mmc_host *host)
++{
++	struct mmc_host *mmc = host->mmc;
++	int ret;
++
++	ret = sunxi_mmc_init_host(host);
++	if (ret)
++		return ret;
++
++	sunxi_mmc_set_bus_width(host, mmc->ios.bus_width);
++	sunxi_mmc_set_clk(host, &mmc->ios);
++
++	return 0;
++}
++
+ static void sunxi_mmc_card_power(struct sunxi_mmc_host *host,
+ 				 struct mmc_ios *ios)
+ {
+@@ -1777,14 +1821,12 @@ static int sunxi_mmc_runtime_resume(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = sunxi_mmc_init_host(host);
++	ret = sunxi_mmc_reinit_host(host);
+ 	if (ret) {
+ 		sunxi_mmc_disable(host);
+ 		return ret;
+ 	}
+ 
+-	sunxi_mmc_set_bus_width(host, mmc->ios.bus_width);
+-	sunxi_mmc_set_clk(host, &mmc->ios);
+ 	enable_irq(host->irq);
+ 
+ 	return 0;

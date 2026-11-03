@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 19 Oct 2026 17:24:47 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Add a PLL_AUDIO0 point for 32 kHz and
+ 192 kHz
+
+Without this, 32 kHz and 192 kHz at 256 fs get no I2S/PCM module clock
+that a step of the MCLK divider brings down exactly to 8.192 or
+49.152 MHz: no rate of PLL_AUDIO1's 614.4 MHz and 1536 MHz taps or of
+PLL_AUDIO0 over the module clock divider (1 to 32) gives one. Seen on
+the Radxa Cubie A7S: 32 kHz playback on I2S0 fails in hw_params.
+
+Add a second sigma-delta point to PLL_AUDIO0: 1179.648 MHz, 24.576 MHz
+x 48, from a VCO of 2359.296 MHz (N = 98 plus 0x9ba6 / 2^17) divided by
+P0 = 2. Divided by 24 it gives 49.152 MHz. The manual's PLL table has
+no PLL_AUDIO0 entry for it; the point follows the AUDIO0PLL4X formula,
+the fractional mode of the 22.5792 MHz x 4 point and the PLL_AUDIO0
+VCO range, and the manual lists 2359.296 MHz as a PLL_AUDIO1 VCO point.
+48 kHz itself stays on PLL_AUDIO1: 1179.648 MHz / 24.576 MHz = 48.
+
+Not covered: PLL_AUDIO0 serves one rate family at a time. While a
+stream holds it at this point, a 44.1 kHz stream on another controller
+gets no exact module clock.
+
+Tested on Radxa Cubie A7S: I2S0 in loopback plays and records 32 kHz
+and 192 kHz at 256 fs, with PLL_AUDIO0 at this point and the module
+clock divided by 24.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index ef14e4336af5..695f5989881d 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -384,10 +384,18 @@ static struct ccu_nkmp pll_ve1_clk = {
+  * divided by P0 = 18. The pattern is fractional division as described in
+  * the manual: SIG_DELT_PAT_EN set, SPR_FREQ_MODE = 3, WAVE_STEP = 0 and
+  * WAVE_BOT = 0x179a7.
++ *
++ * The 24.576 MHz x 48 point serves the rates of the 48 kHz family that
++ * PLL_AUDIO1's fixed taps cannot divide down to, such as 32 kHz and
++ * 192 kHz at 256 fs. It is set the same way: N = 98 plus the fraction
++ * 0x9ba6 / 2^17, so the VCO runs at 2359.296 MHz, divided by P0 = 2. The
++ * module clock divider (1 to 32) cannot bring it down to 24.576 MHz, so
++ * requests for that rate still settle on PLL_AUDIO1.
+  */
+ #define SUN60I_A733_PLL_AUDIO0_REG	0x260
+ static struct ccu_sdm_setting pll_audio0_sdm_table[] = {
+ 	{ .rate = 90316800, .pattern = 0xe00179a7, .m = 18, .n = 67 }, /* 22.5792 * 4 */
++	{ .rate = 1179648000, .pattern = 0xe0009ba6, .m = 2, .n = 98 }, /* 24.576 * 48 */
+ };
+ 
+ static struct ccu_nm pll_audio0_4x_clk = {

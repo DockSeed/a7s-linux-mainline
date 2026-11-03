@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Fetch and verify the kernel source, check the patches, build.
+# Nothing is uploaded.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # x86_64 with Docker on the runner; the build cross compiles for arm64.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    env:
+      A7S_ENGINE: docker
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch and verify the kernel source
+        run: ./build.sh fetch verify
+
+      - name: Check the patch series
+        run: |
+          ./build.sh shell sh -c 'python3 scripts/patch-check.py --repo . --tarball /work/dl/linux-$(scripts/build.sh version).tar.xz --workdir /work/pc'
+
+      - name: Build the kernel
+        run: ./build.sh
+
+      - name: Show the result
+        run: |
+          cat out/MANIFEST
+          cat out/SHA256SUMS

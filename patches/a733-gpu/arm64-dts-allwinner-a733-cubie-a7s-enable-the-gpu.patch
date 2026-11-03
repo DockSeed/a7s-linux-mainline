@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 07:03:57 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable the GPU
+
+Enable the GPU at one fixed operating point, 1008 MHz on its own PLL with
+VDD-GPU at 960 mV, and describe the GPU rail.
+
+drm/imagination sets no clock rate and uses no regulator, so the board
+has to pin both. Left alone, the GPU core clock comes out of reset on
+PLL_GPU0 at the PLL's reset rate (840 MHz), while DCDC4 stays where the
+boot chain left it (800 mV), which is below the vendor's voltage for that
+frequency.
+
+- Clock: PLL_GPU0 at 1008 MHz (N 84, P0 2, VCO 2016 MHz), the core clock
+  on it undivided. 1008 MHz is the top row of the vendor's GPU OPP table
+  and the only row this PLL reaches with its VCO in range.
+- Rail: DCDC4 is VDD-GPU and feeds nothing else (schematic; DCDC4 is not
+  paralleled with DCDC5 by the poly-phase bits). 960 mV is the highest
+  voltage the vendor table gives 1008 MHz across all speed bins, and the
+  top of the schematic's VDD-GPU range (0.8 V to 0.96 V). min == max,
+  since there is no OPP table and nothing may move the rail. The ramp
+  delay follows the AXP318W DCDC slew rate (7.8125 us per 10 mV step).
+
+Ordering: the regulator core sets DCDC4 when the PMIC probes; the clock
+rates are applied when the GPU driver probes. With DRM_POWERVR as a
+module (defconfig) that is after the PMIC. Nothing in the device tree
+enforces it for a built-in GPU driver, because the binding has no GPU
+supply.
+
+Tested on Radxa Cubie A7S: booted on two boards; the core clock runs
+from PLL_GPU0 at 1008 MHz (N 84, P0 2) undivided, vdd-gpu is enabled at
+960 mV (DCDC4 code 0x2e), and the firmware boots. The GPU stays active
+while idle with no client (open). No render job was submitted.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index fb15a32fa5f2..76793d350b30 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -122,6 +122,17 @@ ext_rgmii_phy: ethernet-phy@1 {
+ 	};
+ };
+ 
++&gpu {
++	/*
++	 * Fixed operating point: PLL_GPU0 at 1008 MHz (VCO 2016 MHz, P0 2)
++	 * with the core clock undivided, on VDD-GPU at 960 mV (DCDC4).
++	 */
++	assigned-clocks = <&ccu CLK_PLL_GPU0>, <&ccu CLK_GPU0>;
++	assigned-clock-parents = <0>, <&ccu CLK_PLL_GPU0>;
++	assigned-clock-rates = <1008000000>, <1008000000>;
++	status = "okay";
++};
++
+ &mmc0 {
+ 	pinctrl-names = "default", "sdmmc-3v3", "sdmmc-1v8";
+ 	pinctrl-1 = <&mmc0_3v3_pins>, <&mmc0_clk_pin>;
+@@ -216,6 +227,15 @@ reg_dcdc3: dcdc3 {
+ 				regulator-always-on;
+ 			};
+ 
++			/* GPU, fixed at the 1008 MHz operating point */
++			reg_dcdc4: dcdc4 {
++				regulator-name = "vdd-gpu";
++				regulator-min-microvolt = <960000>;
++				regulator-max-microvolt = <960000>;
++				regulator-ramp-delay = <1280>;
++				regulator-always-on;
++			};
++
+ 			reg_dcdc5: dcdc5 {
+ 				regulator-name = "vdd-cpul";
+ 				regulator-min-microvolt = <800000>;

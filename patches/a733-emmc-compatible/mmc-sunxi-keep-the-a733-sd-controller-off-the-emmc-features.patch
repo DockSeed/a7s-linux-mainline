@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 6 Oct 2026 16:22:32 +0200
+Subject: [PATCH] mmc: sunxi: Keep the A733 SD controller off the eMMC features
+
+The A733 SD controller (SMHC0) runs with the configuration that was
+written for the eMMC: the card threshold, the automatic CMD23, the
+HS400 timing and the data strobe delay. The user manual describes
+SMHC0 and SMHC1 as 4-bit SD/SDIO controllers and gives HS400 and the
+data strobe to the 8-bit eMMC controllers only, and the driver writes
+the HS400 registers of the SD controller at every clock change.
+
+Leave the SD and SDIO controllers on the features they have in common
+with the eMMC controller: FIFO thresholds, the auto-CMD12 argument, the
+busy wait in the host and the host software queue. The eMMC controller
+keeps its own configuration.
+
+Not covered: SMHC1 (SDIO) is not used on any board yet.
+
+Tested on Radxa Cubie A7S: the SD controller ran at SDR104 without
+CMD23, its card threshold stayed off after reads and it read the same
+data twice; the eMMC controller kept both features and HS400.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 017c85a87d64..3bf1a7e5e5d9 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -2061,6 +2061,7 @@ static const struct sunxi_mmc_cfg sun50i_a100_emmc_cfg = {
+ 	.needs_new_timings = true,
+ };
+ 
++/* SMHC0 and SMHC1: SD and SDIO, 4 bit, no HS400 */
+ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	.idma_des_size_bits = 13,
+ 	.idma_des_shift = 2,
+@@ -2070,15 +2071,12 @@ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	.no_ceata_funs = true,
+ 	/* burst 16, RX trigger level 15, TX trigger level 240 */
+ 	.fifoth = 0x300f00f0,
+-	.can_auto_cmd23 = true,
+-	.thld_fifo_bytes = 1024,
+-	.can_hs400 = true,
+-	.ds_dl = 20,
+ 	.needs_a12a_init = true,
+ 	.can_wait_busy = true,
+ 	.can_hsq = true,
+ };
+ 
++/* SMHC2 and SMHC3: eMMC, 8 bit, HS400 */
+ static const struct sunxi_mmc_cfg sun60i_a733_emmc_cfg = {
+ 	.idma_des_size_bits = 13,
+ 	.idma_des_shift = 2,

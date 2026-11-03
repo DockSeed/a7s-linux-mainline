@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:09:07 +0200
+Subject: [PATCH] mmc: sunxi: Add HS400 support for the A733
+
+The driver masks HS400 on every controller. The A733 SMHC has the data
+strobe input and the HS400 registers: SMHC_CSDC, SMHC_DS_DL and the
+HS400 bit in EMMC_DDR_SBIT_DET.
+
+Program them in the clock setup while the card clock is gated, and
+restore their reset values in the other modes. CCLK_DIV stays 0 in
+HS400, as the manual requires. The initial strobe delay is 20. HS400
+stays masked on other controllers, and enhanced strobe stays masked.
+
+Tested on Radxa Cubie A7S: booted on two boards; with enhanced strobe
+removed from the DT the eMMC runs at HS400, 200 MHz, 8 bit, and reads 1
+GiB with the same checksum as in enhanced strobe mode.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 68 +++++++++++++++++++++++++++++++-----
+ 1 file changed, 59 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 4da9a751c6f6..ee320d9d942e 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -68,6 +68,7 @@
+ #define SDXC_REG_CBDA	(0x94)
+ 
+ /* New registers introduced in A64 */
++#define SDXC_REG_CSDC		0x054 /* SMC CRC Status Detect Control */
+ #define SDXC_REG_A12A		0x058 /* SMC Auto Command 12 Register */
+ #define SDXC_REG_SD_NTSR	0x05C /* SMC New Timing Set Register */
+ #define SDXC_REG_DRV_DL		0x140 /* Drive Delay Control Register */
+@@ -75,6 +76,7 @@
+ #define SDXC_REG_DS_DL_REG	0x148 /* SMC data strobe delay control */
+ #define SDXC_REG_THLD		0x100 /* SMC Card Threshold Control */
+ #define SDXC_REG_A23A		0x108 /* SMC Auto Command 23 Argument */
++#define SDXC_REG_EMMC_DSBD	0x10C /* SMC eMMC DDR Start Bit Detection */
+ #define SDXC_REG_ECMD		0x138 /* SMC Extended Command */
+ #define SDXC_REG_ERESP		0x13C /* SMC Extended Response */
+ 
+@@ -245,6 +247,18 @@
+ #define SDXC_CAL_DL_SW_SHIFT	0
+ #define SDXC_CAL_DL_MASK	0x3f
+ 
++/* CRC status detect control */
++#define SDXC_CSDC_CRC_DET		GENMASK(3, 0)
++#define SDXC_CSDC_CRC_DET_HS400		0x6
++#define SDXC_CSDC_CRC_DET_OTHER		0x3
++
++/* new timing set register */
++#define SDXC_NTSR_DAT_SAM_PH		GENMASK(9, 8)
++#define SDXC_NTSR_HS400_NEW_SAM_EN	BIT(0)
++
++/* eMMC DDR start bit detection control */
++#define SDXC_HS400_MD_EN		BIT(31)
++
+ #define SDXC_CAL_TIMEOUT	3	/* in seconds, 3s is enough*/
+ 
+ struct sunxi_mmc_clk_delay {
+@@ -292,6 +306,10 @@ struct sunxi_mmc_cfg {
+ 
+ 	/* FIFO size in bytes, for the card threshold (SMHC_THLD) */
+ 	u32 thld_fifo_bytes;
++
++	/* controller has the HS400 data strobe path, and its initial delay */
++	bool can_hs400;
++	u32 ds_dl;
+ };
+ 
+ struct sunxi_mmc_host {
+@@ -329,6 +347,9 @@ struct sunxi_mmc_host {
+ 
+ 	/* timings */
+ 	bool		use_new_timings;
++
++	/* HS400 data strobe delay */
++	u32		ds_dl;
+ };
+ 
+ static int sunxi_mmc_reset_host(struct sunxi_mmc_host *host)
+@@ -805,6 +826,36 @@ static int sunxi_mmc_clk_set_phase(struct sunxi_mmc_host *host,
+ 	return 0;
+ }
+ 
++/*
++ * Program the HS400 timing with the card clock gated: CRC status detection
++ * for HS400, the default data sample phase, the data strobe delay and the
++ * HS400 mode bit, which has to be set before the first data command. Leaving
++ * HS400 restores the reset values, so that a later re-initialisation does not
++ * run with any of them still set.
++ */
++static void sunxi_mmc_set_hs400(struct sunxi_mmc_host *host,
++				struct mmc_ios *ios)
++{
++	bool hs400 = ios->timing == MMC_TIMING_MMC_HS400;
++	u32 rval;
++
++	rval = mmc_readl(host, REG_CSDC) & ~SDXC_CSDC_CRC_DET;
++	rval |= hs400 ? SDXC_CSDC_CRC_DET_HS400 : SDXC_CSDC_CRC_DET_OTHER;
++	mmc_writel(host, REG_CSDC, rval);
++
++	rval = mmc_readl(host, REG_SD_NTSR);
++	rval &= ~(SDXC_NTSR_DAT_SAM_PH | SDXC_NTSR_HS400_NEW_SAM_EN);
++	mmc_writel(host, REG_SD_NTSR, rval);
++
++	rval = mmc_readl(host, REG_DS_DL_REG);
++	rval &= ~(SDXC_CAL_DL_SW_EN | SDXC_CAL_DL_MASK);
++	if (hs400)
++		rval |= SDXC_CAL_DL_SW_EN | (host->ds_dl & SDXC_CAL_DL_MASK);
++	mmc_writel(host, REG_DS_DL_REG, rval);
++
++	mmc_writel(host, REG_EMMC_DSBD, hs400 ? SDXC_HS400_MD_EN : 0);
++}
++
+ static int sunxi_mmc_clk_set_rate(struct sunxi_mmc_host *host,
+ 				  struct mmc_ios *ios)
+ {
+@@ -896,13 +947,8 @@ static int sunxi_mmc_clk_set_rate(struct sunxi_mmc_host *host,
+ 	if (ret)
+ 		return ret;
+ 
+-	/*
+-	 * FIXME:
+-	 *
+-	 * In HS400 we'll also need to calibrate the data strobe
+-	 * signal. This should only happen on the MMC2 controller (at
+-	 * least on the A64).
+-	 */
++	if (host->cfg->can_hs400)
++		sunxi_mmc_set_hs400(host, ios);
+ 
+ 	ret = sunxi_mmc_oclk_onoff(host, 1);
+ 	if (ret)
+@@ -1303,6 +1349,8 @@ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	.fifoth = 0x300f00f0,
+ 	.can_auto_cmd23 = true,
+ 	.thld_fifo_bytes = 1024,
++	.can_hs400 = true,
++	.ds_dl = 20,
+ };
+ 
+ static const struct of_device_id sunxi_mmc_of_match[] = {
+@@ -1572,8 +1620,10 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 		mmc->caps2 &= ~MMC_CAP2_HS200;
+ 	}
+ 
+-	/* TODO: This driver doesn't support HS400 mode yet */
+-	mmc->caps2 &= ~MMC_CAP2_HS400;
++	if (!host->cfg->can_hs400)
++		mmc->caps2 &= ~MMC_CAP2_HS400;
++	mmc->caps2 &= ~MMC_CAP2_HS400_ES;
++	host->ds_dl = host->cfg->ds_dl;
+ 
+ 	ret = sunxi_mmc_init_host(host);
+ 	if (ret)

@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 10:30:00 +0200
+Subject: [PATCH] arm64: defconfig: Enable the Allwinner sun8i PWM driver
+
+The Allwinner A733 has PWM controllers that the pwm-sun8i driver
+handles. Without CONFIG_PWM_SUN8I the defconfig kernel builds no driver
+for them.
+
+Build the driver as a module. No device needs it to boot, and the
+controllers are disabled in the device tree until a board enables them.
+
+Tested on Radxa Cubie A7S: booted on one board; the module loads and
+binds to PWM1.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index b80682c6b027..749326646d99 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -1745,6 +1745,7 @@ CONFIG_PWM_SAMSUNG=y
+ CONFIG_PWM_SL28CPLD=m
+ CONFIG_PWM_STM32=m
+ CONFIG_PWM_SUN4I=m
++CONFIG_PWM_SUN8I=m
+ CONFIG_PWM_TEGRA=m
+ CONFIG_PWM_TIECAP=m
+ CONFIG_PWM_TIEHRPWM=m

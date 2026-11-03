@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:04:27 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the PCK-600 power controller
+
+The A733 switches the power of its video input, display, video codec,
+NPU, GPU, PCIe, USB2 and video output blocks through an Arm PCK-600
+power controller at 0x7060000. Without a node for it, no device can
+reference its power domain, and the driver has nothing to bind to.
+
+Add the node. The window is the 100 KiB the user manual's memory map
+gives the PPU block. Its bus clock is the S_PPU gate in the PRCM
+(S_PPU_BGR_REG bit 0), which has no reset bit, matching the A733
+variant of the binding.
+
+Once the controller has no consumers left to wait for, genpd powers
+off every domain without an active device. With this node alone that
+is all of them except GPU_CORE, which the driver registers as always on.
+
+Not covered: power-domains properties of the devices in these domains.
+
+Tested on Radxa Cubie A7S: booted on two boards; the controller probes,
+genpd powers off the ten domains without consumers and every PWSR reads
+0 (GPU_CORE included, which the boot chain leaves off), and the delay
+registers hold the driver's values.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index ddc1cee29e79..e54db89cfb32 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -4,6 +4,7 @@
+ #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
+ #include <dt-bindings/clock/sun6i-rtc.h>
++#include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
+ 
+@@ -576,6 +577,13 @@ r_i2c1_pl12_pins: r-i2c1-pl12-pins {
+ 			};
+ 		};
+ 
++		pck600: power-controller@7060000 {
++			compatible = "allwinner,sun60i-a733-pck-600";
++			reg = <0x07060000 0x19000>;
++			clocks = <&r_ccu CLK_BUS_R_PPU>;
++			#power-domain-cells = <1>;
++		};
++
+ 		r_i2c0: i2c@7083000 {
+ 			compatible = "allwinner,sun60i-a733-i2c",
+ 				     "allwinner,sun8i-v536-i2c",

@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 13:14:33 +0200
+Subject: [PATCH] arm64: defconfig: Enable the Allwinner hardware spinlock
+ driver
+
+The A733 device tree describes the hardware spinlock unit; without
+CONFIG_HWSPINLOCK_SUN6I it has no driver. Build it as a module, nothing
+needs it to boot.
+
+Tested on Radxa Cubie A7S: the module loads and binds to the spinlock
+unit.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 749326646d99..9ae084ec02d8 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -1605,6 +1605,7 @@ CONFIG_COMMON_CLK_XLNX_CLKWZRD=m
+ CONFIG_HWSPINLOCK=y
+ CONFIG_HWSPINLOCK_OMAP=m
+ CONFIG_HWSPINLOCK_QCOM=y
++CONFIG_HWSPINLOCK_SUN6I=m
+ CONFIG_TEGRA186_TIMER=y
+ CONFIG_CLKSRC_STM32_LP=y
+ CONFIG_RENESAS_OSTM=y

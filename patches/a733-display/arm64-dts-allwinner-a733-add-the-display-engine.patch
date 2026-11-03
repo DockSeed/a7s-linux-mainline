@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:21 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the display engine
+
+Add the display engine top block, mixer 0, TCON TV1 and the display
+engine node, connected as mixer 0 -> DE top -> TCON TV1. All are
+disabled: no output is connected yet.
+
+The DE top block and the mixer sit in the DE_SYS power domain and TCON
+TV1 in VO1; without its domain a block reads as zero. The mixer takes
+the display 0 clock and reset of the DE top block, which also claims
+the DE bus matrix and MBUS gates. DE0 is clocked from PLL_DE 3x, the
+source the user manual names for it. TCON TV1 is number 5 in the
+DE-to-TCON mux, as in the vendor device tree; of the vendor's numbers
+only 5 has been read back on silicon.
+
+Not covered: the VIDEO_OUT1 clock source and gate block and any output
+of TCON TV1.
+
+Tested on Radxa Cubie A7S: booted on one board; the display engine, its
+top block, the mixer and TCON TV1 probe, and with the DisplayPort nodes
+of this series a monitor showed the console.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 109 ++++++++++++++++++
+ 1 file changed, 109 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index d95ccb60ee36..0aebbed28164 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -3,11 +3,13 @@
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h>
++#include <dt-bindings/clock/allwinner,sun60i-a733-de-top.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h>
+ #include <dt-bindings/clock/sun6i-rtc.h>
+ #include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
++#include <dt-bindings/reset/allwinner,sun60i-a733-de-top.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h>
+ #include <dt-bindings/thermal/thermal.h>
+@@ -351,6 +353,12 @@ l3_cache: l3-cache {
+ 		};
+ 	};
+ 
++	de: display-engine {
++		compatible = "allwinner,sun60i-a733-display-engine";
++		allwinner,pipelines = <&mixer0>;
++		status = "disabled";
++	};
++
+ 	/* needs ACTLR_EL3 bit 12 from the boot firmware */
+ 	dsu_pmu: dsu-pmu {
+ 		compatible = "arm,dsu-pmu";
+@@ -963,6 +971,107 @@ dma: dma-controller@4601000 {
+ 			#dma-cells = <1>;
+ 		};
+ 
++		de_top: clock-controller@5008000 {
++			compatible = "allwinner,sun60i-a733-de-top";
++			reg = <0x05008000 0x100>;
++			clocks = <&ccu CLK_AHB_DE>, <&ccu CLK_BUS_DE0>,
++				 <&ccu CLK_DE0>, <&ccu CLK_MBUS_DESYS>;
++			clock-names = "ahb", "bus", "mod", "mbus";
++			resets = <&ccu RST_BUS_DE0>;
++			/* the user manual's source for DE0, section 4.1.4.3 */
++			assigned-clocks = <&ccu CLK_DE0>;
++			assigned-clock-parents = <&ccu CLK_PLL_DE_3X>;
++			power-domains = <&pck600 PD_DE_SYS>;
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++			status = "disabled";
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				de_top_in: port@0 {
++					reg = <0>;
++
++					de_top_in_mixer0: endpoint {
++						remote-endpoint = <&mixer0_out_de_top>;
++					};
++				};
++
++				de_top_disp0_out: port@1 {
++					#address-cells = <1>;
++					#size-cells = <0>;
++					reg = <1>;
++
++					/*
++					 * TCON_TV1 is number 5 in the DE-to-TCON
++					 * mux, as in the vendor device tree; read
++					 * back from a running vendor system, not
++					 * measured with this kernel.
++					 */
++					de_top_disp0_out_tcon_tv1: endpoint@5 {
++						reg = <5>;
++						remote-endpoint = <&tcon_tv1_in_de_top>;
++					};
++				};
++			};
++		};
++
++		mixer0: mixer@5100000 {
++			compatible = "allwinner,sun60i-a733-de-mixer-0";
++			reg = <0x05100000 0x180000>,
++			      <0x05008100 0x40>,
++			      <0x05280000 0x20000>;
++			reg-names = "layers", "top", "display";
++			clocks = <&ccu CLK_BUS_DE0>, <&de_top CLK_DE_TOP_DISP0>;
++			clock-names = "bus", "mod";
++			resets = <&de_top RST_DE_TOP_DISP0>;
++			power-domains = <&pck600 PD_DE_SYS>;
++			status = "disabled";
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				mixer0_out: port@1 {
++					reg = <1>;
++
++					mixer0_out_de_top: endpoint {
++						remote-endpoint = <&de_top_in_mixer0>;
++					};
++				};
++			};
++		};
++
++		tcon_tv1: lcd-controller@5731000 {
++			compatible = "allwinner,sun60i-a733-tcon-tv";
++			reg = <0x05731000 0x1000>;
++			interrupts = <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_TCON_TV1>, <&ccu CLK_EDP_TV>;
++			clock-names = "ahb", "tcon-ch1";
++			resets = <&ccu RST_BUS_TCON_TV1>;
++			reset-names = "lcd";
++			power-domains = <&pck600 PD_VO1>;
++			status = "disabled";
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				tcon_tv1_in: port@0 {
++					reg = <0>;
++
++					tcon_tv1_in_de_top: endpoint {
++						remote-endpoint = <&de_top_disp0_out_tcon_tv1>;
++					};
++				};
++
++				tcon_tv1_out: port@1 {
++					reg = <1>;
++				};
++			};
++		};
++
+ 		pcie: pcie@6000000 {
+ 			compatible = "allwinner,sun60i-a733-pcie";
+ 			reg = <0x06000000 0x400000>,

@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:21 +0200
+Subject: [PATCH] drm/sun4i: Add the A733 display engine
+
+Add the A733 display engine compatible and walk the second display
+output of the A733 DE top block when adding components, as for the
+TCON TOP.
+
+Tested on Radxa Cubie A7S: booted on one board; the display engine bound
+with its mixer and TCON TV1, created the framebuffer at the mode of the
+monitor, and the monitor showed the console.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_drv.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_drv.c b/drivers/gpu/drm/sun4i/sun4i_drv.c
+index e9baca360160..5e80d48aad75 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_drv.c
++++ b/drivers/gpu/drm/sun4i/sun4i_drv.c
+@@ -30,6 +30,7 @@
+ #include "sun4i_frontend.h"
+ #include "sun4i_framebuffer.h"
+ #include "sun4i_tcon.h"
++#include "sun60i_de_top.h"
+ #include "sun8i_tcon_top.h"
+ 
+ static int drm_sun4i_gem_dumb_create(struct drm_file *file_priv,
+@@ -208,6 +209,12 @@ static bool sun4i_drv_node_is_tcon_top(struct device_node *node)
+ 		!!of_match_node(sun8i_tcon_top_of_table, node);
+ }
+ 
++static bool sun4i_drv_node_is_de_top(struct device_node *node)
++{
++	return IS_ENABLED(CONFIG_DRM_SUN60I_DE_TOP) &&
++		!!of_match_node(sun60i_de_top_of_table, node);
++}
++
+ /*
+  * The encoder drivers use drm_of_find_possible_crtcs to get upstream
+  * crtcs from the device tree using of_graph. For the results to be
+@@ -342,6 +349,10 @@ static int sun4i_drv_add_endpoints(struct device *dev,
+ 		sun4i_drv_traverse_endpoints(list, node, 5);
+ 	}
+ 
++	/* The A733 DE top has a second display output */
++	if (sun4i_drv_node_is_de_top(node))
++		sun4i_drv_traverse_endpoints(list, node, 3);
++
+ 	return count;
+ }
+ 
+@@ -440,6 +451,7 @@ static const struct of_device_id sun4i_drv_of_table[] = {
+ 	{ .compatible = "allwinner,sun20i-d1-display-engine" },
+ 	{ .compatible = "allwinner,sun50i-a64-display-engine" },
+ 	{ .compatible = "allwinner,sun50i-h6-display-engine" },
++	{ .compatible = "allwinner,sun60i-a733-display-engine" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun4i_drv_of_table);

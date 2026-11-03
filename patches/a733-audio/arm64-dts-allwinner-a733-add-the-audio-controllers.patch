@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 21:13:47 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the audio controllers
+
+The A733 has five I2S/PCM controllers, an S/PDIF (OWA) transmitter and
+receiver and a DMIC controller. Describe them, disabled, with their DMA
+request lines, and add the pin groups for I2S0 and the S/PDIF output
+on port B.
+
+Tested on Radxa Cubie A7S: booted on two boards with the audio nodes
+enabled in a copy of the DTB; OWA and DMIC probe and register a card,
+and each of the five I2S controllers loops 48 kHz and 44.1 kHz data back
+through its internal loop.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 113 ++++++++++++++++++
+ 1 file changed, 113 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index a0c8fe89ff6a..4af6f208043e 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -363,6 +363,13 @@ pio: pinctrl@2000000 {
+ 			interrupt-controller;
+ 			#interrupt-cells = <3>;
+ 
++			/omit-if-no-ref/
++			i2s0_pb_pins: i2s0-pb-pins {
++				pins = "PB4", "PB5", "PB6", "PB7", "PB8";
++				allwinner,pinmux = <3>;
++				function = "i2s0";
++			};
++
+ 			mmc0_clk_pin: mmc0-clk-pins {
+ 				pins = "PF2";
+ 				allwinner,pinmux = <2>;
+@@ -436,6 +443,13 @@ rgmii0_ph_pins: rgmii0-ph-pins {
+ 				function = "gmac0";
+ 			};
+ 
++			/omit-if-no-ref/
++			spdif_out_pb_pin: spdif-pb-pin {
++				pins = "PB8";
++				allwinner,pinmux = <6>;
++				function = "spdif";
++			};
++
+ 			uart0_pb_pins: uart0-pb-pins {
+ 				pins = "PB9", "PB10";
+ 				allwinner,pinmux = <2>;
+@@ -548,6 +562,105 @@ syscon: syscon@3000000 {
+ 			ranges;
+ 		};
+ 
++		dmic: dmic@2531000 {
++			compatible = "allwinner,sun60i-a733-dmic",
++				     "allwinner,sun50i-h6-dmic";
++			reg = <0x02531000 0x400>;
++			interrupts = <GIC_SPI 47 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_DMIC>, <&ccu CLK_DMIC>;
++			clock-names = "bus", "mod";
++			resets = <&ccu RST_BUS_DMIC>;
++			dmas = <&dma 9>;
++			dma-names = "rx";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
++		i2s0: i2s@2532000 {
++			compatible = "allwinner,sun60i-a733-i2s",
++				     "allwinner,sun50i-r329-i2s";
++			reg = <0x02532000 0x1000>;
++			interrupts = <GIC_SPI 42 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_I2SPCM0>, <&ccu CLK_I2SPCM0>;
++			clock-names = "apb", "mod";
++			resets = <&ccu RST_BUS_I2SPCM0>;
++			dmas = <&dma 3>, <&dma 3>;
++			dma-names = "rx", "tx";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
++		i2s1: i2s@2533000 {
++			compatible = "allwinner,sun60i-a733-i2s",
++				     "allwinner,sun50i-r329-i2s";
++			reg = <0x02533000 0x1000>;
++			interrupts = <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_I2SPCM1>, <&ccu CLK_I2SPCM1>;
++			clock-names = "apb", "mod";
++			resets = <&ccu RST_BUS_I2SPCM1>;
++			dmas = <&dma 4>, <&dma 4>;
++			dma-names = "rx", "tx";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
++		i2s2: i2s@2534000 {
++			compatible = "allwinner,sun60i-a733-i2s",
++				     "allwinner,sun50i-r329-i2s";
++			reg = <0x02534000 0x1000>;
++			interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_I2SPCM2>, <&ccu CLK_I2SPCM2>;
++			clock-names = "apb", "mod";
++			resets = <&ccu RST_BUS_I2SPCM2>;
++			dmas = <&dma 5>, <&dma 5>;
++			dma-names = "rx", "tx";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
++		i2s3: i2s@2535000 {
++			compatible = "allwinner,sun60i-a733-i2s",
++				     "allwinner,sun50i-r329-i2s";
++			reg = <0x02535000 0x1000>;
++			interrupts = <GIC_SPI 45 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_I2SPCM3>, <&ccu CLK_I2SPCM3>;
++			clock-names = "apb", "mod";
++			resets = <&ccu RST_BUS_I2SPCM3>;
++			dmas = <&dma 6>, <&dma 6>;
++			dma-names = "rx", "tx";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
++		i2s4: i2s@2536000 {
++			compatible = "allwinner,sun60i-a733-i2s",
++				     "allwinner,sun50i-r329-i2s";
++			reg = <0x02536000 0x1000>;
++			interrupts = <GIC_SPI 29 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_I2SPCM4>, <&ccu CLK_I2SPCM4>;
++			clock-names = "apb", "mod";
++			resets = <&ccu RST_BUS_I2SPCM4>;
++			dmas = <&dma 7>, <&dma 7>;
++			dma-names = "rx", "tx";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
++		spdif: spdif@2537000 {
++			compatible = "allwinner,sun60i-a733-spdif",
++				     "allwinner,sun55i-a523-spdif";
++			reg = <0x02537000 0x400>;
++			interrupts = <GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_SPDIF>, <&ccu CLK_SPDIF_TX>,
++				 <&ccu CLK_SPDIF_RX>;
++			clock-names = "apb", "tx", "rx";
++			resets = <&ccu RST_BUS_SPDIF>;
++			dmas = <&dma 2>, <&dma 2>;
++			dma-names = "rx", "tx";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
+ 		sid: efuse@3006000 {
+ 			compatible = "allwinner,sun60i-a733-sid",
+ 				     "allwinner,sun50i-a64-sid";

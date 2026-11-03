@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 17:08:57 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Wire up the PMIC
+ interrupt
+
+The IRQ pin of the AXP318W is the net PMU-IRQ. It has a pull-up and
+goes to the NMI pad of the SoC as AP-NMI, so it is active low.
+
+Describe it, so that the PMIC events reach Linux.
+
+Tested on Radxa Cubie A7S: booted on two boards, both quiet at rest; on
+one of them a short of the power key test pads raised the PMIC
+interrupt once per edge.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index c420665654c5..6acd4c657b37 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -316,6 +316,7 @@ &r_i2c0 {
+ 	axp318: pmic@36 {
+ 		compatible = "x-powers,axp318w";
+ 		reg = <0x36>;
++		interrupts-extended = <&nmi_intc 0 IRQ_TYPE_LEVEL_LOW>;
+ 		interrupt-controller;
+ 		#interrupt-cells = <1>;
+ 

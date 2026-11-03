@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 13:11:30 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Describe the PMIC
+ input supplies
+
+The board is powered through the USB-C port J16. Its VBUS (VCC5V0)
+passes the over-voltage switch U12 (SGM40666AS), which has no enable
+from the SoC, and becomes VCC5V0_SYS. That rail feeds the VBUS switches
+of the USB-C port J4 (U2) and of the USB-A port J8 (U10), both
+SGM2576, and the DCIN pins of the AXP318W.
+
+Inside the PMIC, PS is DCIN. PS feeds the inputs of all buck
+converters (VIN19, VIN23, VIN45, VIN678), AIN156 and DLDOIN, and the
+buck UP11 (ETA3521). UP11 makes LDO2V5-INPUT, the input of the BLDO and
+CLDO groups. Its feedback divider, 30 kOhm over 10 kOhm on the 0.6 V
+reference, sets 2.4 V.
+
+Add VCC5V0_SYS and LDO2V5-INPUT as always-on fixed regulators. Make
+VCC5V0_SYS the input of both VBUS switches and of the PMIC inputs that
+PS feeds, and LDO2V5-INPUT the input of BLDOIN and CLDOIN. AIN234 comes
+from ALDO1 and ELDOIN from DCDC9; neither is described here, so both
+inputs stay out.
+
+Tested on Radxa Cubie A7S: booted; the regulator tree shows the PMIC
+regulators under vcc5v0-sys and vcc-pc under ldo2v5-input, with no new
+deferred probe.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 42 +++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 6acd4c657b37..761ca15eab41 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -84,6 +84,7 @@ reg_usb1_vbus: regulator-usb1-vbus {
+ 		regulator-max-microvolt = <5000000>;
+ 		gpio = <&r_pio 1 5 GPIO_ACTIVE_HIGH>; /* PM5 */
+ 		enable-active-high;
++		vin-supply = <&reg_vcc5v0_sys>;
+ 	};
+ 
+ 	/* WIFI_3V3 of the WiFi/BT module, load switch Q8 enabled by USB_WIFI_PWR (PM0) */
+@@ -104,6 +105,34 @@ reg_usbc_vbus: regulator-usbc-vbus {
+ 		regulator-max-microvolt = <5000000>;
+ 		gpio = <&r_pio 0 2 GPIO_ACTIVE_HIGH>; /* PL2 */
+ 		enable-active-high;
++		vin-supply = <&reg_vcc5v0_sys>;
++	};
++
++	/*
++	 * VCC5V0_SYS: VBUS of the USB-C power input J16 (VCC5V0) behind the
++	 * over-voltage switch U12 (SGM40666AS), enabled by hardware alone.
++	 */
++	reg_vcc5v0_sys: regulator-vcc5v0-sys {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc5v0-sys";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		regulator-always-on;
++	};
++
++	/*
++	 * LDO2V5-INPUT, the input of the PMIC's BLDO and CLDO groups: buck UP11
++	 * (ETA3521) from PS, enabled by its input. The feedback divider
++	 * (30 kOhm over 10 kOhm on its 0.6 V reference) sets 2.4 V, not the
++	 * 2.5 V of the net name.
++	 */
++	reg_ldo2v5_input: regulator-ldo2v5-input {
++		compatible = "regulator-fixed";
++		regulator-name = "ldo2v5-input";
++		regulator-min-microvolt = <2400000>;
++		regulator-max-microvolt = <2400000>;
++		regulator-always-on;
++		vin-supply = <&reg_vcc5v0_sys>;
+ 	};
+ };
+ 
+@@ -319,6 +348,19 @@ axp318: pmic@36 {
+ 		interrupts-extended = <&nmi_intc 0 IRQ_TYPE_LEVEL_LOW>;
+ 		interrupt-controller;
+ 		#interrupt-cells = <1>;
++		/*
++		 * DCIN is VCC5V0_SYS. PS is DCIN inside the PMIC, and it feeds
++		 * the buck inputs, AIN156 and DLDOIN. AIN234 (from ALDO1) and
++		 * ELDOIN (from DCDC9) are left out: neither source is described.
++		 */
++		vin19-supply = <&reg_vcc5v0_sys>;
++		vin23-supply = <&reg_vcc5v0_sys>;
++		vin45-supply = <&reg_vcc5v0_sys>;
++		vin678-supply = <&reg_vcc5v0_sys>;
++		aldo156in-supply = <&reg_vcc5v0_sys>;
++		bldoin-supply = <&reg_ldo2v5_input>;
++		cldoin-supply = <&reg_ldo2v5_input>;
++		dldoin-supply = <&reg_vcc5v0_sys>;
+ 
+ 		regulators {
+ 			reg_dcdc1: dcdc1 {

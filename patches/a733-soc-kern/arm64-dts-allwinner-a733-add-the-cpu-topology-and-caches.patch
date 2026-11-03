@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:56:32 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the CPU topology and caches
+
+Without cache nodes the kernel assumes that every cache above L1 is shared
+by all CPUs, but each A733 core has its own L2.
+
+Describe the six Cortex-A55 and two Cortex-A76 cores as one DynamIQ cluster
+with a shared 1 MiB L3, with the cache geometry the cores report in
+CCSIDR_EL1. One cluster, not one per core type: all eight cores report the
+same cluster affinity in MPIDR_EL1 and share the DSU and its L3, and no
+cache below the L3 is shared by a subset of them. The two core types
+differ in capacity and clock, not in topology.
+
+Tested on Radxa Cubie A7S: booted on two boards; cacheinfo reports 32 KiB
+L1 and 128 KiB L2 per A55, 64 KiB L1 and 256 KiB L2 per A76, each L2
+private, and a 1 MiB L3 shared by all eight CPUs.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 181 ++++++++++++++++++
+ 1 file changed, 181 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 908219081e5d..7d6fd3962e8e 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -16,12 +16,55 @@ cpus {
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+ 
++		cpu-map {
++			cluster0 {
++				core0 {
++					cpu = <&cpu0>;
++				};
++
++				core1 {
++					cpu = <&cpu1>;
++				};
++
++				core2 {
++					cpu = <&cpu2>;
++				};
++
++				core3 {
++					cpu = <&cpu3>;
++				};
++
++				core4 {
++					cpu = <&cpu4>;
++				};
++
++				core5 {
++					cpu = <&cpu5>;
++				};
++
++				core6 {
++					cpu = <&cpu6>;
++				};
++
++				core7 {
++					cpu = <&cpu7>;
++				};
++			};
++		};
++
+ 		cpu0: cpu@0 {
+ 			compatible = "arm,cortex-a55";
+ 			device_type = "cpu";
+ 			reg = <0x000>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <530>;
++			i-cache-size = <32768>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <128>;
++			next-level-cache = <&l2_cache0>;
+ 		};
+ 
+ 		cpu1: cpu@100 {
+@@ -30,6 +73,13 @@ cpu1: cpu@100 {
+ 			reg = <0x100>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <530>;
++			i-cache-size = <32768>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <128>;
++			next-level-cache = <&l2_cache1>;
+ 		};
+ 
+ 		cpu2: cpu@200 {
+@@ -38,6 +88,13 @@ cpu2: cpu@200 {
+ 			reg = <0x200>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <530>;
++			i-cache-size = <32768>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <128>;
++			next-level-cache = <&l2_cache2>;
+ 		};
+ 
+ 		cpu3: cpu@300 {
+@@ -46,6 +103,13 @@ cpu3: cpu@300 {
+ 			reg = <0x300>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <530>;
++			i-cache-size = <32768>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <128>;
++			next-level-cache = <&l2_cache3>;
+ 		};
+ 
+ 		cpu4: cpu@400 {
+@@ -54,6 +118,13 @@ cpu4: cpu@400 {
+ 			reg = <0x400>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <530>;
++			i-cache-size = <32768>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <128>;
++			next-level-cache = <&l2_cache4>;
+ 		};
+ 
+ 		cpu5: cpu@500 {
+@@ -62,6 +133,13 @@ cpu5: cpu@500 {
+ 			reg = <0x500>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <530>;
++			i-cache-size = <32768>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <128>;
++			next-level-cache = <&l2_cache5>;
+ 		};
+ 
+ 		cpu6: cpu@600 {
+@@ -70,6 +148,13 @@ cpu6: cpu@600 {
+ 			reg = <0x600>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			i-cache-size = <65536>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <256>;
++			d-cache-size = <65536>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <256>;
++			next-level-cache = <&l2_cache6>;
+ 		};
+ 
+ 		cpu7: cpu@700 {
+@@ -78,6 +163,102 @@ cpu7: cpu@700 {
+ 			reg = <0x700>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			i-cache-size = <65536>;
++			i-cache-line-size = <64>;
++			i-cache-sets = <256>;
++			d-cache-size = <65536>;
++			d-cache-line-size = <64>;
++			d-cache-sets = <256>;
++			next-level-cache = <&l2_cache7>;
++		};
++
++		l2_cache0: l2-cache-0 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <131072>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l2_cache1: l2-cache-1 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <131072>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l2_cache2: l2-cache-2 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <131072>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l2_cache3: l2-cache-3 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <131072>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l2_cache4: l2-cache-4 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <131072>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l2_cache5: l2-cache-5 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <131072>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l2_cache6: l2-cache-6 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <262144>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l2_cache7: l2-cache-7 {
++			compatible = "cache";
++			cache-level = <2>;
++			cache-unified;
++			cache-size = <262144>;
++			cache-line-size = <64>;
++			cache-sets = <512>;
++			next-level-cache = <&l3_cache>;
++		};
++
++		l3_cache: l3-cache {
++			compatible = "cache";
++			cache-level = <3>;
++			cache-unified;
++			cache-size = <1048576>;
++			cache-line-size = <64>;
++			cache-sets = <1024>;
+ 		};
+ 	};
+ 

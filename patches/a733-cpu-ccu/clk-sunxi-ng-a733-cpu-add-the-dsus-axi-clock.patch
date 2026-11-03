@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 17:05:27 +0200
+Subject: [PATCH] clk: sunxi-ng: a733-cpu: Add the DSU's AXI clock
+
+The DSU's AXI clock, its clock towards the rest of the SoC, is the DSU
+clock divided by M from bits 1:0 of the DSU clock register. Without a
+clock no driver can change it.
+
+Add it as a divider of the DSU mux with the factors the register field
+takes, 1, 2 and 4 (5.1.10.37); the overview in 5.1.4.1 names the ratios
+1:1 and 2:1. The one field value the manual does not support has no
+entry in the table, and the clock framework warns if it finds it. The
+divider switches glitch-free and shares its register with the mux and
+EXT_DIVP, which are written under the same lock.
+
+Not covered: the GIC and APB dividers in the same register, which only
+divide by 2 or 4 and stay as the boot loader set them.
+
+Tested on Radxa Cubie A7S: booted on one board; the AXI divider read as
+the boot loader set it and probe accepted it.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+index 1cbf2e08ebde..bac6525193c2 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+@@ -46,6 +46,7 @@
+ #include <dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h>
+ 
+ #include "ccu_common.h"
++#include "ccu_div.h"
+ #include "ccu_gate.h"
+ #include "ccu_mux.h"
+ 
+@@ -510,6 +511,22 @@ SUN60I_A733_CPU_MUX(cpu_b_clk, "cpu-b", cpu_b_parents,
+ SUN60I_A733_CPU_MUX(cpu_dsu_clk, "cpu-dsu", cpu_dsu_parents,
+ 		    SUN60I_A733_CPU_DSU_CLK_REG);
+ 
++/*
++ * The DSU's AXI clock: DSU / M, with the factors the register field
++ * takes, 1, 2 and 4 (5.1.10.37). It switches glitch-free.
++ */
++static struct clk_div_table cpu_dsu_axi_div_table[] = {
++	{ .val = 0, .div = 1 },
++	{ .val = 1, .div = 2 },
++	{ .val = 3, .div = 4 },
++	{ /* sentinel */ }
++};
++
++static SUNXI_CCU_DIV_TABLE_HW(cpu_dsu_axi_clk, "cpu-dsu-axi",
++			      &cpu_dsu_clk.common.hw,
++			      SUN60I_A733_CPU_DSU_CLK_REG, 0, 2,
++			      cpu_dsu_axi_div_table, 0);
++
+ static struct ccu_common *sun60i_a733_cpu_ccu_clks[] = {
+ 	&pll_cpu_back_clk,
+ 	&pll_cpu_l_clk.common,
+@@ -519,6 +536,7 @@ static struct ccu_common *sun60i_a733_cpu_ccu_clks[] = {
+ 	&cpu_l_clk.common,
+ 	&cpu_b_clk.common,
+ 	&cpu_dsu_clk.common,
++	&cpu_dsu_axi_clk.common,
+ };
+ 
+ static struct clk_hw_onecell_data sun60i_a733_cpu_hw_clks = {
+@@ -526,6 +544,7 @@ static struct clk_hw_onecell_data sun60i_a733_cpu_hw_clks = {
+ 		[CLK_CPU_L]		= &cpu_l_clk.common.hw,
+ 		[CLK_CPU_B]		= &cpu_b_clk.common.hw,
+ 		[CLK_CPU_DSU]		= &cpu_dsu_clk.common.hw,
++		[CLK_CPU_DSU_AXI]	= &cpu_dsu_axi_clk.common.hw,
+ 		[CLK_PLL_CPU_BACK]	= &pll_cpu_back_clk.hw,
+ 		[CLK_PLL_CPU_L]		= &pll_cpu_l_clk.common.hw,
+ 		[CLK_PLL_CPU_B]		= &pll_cpu_b_clk.common.hw,

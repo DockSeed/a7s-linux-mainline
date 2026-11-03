@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 15:25:12 +0200
+Subject: [PATCH] drm/sun4i: sun6i_mipi_dsi: Clean up the encoder and connector
+ on unbind
+
+sun4i_drv no longer calls drm_mode_config_cleanup() itself (drm/sun4i:
+drv: Do not call drm_mode_config_cleanup()). The managed release of
+drm_mode_config_init() destroys the mode objects at the last
+drm_dev_put() instead, after component_unbind_all(), and, while
+userspace still holds the device open, after the display engine device
+has released its devres.
+
+The DSI encoder and connector are embedded in struct sun6i_dsi, which is
+allocated at probe and freed when the device is removed, and they are
+destroyed through their .destroy hooks, so they are cleaned up on freed
+memory if userspace holds the device open while the DSI device is
+removed.
+
+Clean them up in the unbind callback of the component, as sun4i_tv does,
+while the memory is certainly alive. The bind error path already does
+the same for the encoder. This has to come after the removal of the
+explicit call in sun4i_drv, which would have cleaned them up a second
+time.
+
+Not covered: the tear down of the DSI host, which stays in remove.
+
+Tested on Radxa Cubie A7S: not tested; the board has no controller of
+this kind, the code is compiled only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
+index d504ae583294..a213ccee2e52 100644
+--- a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
++++ b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
+@@ -1100,6 +1100,8 @@ static void sun6i_dsi_unbind(struct device *dev, struct device *master,
+ 	struct sun6i_dsi *dsi = dev_get_drvdata(dev);
+ 
+ 	dsi->drm = NULL;
++	drm_connector_cleanup(&dsi->connector);
++	drm_encoder_cleanup(&dsi->encoder);
+ }
+ 
+ static const struct component_ops sun6i_dsi_ops = {

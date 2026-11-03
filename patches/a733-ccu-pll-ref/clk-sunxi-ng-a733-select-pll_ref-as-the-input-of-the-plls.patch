@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 20:48:05 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Select PLL_REF as the input of the PLLs
+
+All PLLs of the A733 CCU but PLL_REF have pll-ref, the 24 MHz output of
+PLL_REF, as their parent, which is the reference clock the manual gives
+for them (section 4.1.3.2, Table 4-2). Bit 24 of their control
+registers selects that input. With the bit cleared the PLL runs from the
+26 MHz DCXO, and every rate below it is 8.3 % higher than the clock
+tree says. The manual lists the bit as reserved, and the reset values
+it gives have it cleared (section 4.1.6). The hardware reads it set
+before Linux starts; the driver relies on the boot firmware for that.
+
+Seen on the Radxa Cubie A7S: with bit 24 of PLL_VIDEO2 cleared, a
+clock-bound G2D copy from VIDEO2PLL4X took 24/26 of the time it took
+with the bit set. Only with the bit set did the time match the rate
+computed from 24 MHz.
+
+Set the bit in probe, next to the enable bits, on PLL_PERI0/1, PLL_GPU0,
+PLL_VIDEO0/1/2, PLL_VE0/1, PLL_AUDIO0/1, PLL_NPU and PLL_DE, the 24 MHz
+column of the table without PLL_DDR. Where the bit is already set, the
+write changes nothing.
+
+This corrects "clk: sunxi-ng: a733: Add PLL clocks support" of the A733
+CCU series v6.
+
+Not covered: PLL_REF and the CPU PLLs (26 MHz in the table, bit 24
+reads 0) are left alone. PLL_DDR belongs to the DRAM init and runs the
+memory at probe time; switching its input would make the DRAM clock
+jump, so it is left as found. Any other PLL that the boot firmware left
+running from the DCXO changes its rate at this write.
+
+Tested on Radxa Cubie A7S: with bit 24 of PLL_VIDEO1 and PLL_VIDEO2
+cleared before the kernel started, probe set it again on every listed
+PLL; without this patch it stayed cleared.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 16527f7747d7..ef14e4336af5 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -2414,6 +2414,15 @@ static struct ccu_pll_nb sun60i_a733_pll_gpu0_nb = {
+ 	.delay_us	= 20,
+ };
+ 
++/*
++ * Bit 24 of the PLL control registers selects the input of the PLL:
++ * 1 is the 24MHz output of PLL_REF, 0 the DCXO. The manual lists the bit
++ * as reserved. The PLLs below PLL_REF are modelled with pll-ref as their
++ * parent, so they need it set. PLL_DDR is left as the DRAM init set it:
++ * switching its input would make the clock of the running DRAM jump.
++ */
++#define SUN60I_A733_PLL_INPUT_PLL_REF	BIT(24)
++
+ static const u32 pll_regs[] = {
+ 	SUN60I_A733_PLL_REF_REG,
+ 	SUN60I_A733_PLL_DDR_REG,
+@@ -2449,6 +2458,9 @@ static int sun60i_a733_ccu_probe(struct platform_device *pdev)
+ 	for (i = 0; i < ARRAY_SIZE(pll_regs); i++) {
+ 		val = readl(reg + pll_regs[i]);
+ 		val |= BIT(31) | BIT(30) | BIT(29);
++		if (pll_regs[i] != SUN60I_A733_PLL_REF_REG &&
++		    pll_regs[i] != SUN60I_A733_PLL_DDR_REG)
++			val |= SUN60I_A733_PLL_INPUT_PLL_REF;
+ 		writel(val, reg + pll_regs[i]);
+ 	}
+ 

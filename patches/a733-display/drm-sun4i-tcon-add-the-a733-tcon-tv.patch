@@ -1,0 +1,344 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:20 +0200
+Subject: [PATCH] drm/sun4i: tcon: Add the A733 TCON TV
+
+The A733 TCON TV is a channel 1 TCON with a different register layout
+(user manual section 15.2.10): BASIC0 does not exist, BASIC1 holds the
+vertical total in half lines, the sync polarity sits at 0x88 as on the
+R40, GCTL bit 0 selects the unstrict timing mode instead of an IO map,
+bits 28:25 of GINT0 enable line interrupts, 0xf4 is undocumented, and
+TV_PIXELDEPTH_MODE resets to 6 bits per component. Its timing fields are
+wider than those of the other channel 1 TCONs (sections 15.2.10.8 to
+15.2.10.11, PDF pages 747 and 748): width, height and both back porches
+have 15 bits instead of 12, the horizontal total 16 instead of 13, and
+the sync widths 12 instead of 10.
+
+Add a has_tv_layout quirk for these differences and an A733 entry that
+routes its display through the DE top block, with the TCON's number
+in the DE-to-TCON mux taken from the graph. The timings are written with
+the field widths of the A733 TCON TV, so that a mode wider than the
+fields of the other TCONs is not cut off. The pixel clock polarity
+bit is always set, as the vendor driver does; this is a vendor value,
+not measured on our boards.
+
+Not covered: the VIDEO_OUT1 clock source and gate block, interlaced
+modes, pixel depths other than 8 bits, and the refusal of modes beyond
+the fields.
+
+Tested on Radxa Cubie A7S: booted on one board with a DisplayPort
+monitor, in two modes; the timing registers TV_BASIC1 to TV_BASIC5 held
+the timings of the mode, as before the field widths were widened, and
+the CRC that the sink computes for a white picture did not change.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_tcon.c | 143 ++++++++++++++++++++++++-----
+ drivers/gpu/drm/sun4i/sun4i_tcon.h |  34 +++++++
+ 2 files changed, 152 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.c b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+index bf405a2aa324..89cb743a4118 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+@@ -37,6 +37,7 @@
+ #include "sun4i_tcon.h"
+ #include "sun6i_mipi_dsi.h"
+ #include "sun4i_tcon_dclk.h"
++#include "sun60i_de_top.h"
+ #include "sun8i_tcon_top.h"
+ #include "sunxi_engine.h"
+ 
+@@ -229,9 +230,13 @@ void sun4i_tcon_enable_vblank(struct sun4i_tcon *tcon, bool enable)
+ 
+ 	DRM_DEBUG_DRIVER("%sabling VBLANK interrupt\n", enable ? "En" : "Dis");
+ 
+-	mask = SUN4I_TCON_GINT0_VBLANK_ENABLE(0) |
+-		SUN4I_TCON_GINT0_VBLANK_ENABLE(1) |
+-		SUN4I_TCON_GINT0_TCON0_TRI_FINISH_ENABLE;
++	/* On the A733 TCON TV, bits 28:25 enable the line interrupts */
++	if (tcon->quirks->has_tv_layout)
++		mask = SUN4I_TCON_GINT0_VBLANK_ENABLE(1);
++	else
++		mask = SUN4I_TCON_GINT0_VBLANK_ENABLE(0) |
++			SUN4I_TCON_GINT0_VBLANK_ENABLE(1) |
++			SUN4I_TCON_GINT0_TCON0_TRI_FINISH_ENABLE;
+ 
+ 	if (enable)
+ 		val = mask;
+@@ -622,28 +627,39 @@ static void sun4i_tcon1_mode_set(struct sun4i_tcon *tcon,
+ 			   SUN4I_TCON1_CTL_INTERLACE_ENABLE,
+ 			   val);
+ 
+-	/* Set the input resolution */
+-	regmap_write(tcon->regs, SUN4I_TCON1_BASIC0_REG,
+-		     SUN4I_TCON1_BASIC0_X(mode->crtc_hdisplay) |
+-		     SUN4I_TCON1_BASIC0_Y(mode->crtc_vdisplay));
+-
+-	/* Set the upscaling resolution */
+-	regmap_write(tcon->regs, SUN4I_TCON1_BASIC1_REG,
+-		     SUN4I_TCON1_BASIC1_X(mode->crtc_hdisplay) |
+-		     SUN4I_TCON1_BASIC1_Y(mode->crtc_vdisplay));
++	/* The A733 TCON TV has no input and upscaling resolution */
++	if (!tcon->quirks->has_tv_layout) {
++		/* Set the input resolution */
++		regmap_write(tcon->regs, SUN4I_TCON1_BASIC0_REG,
++			     SUN4I_TCON1_BASIC0_X(mode->crtc_hdisplay) |
++			     SUN4I_TCON1_BASIC0_Y(mode->crtc_vdisplay));
++
++		/* Set the upscaling resolution */
++		regmap_write(tcon->regs, SUN4I_TCON1_BASIC1_REG,
++			     SUN4I_TCON1_BASIC1_X(mode->crtc_hdisplay) |
++			     SUN4I_TCON1_BASIC1_Y(mode->crtc_vdisplay));
++	}
+ 
+ 	/* Set the output resolution */
+-	regmap_write(tcon->regs, SUN4I_TCON1_BASIC2_REG,
+-		     SUN4I_TCON1_BASIC2_X(mode->crtc_hdisplay) |
+-		     SUN4I_TCON1_BASIC2_Y(mode->crtc_vdisplay));
++	if (tcon->quirks->has_tv_layout)
++		val = SUN60I_TCON1_BASIC2_X(mode->crtc_hdisplay) |
++		      SUN60I_TCON1_BASIC2_Y(mode->crtc_vdisplay);
++	else
++		val = SUN4I_TCON1_BASIC2_X(mode->crtc_hdisplay) |
++		      SUN4I_TCON1_BASIC2_Y(mode->crtc_vdisplay);
++	regmap_write(tcon->regs, SUN4I_TCON1_BASIC2_REG, val);
+ 
+ 	/* Set horizontal display timings */
+ 	bp = mode->crtc_htotal - mode->crtc_hsync_start;
+ 	DRM_DEBUG_DRIVER("Setting horizontal total %d, backporch %d\n",
+ 			 mode->htotal, bp);
+-	regmap_write(tcon->regs, SUN4I_TCON1_BASIC3_REG,
+-		     SUN4I_TCON1_BASIC3_H_TOTAL(mode->crtc_htotal) |
+-		     SUN4I_TCON1_BASIC3_H_BACKPORCH(bp));
++	if (tcon->quirks->has_tv_layout)
++		val = SUN60I_TCON1_BASIC3_H_TOTAL(mode->crtc_htotal) |
++		      SUN60I_TCON1_BASIC3_H_BACKPORCH(bp);
++	else
++		val = SUN4I_TCON1_BASIC3_H_TOTAL(mode->crtc_htotal) |
++		      SUN4I_TCON1_BASIC3_H_BACKPORCH(bp);
++	regmap_write(tcon->regs, SUN4I_TCON1_BASIC3_REG, val);
+ 
+ 	bp = mode->crtc_vtotal - mode->crtc_vsync_start;
+ 	DRM_DEBUG_DRIVER("Setting vertical total %d, backporch %d\n",
+@@ -666,18 +682,34 @@ static void sun4i_tcon1_mode_set(struct sun4i_tcon *tcon,
+ 	if (!(mode->flags & DRM_MODE_FLAG_INTERLACE))
+ 		vtotal = vtotal * 2;
+ 
++	/*
++	 * The A733 TCON TV takes the vertical total from BASIC1. Bits 31:15
++	 * of its BASIC4 are reserved (section 15.2.10.10) and have no effect
++	 * on the chip, so only the back porch is written there.
++	 */
++	if (tcon->quirks->has_tv_layout)
++		regmap_write(tcon->regs, SUN4I_TCON1_BASIC1_REG,
++			     SUN60I_TCON1_BASIC1_V_TOTAL(vtotal));
++
+ 	/* Set vertical display timings */
+-	regmap_write(tcon->regs, SUN4I_TCON1_BASIC4_REG,
+-		     SUN4I_TCON1_BASIC4_V_TOTAL(vtotal) |
+-		     SUN4I_TCON1_BASIC4_V_BACKPORCH(bp));
++	if (tcon->quirks->has_tv_layout)
++		val = SUN60I_TCON1_BASIC4_V_BACKPORCH(bp);
++	else
++		val = SUN4I_TCON1_BASIC4_V_TOTAL(vtotal) |
++		      SUN4I_TCON1_BASIC4_V_BACKPORCH(bp);
++	regmap_write(tcon->regs, SUN4I_TCON1_BASIC4_REG, val);
+ 
+ 	/* Set Hsync and Vsync length */
+ 	hsync = mode->crtc_hsync_end - mode->crtc_hsync_start;
+ 	vsync = mode->crtc_vsync_end - mode->crtc_vsync_start;
+ 	DRM_DEBUG_DRIVER("Setting HSYNC %d, VSYNC %d\n", hsync, vsync);
+-	regmap_write(tcon->regs, SUN4I_TCON1_BASIC5_REG,
+-		     SUN4I_TCON1_BASIC5_V_SYNC(vsync) |
+-		     SUN4I_TCON1_BASIC5_H_SYNC(hsync));
++	if (tcon->quirks->has_tv_layout)
++		val = SUN60I_TCON1_BASIC5_V_SYNC(vsync) |
++		      SUN60I_TCON1_BASIC5_H_SYNC(hsync);
++	else
++		val = SUN4I_TCON1_BASIC5_V_SYNC(vsync) |
++		      SUN4I_TCON1_BASIC5_H_SYNC(hsync);
++	regmap_write(tcon->regs, SUN4I_TCON1_BASIC5_REG, val);
+ 
+ 	/* Setup the polarity of multiple signals */
+ 	if (tcon->quirks->polarity_in_ch0) {
+@@ -689,6 +721,13 @@ static void sun4i_tcon1_mode_set(struct sun4i_tcon *tcon,
+ 		if (mode->flags & DRM_MODE_FLAG_PVSYNC)
+ 			val |= SUN4I_TCON0_IO_POL_VSYNC_POSITIVE;
+ 
++		/*
++		 * The vendor driver always inverts the A733 TCON TV pixel
++		 * clock; vendor value, not measured on our boards.
++		 */
++		if (tcon->quirks->has_tv_layout)
++			val |= SUN4I_TCON0_IO_POL_DCLK_DRIVE_NEGEDGE;
++
+ 		regmap_write(tcon->regs, SUN4I_TCON0_IO_POL_REG, val);
+ 	} else {
+ 		/* according to vendor driver, this bit must be always set */
+@@ -703,6 +742,16 @@ static void sun4i_tcon1_mode_set(struct sun4i_tcon *tcon,
+ 		regmap_write(tcon->regs, SUN4I_TCON1_IO_POL_REG, val);
+ 	}
+ 
++	/*
++	 * The A733 TCON TV has no output pin map: GCTL bit 0 selects its
++	 * unstrict timing mode instead. Its pixel depth resets to 6 bits.
++	 */
++	if (tcon->quirks->has_tv_layout) {
++		regmap_write(tcon->regs, SUN60I_TCON1_PIXELDEPTH_MODE_REG,
++			     SUN60I_TCON1_PIXELDEPTH_MODE_8BIT);
++		return;
++	}
++
+ 	/* Map output pins to channel 1 */
+ 	regmap_update_bits(tcon->regs, SUN4I_TCON_GCTL_REG,
+ 			   SUN4I_TCON_GCTL_IOMAP_MASK,
+@@ -862,7 +911,8 @@ static int sun4i_tcon_init_regmap(struct device *dev,
+ 
+ 	/* Disable IO lines and set them to tristate */
+ 	regmap_write(tcon->regs, SUN4I_TCON0_IO_TRI_REG, ~0);
+-	regmap_write(tcon->regs, SUN4I_TCON1_IO_TRI_REG, ~0);
++	if (!tcon->quirks->has_tv_layout)
++		regmap_write(tcon->regs, SUN4I_TCON1_IO_TRI_REG, ~0);
+ 
+ 	return 0;
+ }
+@@ -1451,6 +1501,41 @@ static int sun8i_r40_tcon_tv_set_mux(struct sun4i_tcon *tcon,
+ 	return ret;
+ }
+ 
++static int sun60i_a733_tcon_tv_set_mux(struct sun4i_tcon *tcon,
++				       const struct drm_encoder *encoder)
++{
++	struct platform_device *pdev;
++	struct device_node *port, *remote;
++	int id, ret;
++
++	if (!IS_ENABLED(CONFIG_DRM_SUN60I_DE_TOP))
++		return -ENODEV;
++
++	/* Our input endpoint's remote id is our number in the DE top mux */
++	port = of_graph_get_port_by_id(tcon->dev->of_node, 0);
++	if (!port)
++		return -EINVAL;
++
++	id = sun4i_tcon_of_get_id_from_port(port);
++	of_node_put(port);
++	if (id < 0)
++		return id;
++
++	remote = of_graph_get_remote_node(tcon->dev->of_node, 0, -1);
++	if (!remote)
++		return -EINVAL;
++
++	pdev = of_find_device_by_node(remote);
++	of_node_put(remote);
++	if (!pdev)
++		return -EINVAL;
++
++	ret = sun60i_de_top_route(&pdev->dev, tcon->id, id);
++	put_device(&pdev->dev);
++
++	return ret;
++}
++
+ static const struct sun4i_tcon_quirks sun4i_a10_quirks = {
+ 	.has_channel_0		= true,
+ 	.has_channel_1		= true,
+@@ -1540,6 +1625,13 @@ static const struct sun4i_tcon_quirks sun9i_a80_tcon_tv_quirks = {
+ 	.needs_edp_reset = true,
+ };
+ 
++static const struct sun4i_tcon_quirks sun60i_a733_tv_quirks = {
++	.has_channel_1		= true,
++	.polarity_in_ch0	= true,
++	.has_tv_layout		= true,
++	.set_mux		= sun60i_a733_tcon_tv_set_mux,
++};
++
+ static const struct sun4i_tcon_quirks sun20i_d1_lcd_quirks = {
+ 	.has_channel_0		= true,
+ 	.dclk_min_div		= 1,
+@@ -1565,6 +1657,7 @@ const struct of_device_id sun4i_tcon_of_table[] = {
+ 	{ .compatible = "allwinner,sun9i-a80-tcon-tv", .data = &sun9i_a80_tcon_tv_quirks },
+ 	{ .compatible = "allwinner,sun20i-d1-tcon-lcd", .data = &sun20i_d1_lcd_quirks },
+ 	{ .compatible = "allwinner,sun20i-d1-tcon-tv", .data = &sun8i_r40_tv_quirks },
++	{ .compatible = "allwinner,sun60i-a733-tcon-tv", .data = &sun60i_a733_tv_quirks },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun4i_tcon_of_table);
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.h b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+index fa23aa23fe4a..1965e70932f0 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.h
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+@@ -138,22 +138,51 @@
+ #define SUN4I_TCON1_BASIC1_X(width)			((((width) - 1) & 0xfff) << 16)
+ #define SUN4I_TCON1_BASIC1_Y(height)			(((height) - 1) & 0xfff)
+ 
++/* A733 TCON TV: the vertical total, in half lines */
++#define SUN60I_TCON1_BASIC1_V_TOTAL(total)		((total) & GENMASK(16, 0))
++
+ #define SUN4I_TCON1_BASIC2_REG			0x9c
+ #define SUN4I_TCON1_BASIC2_X(width)			((((width) - 1) & 0xfff) << 16)
+ #define SUN4I_TCON1_BASIC2_Y(height)			(((height) - 1) & 0xfff)
+ 
++/* A733 TCON TV: wider fields, each holding its timing less one */
++#define SUN60I_TCON1_BASIC2_X_MASK			GENMASK(14, 0)
++#define SUN60I_TCON1_BASIC2_Y_MASK			GENMASK(14, 0)
++#define SUN60I_TCON1_BASIC2_X(width)	\
++	((((width) - 1) & SUN60I_TCON1_BASIC2_X_MASK) << 16)
++#define SUN60I_TCON1_BASIC2_Y(height)	\
++	(((height) - 1) & SUN60I_TCON1_BASIC2_Y_MASK)
++
+ #define SUN4I_TCON1_BASIC3_REG			0xa0
+ #define SUN4I_TCON1_BASIC3_H_TOTAL(total)		((((total) - 1) & 0x1fff) << 16)
+ #define SUN4I_TCON1_BASIC3_H_BACKPORCH(bp)		(((bp) - 1) & 0xfff)
+ 
++#define SUN60I_TCON1_BASIC3_H_TOTAL_MASK		GENMASK(15, 0)
++#define SUN60I_TCON1_BASIC3_H_BACKPORCH_MASK		GENMASK(14, 0)
++#define SUN60I_TCON1_BASIC3_H_TOTAL(total)	\
++	((((total) - 1) & SUN60I_TCON1_BASIC3_H_TOTAL_MASK) << 16)
++#define SUN60I_TCON1_BASIC3_H_BACKPORCH(bp)	\
++	(((bp) - 1) & SUN60I_TCON1_BASIC3_H_BACKPORCH_MASK)
++
+ #define SUN4I_TCON1_BASIC4_REG			0xa4
+ #define SUN4I_TCON1_BASIC4_V_TOTAL(total)		(((total) & 0x1fff) << 16)
+ #define SUN4I_TCON1_BASIC4_V_BACKPORCH(bp)		(((bp) - 1) & 0xfff)
+ 
++#define SUN60I_TCON1_BASIC4_V_BACKPORCH_MASK		GENMASK(14, 0)
++#define SUN60I_TCON1_BASIC4_V_BACKPORCH(bp)	\
++	(((bp) - 1) & SUN60I_TCON1_BASIC4_V_BACKPORCH_MASK)
++
+ #define SUN4I_TCON1_BASIC5_REG			0xa8
+ #define SUN4I_TCON1_BASIC5_H_SYNC(width)		((((width) - 1) & 0x3ff) << 16)
+ #define SUN4I_TCON1_BASIC5_V_SYNC(height)		(((height) - 1) & 0x3ff)
+ 
++#define SUN60I_TCON1_BASIC5_H_SYNC_MASK			GENMASK(11, 0)
++#define SUN60I_TCON1_BASIC5_V_SYNC_MASK			GENMASK(11, 0)
++#define SUN60I_TCON1_BASIC5_H_SYNC(width)	\
++	((((width) - 1) & SUN60I_TCON1_BASIC5_H_SYNC_MASK) << 16)
++#define SUN60I_TCON1_BASIC5_V_SYNC(height)	\
++	(((height) - 1) & SUN60I_TCON1_BASIC5_V_SYNC_MASK)
++
+ #define SUN4I_TCON1_IO_POL_REG			0xf0
+ /* there is no documentation about this bit */
+ #define SUN4I_TCON1_IO_POL_UNKNOWN			BIT(26)
+@@ -229,6 +258,10 @@
+ #define SUN4I_TCON1_FILL_BEG2_REG		0x31c
+ #define SUN4I_TCON1_FILL_END2_REG		0x320
+ #define SUN4I_TCON1_FILL_DATA2_REG		0x324
++
++#define SUN60I_TCON1_PIXELDEPTH_MODE_REG	0x340
++#define SUN60I_TCON1_PIXELDEPTH_MODE_8BIT		1
++
+ #define SUN4I_TCON1_GAMMA_TABLE_REG		0x400
+ 
+ #define SUN4I_TCON_MAX_CHANNELS		2
+@@ -243,6 +276,7 @@ struct sun4i_tcon_quirks {
+ 	bool    needs_edp_reset; /* a80 edp reset needed for tcon0 access */
+ 	bool	supports_lvds;   /* Does the TCON support an LVDS output? */
+ 	bool	polarity_in_ch0; /* some tcon1 channels have polarity bits in tcon0 pol register */
++	bool	has_tv_layout;	/* a733 TCON TV: VT in BASIC1, no BASIC0, no TCON1 IO regs */
+ 	u8	dclk_min_div;	/* minimum divider for TCON0 DCLK */
+ 
+ 	/* callback to handle tcon muxing options */

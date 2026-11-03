@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 12:55:14 +0000
+Subject: [PATCH] clk: sunxi-ng: a733: Take the G2D clock source order from the
+ manual
+
+G2D_CLK_REG CLK_SRC_SEL selects 000 = PERI0_300M and 001 = PERI0_400M
+in the A733 manual (section 4.1.6.108). The driver has the two swapped,
+so at the reset value the clock tree reports g2d at 400 MHz while the
+block runs from 300 MHz, and a rate request for 400 MHz selects the
+300 MHz source.
+
+Seen on the Radxa Cubie A7S: the same copy through the G2D rotate engine
+takes longer on mux value 0 than on mux value 1, by the ratio of 400 to
+300 MHz, at two dividers. With PLL_VIDEO1 and PLL_VIDEO2 set to
+different rates and then swapped, the copy on mux value 3 follows the
+PLL in PLL_VIDEO2_CTRL.
+
+Swap the first two parents. 010 = VIDEO0PLL4X is unchanged. Take the
+fourth parent from the video2 PLL (011 = VIDEO2PLL4X), where the driver
+has the video1 PLL.
+
+This corrects "clk: sunxi-ng: a733: Add mod clocks support" of the A733
+CCU series v6.
+
+Tested on Radxa Cubie A7S: at the reset value the clock tree reports
+the 300 MHz source the block runs from, setting either of the first two
+parents writes the matching CLK_SRC_SEL value, and on source 3 the
+block follows PLL_VIDEO2, not PLL_VIDEO1.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 416c7f98aa1b..8f94408b29a1 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -799,10 +799,10 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(di_clk, "di", di_parents, 0xa20,
+ static SUNXI_CCU_GATE_HWS(bus_di_clk, "bus-di", ahb_hws, 0xa24, BIT(0), 0);
+ 
+ static const struct clk_hw *g2d_parents[] = {
+-	&pll_periph0_400M_clk.hw,
+ 	&pll_periph0_300M_clk.hw,
++	&pll_periph0_400M_clk.hw,
+ 	&pll_video0_4x_clk.common.hw,
+-	&pll_video1_4x_clk.common.hw,
++	&pll_video2_4x_clk.common.hw,
+ };
+ static SUNXI_CCU_M_HW_WITH_MUX_GATE(g2d_clk, "g2d", g2d_parents, 0xa40,
+ 				    0, 5,	/* M */

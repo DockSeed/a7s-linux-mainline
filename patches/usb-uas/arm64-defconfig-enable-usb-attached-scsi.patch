@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 08:47:40 +0200
+Subject: [PATCH] arm64: defconfig: Enable USB Attached SCSI
+
+USB storage devices that support the USB Attached SCSI protocol fall
+back to Bulk-Only Transport with this defconfig, because USB_UAS is not
+set. They then run with one outstanding command at a time.
+
+Build the uas driver as a module. usb-storage stays built in and leaves
+UAS interfaces to it, so devices without UAS are not affected.
+
+Tested on Radxa Cubie A7S: a USB 3 stick with UAS support binds to uas on
+its UAS alternate setting at the USB 3 port and reads without errors.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 8f8a6de93e84..d3ffa86bb4ee 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -1217,6 +1217,7 @@ CONFIG_USB_RENESAS_USBHS_HCD=m
+ CONFIG_USB_RENESAS_USBHS=m
+ CONFIG_USB_ACM=m
+ CONFIG_USB_STORAGE=y
++CONFIG_USB_UAS=m
+ CONFIG_USB_CDNS_SUPPORT=m
+ CONFIG_USB_CDNS3=m
+ CONFIG_USB_CDNS3_GADGET=y

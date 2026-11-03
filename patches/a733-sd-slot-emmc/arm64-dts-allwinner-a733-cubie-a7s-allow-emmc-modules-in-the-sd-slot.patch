@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 19 Oct 2026 17:13:23 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Allow eMMC modules in
+ the SD slot
+
+Radxa offers an eMMC-to-microSD adapter for the board's microSD slot,
+and the boot ROM and U-Boot boot from an eMMC module on it. Linux does
+not, because the slot is marked no-mmc, so a system on the module
+cannot find its root.
+
+Drop no-mmc. With the A733 SD controllers no longer offering DDR52, such
+a module runs at High Speed SDR, 52 MHz, 4 bit, as in the boot loader.
+SD cards are not affected: the core tries SD before MMC.
+
+Tested on Radxa Cubie A7S: the SD slot no longer excludes MMC cards and
+an SD card still attaches at SDR104; an eMMC module on a microSD
+adapter was not at hand.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 80f65c643263..6b3967b05a67 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -393,7 +393,6 @@ &mmc0 {
+ 	vmmc-supply = <&reg_swout2>;
+ 	cd-gpios = <&pio 5 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; /* PF6 */
+ 	bus-width = <4>;
+-	no-mmc;
+ 	no-sdio;
+ 	sd-uhs-sdr50;
+ 	sd-uhs-sdr104;

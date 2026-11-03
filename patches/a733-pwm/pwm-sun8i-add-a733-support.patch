@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 10:10:00 +0200
+Subject: [PATCH] pwm: sun8i: Add A733 support
+
+The A733 PWM controllers have the registers of the D1 controller that
+this driver handles, except for the distance between the registers of
+two channels: channel N starts at 0x100 + N * 0x40 on the A733, where
+the D1 has 0x100 + N * 0x20. Each A733 channel holds the capture
+registers CCCSR, CCCNR and CCCR at offsets 0x1c to 0x24. With the D1
+distance the driver would write the control and period registers of
+channel 1 at 0x120 and 0x124, which are CCCNR and CCCR of channel 0,
+and those of the later channels into registers of other channels.
+
+The other registers are the same: the clock configuration of a channel
+pair (PCCR, 0x20 + pair * 4, clock source and divider M), the clock
+gating with the bypass bits (PCGR, 0x40), the enable register (PER,
+0x80), and the control and period registers (PCR and PPR) with their
+fields (A733 manual, sections 18.7.7 and 18.7.8, PDF p.1332 to 1369).
+
+Take the distance from match data, 0x20 for the D1 and 0x40 for the
+A733. The behaviour on the D1 does not change.
+
+Not covered: the dead zone, group, pulse and capture functions, which
+the driver does not use.
+
+Tested on Radxa Cubie A7S: booted on one board; on PWM1 channel 8 the
+control and period registers at the A733 distance hold what the driver
+programmed, those at the D1 distance keep their reset value, and the
+blue LED on PJ26 blinks with the period set.
+
+Assisted-by: LLM
+---
+ drivers/pwm/Kconfig     |  4 ++--
+ drivers/pwm/pwm-sun8i.c | 40 +++++++++++++++++++++++++++++++---------
+ 2 files changed, 33 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/pwm/Kconfig b/drivers/pwm/Kconfig
+index d29b3272f84b..23b16ddc3e16 100644
+--- a/drivers/pwm/Kconfig
++++ b/drivers/pwm/Kconfig
+@@ -749,11 +749,11 @@ config PWM_SUN4I
+ 	  will be called pwm-sun4i.
+ 
+ config PWM_SUN8I
+-	tristate "Allwinner D1/T113s/R329 PWM support"
++	tristate "Allwinner D1/T113s/R329/A733 PWM support"
+ 	depends on ARCH_SUNXI || COMPILE_TEST
+ 	depends on COMMON_CLK
+ 	help
+-	  Generic PWM framework driver for Allwinner D1/T113s/R329 SoCs.
++	  Generic PWM framework driver for Allwinner D1/T113s/R329/A733 SoCs.
+ 
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called pwm-sun8i.
+diff --git a/drivers/pwm/pwm-sun8i.c b/drivers/pwm/pwm-sun8i.c
+index b07805ad7084..99025b56e9fa 100644
+--- a/drivers/pwm/pwm-sun8i.c
++++ b/drivers/pwm/pwm-sun8i.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * PWM Controller Driver for sunxi platforms (D1, T113-S3 and R329)
++ * PWM Controller Driver for sunxi platforms (D1, T113-S3, R329 and A733)
+  *
+  * Limitations:
+  * - When the parameters change, the current running period is not completed
+@@ -19,6 +19,7 @@
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
+ #include <linux/pwm.h>
+ #include <linux/reset.h>
+ 
+@@ -36,12 +37,12 @@
+ #define SUN8I_PWM_ENABLE			0x80
+ #define SUN8I_PWM_ENABLE_EN(chan)		BIT(chan)
+ 
+-#define SUN8I_PWM_CTL(chan)			(0x100 + (chan) * 0x20)
++#define SUN8I_PWM_CTL(stride, chan)		(0x100 + (chan) * (stride))
+ #define SUN8I_PWM_CTL_ACT_STA			BIT(8)
+ #define SUN8I_PWM_CTL_PRESCAL_K			GENMASK(7, 0)
+ #define SUN8I_PWM_CTL_PRESCAL_K_MAX		field_max(SUN8I_PWM_CTL_PRESCAL_K)
+ 
+-#define SUN8I_PWM_PERIOD(chan)			(0x104 + (chan) * 0x20)
++#define SUN8I_PWM_PERIOD(stride, chan)		(0x104 + (chan) * (stride))
+ #define SUN8I_PWM_PERIOD_ENTIRE_CYCLE		GENMASK(31, 16)
+ #define SUN8I_PWM_PERIOD_ACT_CYCLE		GENMASK(15, 0)
+ 
+@@ -96,7 +97,13 @@
+ #define SUN8I_PWM_MAGIC				(255 * 65537 + 2 * 65536 + 1)
+ #define SUN8I_PWM_DIV_CONST			65537
+ 
++struct sun8i_pwm_data {
++	/* Distance between the register blocks of two channels */
++	unsigned int chan_stride;
++};
++
+ struct sun8i_pwm_chip {
++	const struct sun8i_pwm_data *data;
+ 	struct clk *clk_hosc, *clk_apb;
+ 	void __iomem *base;
+ };
+@@ -142,7 +149,8 @@ static int sun8i_pwm_get_state(struct pwm_chip *chip,
+ 	else
+ 		clk_rate = clk_get_rate(sun8i_chip->clk_apb);
+ 
+-	val = sun8i_pwm_readl(sun8i_chip, SUN8I_PWM_CTL(pwm->hwpwm));
++	val = sun8i_pwm_readl(sun8i_chip,
++			      SUN8I_PWM_CTL(sun8i_chip->data->chan_stride, pwm->hwpwm));
+ 	state->polarity = (SUN8I_PWM_CTL_ACT_STA & val) ?
+ 			   PWM_POLARITY_NORMAL : PWM_POLARITY_INVERSED;
+ 
+@@ -151,7 +159,8 @@ static int sun8i_pwm_get_state(struct pwm_chip *chip,
+ 	val = sun8i_pwm_readl(sun8i_chip, SUN8I_PWM_ENABLE);
+ 	state->enabled = (SUN8I_PWM_ENABLE_EN(pwm->hwpwm) & val) ? true : false;
+ 
+-	val = sun8i_pwm_readl(sun8i_chip, SUN8I_PWM_PERIOD(pwm->hwpwm));
++	val = sun8i_pwm_readl(sun8i_chip,
++			      SUN8I_PWM_PERIOD(sun8i_chip->data->chan_stride, pwm->hwpwm));
+ 	act_cycle = FIELD_GET(SUN8I_PWM_PERIOD_ACT_CYCLE, val);
+ 
+ 	/* For N cycles, PPRx.PWM_ENTIRE_CYCLE = (N-1) */
+@@ -200,7 +209,8 @@ static int sun8i_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+ 		return 0;
+ 	}
+ 
+-	ctl = sun8i_pwm_readl(sun8i_chip, SUN8I_PWM_CTL(pwm->hwpwm));
++	ctl = sun8i_pwm_readl(sun8i_chip,
++			      SUN8I_PWM_CTL(sun8i_chip->data->chan_stride, pwm->hwpwm));
+ 	clk_cfg = sun8i_pwm_readl(sun8i_chip, SUN8I_PWM_CLK_CFG(pwm->hwpwm / 2));
+ 	hosc_rate = clk_get_rate(sun8i_chip->clk_hosc);
+ 	bus_rate = clk_get_rate(sun8i_chip->clk_apb);
+@@ -284,13 +294,15 @@ static int sun8i_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+ 	 * Duty-cycle = T high-level / T period
+ 	 */
+ 	reg_period |= FIELD_PREP(SUN8I_PWM_PERIOD_ACT_CYCLE, act_cycle);
+-	sun8i_pwm_writel(sun8i_chip, reg_period, SUN8I_PWM_PERIOD(pwm->hwpwm));
++	sun8i_pwm_writel(sun8i_chip, reg_period,
++			 SUN8I_PWM_PERIOD(sun8i_chip->data->chan_stride, pwm->hwpwm));
+ 
+ 	ctl = FIELD_PREP(SUN8I_PWM_CTL_PRESCAL_K, prescale_k);
+ 	if (state->polarity == PWM_POLARITY_NORMAL)
+ 		ctl |= SUN8I_PWM_CTL_ACT_STA;
+ 
+-	sun8i_pwm_writel(sun8i_chip, ctl, SUN8I_PWM_CTL(pwm->hwpwm));
++	sun8i_pwm_writel(sun8i_chip, ctl,
++			 SUN8I_PWM_CTL(sun8i_chip->data->chan_stride, pwm->hwpwm));
+ 
+ 	if (state->enabled != pwm->state.enabled) {
+ 		clk_gate &= ~SUN8I_PWM_CLK_GATE_BYPASS(pwm->hwpwm);
+@@ -308,8 +320,17 @@ static const struct pwm_ops sun8i_pwm_ops = {
+ 	.get_state = sun8i_pwm_get_state,
+ };
+ 
++static const struct sun8i_pwm_data sun8i_pwm_d1_data = {
++	.chan_stride = 0x20,
++};
++
++static const struct sun8i_pwm_data sun8i_pwm_a733_data = {
++	.chan_stride = 0x40,
++};
++
+ static const struct of_device_id sun8i_pwm_dt_ids[] = {
+-	{ .compatible = "allwinner,sun20i-d1-pwm" },
++	{ .compatible = "allwinner,sun20i-d1-pwm", .data = &sun8i_pwm_d1_data },
++	{ .compatible = "allwinner,sun60i-a733-pwm", .data = &sun8i_pwm_a733_data },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun8i_pwm_dt_ids);
+@@ -336,6 +357,7 @@ static int sun8i_pwm_probe(struct platform_device *pdev)
+ 	if (IS_ERR(chip))
+ 		return PTR_ERR(chip);
+ 	sun8i_chip = to_sun8i_pwm_chip(chip);
++	sun8i_chip->data = device_get_match_data(&pdev->dev);
+ 
+ 	sun8i_chip->base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(sun8i_chip->base))

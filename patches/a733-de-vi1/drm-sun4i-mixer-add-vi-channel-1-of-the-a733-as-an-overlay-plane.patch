@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 17:02:50 +0200
+Subject: [PATCH] drm/sun4i: mixer: Add VI channel 1 of the A733 as an overlay
+ plane
+
+The A733 mixer has a single plane, VI channel 0, so a compositor draws
+everything, its pointer included, into the primary plane. The display
+engine has more channels: user manual V1.00 section 14.3 (page 641)
+lists VCH1 next to VCH0. VI channel 1 has the channel window of the
+DE33 layout, at 0x21000 of the mixer.
+
+Describe VI channels 0 and 1. The common code then registers VI channel
+0 as the primary plane and VI channel 1 as an overlay, and routes the
+layer with index n to blender port n; the top block maps port 1 to VI
+channel 1. Plane 1 has no scaler in this configuration: the scaler mask
+covers VI channel 0 only. A fractional source offset still takes the
+scaler path of the common code; that path has not been run on VI
+channel 1. Its pixels with alpha blend pre-multiplied, as on VI
+channel 0.
+
+Seen on the Radxa Cubie A7S by register writes alone: with VI channel 1
+programmed, enabled and routed to blender pipe 1, the frame CRC
+reported by the sink toggles between two stable values with the pipe
+enable and follows the layer coordinates.
+
+Not covered: a cursor plane type (plane 1 is an overlay, as on the
+other sun8i mixers), scaling on VI channel 1, the register command
+queue.
+
+Tested on Radxa Cubie A7S: VI channel 1 shows as an overlay plane,
+equal to the same picture drawn on the primary plane, and follows its
+position.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c | 21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 90ddda052c9f..a9549b530aa9 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -884,14 +884,15 @@ static const struct sun8i_mixer_cfg sun50i_h616_mixer0_cfg = {
+ };
+ 
+ /*
+- * The A733 display engine follows the DE33 register layout. Only VI
+- * channel 0 is described: the blender input mux that a second plane
+- * needs is not supported. The channel colour space converter sits at
+- * 0x800 of each channel window; its coefficient layout is not supported,
+- * so it is written off and the layer takes RGB only. The module clock
+- * rate is not set: the user manual advises against changing PLL_DE,
+- * which also clocks the interconnect (section 4.1.4.3), so DE0 runs at
+- * the PLL_DE rate the boot chain set up. The vendor kernel sets 600 MHz.
++ * The A733 display engine follows the DE33 register layout. VI channel 0
++ * is the primary plane and VI channel 1 an overlay without scaling; the
++ * top block maps blender port 1 to VI channel 1. The channel colour space
++ * converter sits at 0x800 of each channel window; its coefficient layout
++ * is not supported, so it is written off and the layers take RGB only.
++ * The module clock rate is not set: the user manual advises against
++ * changing PLL_DE, which also clocks the interconnect (section 4.1.4.3),
++ * so DE0 runs at the PLL_DE rate the boot chain set up. The vendor kernel
++ * sets 600 MHz.
+  */
+ static const struct sun8i_mixer_cfg sun60i_a733_mixer0_cfg = {
+ 	.lay_cfg = {
+@@ -902,8 +903,8 @@ static const struct sun8i_mixer_cfg sun60i_a733_mixer0_cfg = {
+ 	},
+ 	.de_type	= SUN8I_MIXER_DE33,
+ 	.ui_num		= 0,
+-	.vi_num		= 1,
+-	.map		= {0},
++	.vi_num		= 2,
++	.map		= {0, 1},
+ };
+ 
+ static const struct of_device_id sun8i_mixer_of_table[] = {

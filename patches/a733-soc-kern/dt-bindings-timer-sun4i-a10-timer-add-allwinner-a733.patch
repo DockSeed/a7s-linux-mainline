@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:10:19 +0200
+Subject: [PATCH] dt-bindings: timer: sun4i-a10-timer: Add Allwinner A733
+
+Timer1_CPUX of the A733 has the register layout of the A23 timer. Add an
+A733 compatible with the A23 one as fallback.
+
+Tested on Radxa Cubie A7S: booted on two boards; the Timer1 node with this
+compatible passes the schema check and registers through the fallback.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/timer/allwinner,sun4i-a10-timer.yaml     | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/timer/allwinner,sun4i-a10-timer.yaml b/Documentation/devicetree/bindings/timer/allwinner,sun4i-a10-timer.yaml
+index b3538fac1ad2..a2cea5928c46 100644
+--- a/Documentation/devicetree/bindings/timer/allwinner,sun4i-a10-timer.yaml
++++ b/Documentation/devicetree/bindings/timer/allwinner,sun4i-a10-timer.yaml
+@@ -24,6 +24,7 @@ properties:
+               - allwinner,sun50i-a64-timer
+               - allwinner,sun50i-h6-timer
+               - allwinner,sun50i-h616-timer
++              - allwinner,sun60i-a733-timer
+           - const: allwinner,sun8i-a23-timer
+ 
+   reg:

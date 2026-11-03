@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 20:00:00 +0200
+Subject: [PATCH] crypto: sun8i-ce - Lock per flow instead of the RNG lock
+
+The TRNG has flow 3 to itself and a lock of its own, and the hash
+requests go round robin over the other flows. On the A733 each channel
+feeds one algorithm unit and the random numbers come from the hash
+unit, so the TRNG and the hashes have to share a flow.
+
+Replace the RNG lock by a lock per flow, taken by the TRNG and by a hash
+task while it holds the descriptor of its flow, and pass the algorithm
+type to sun8i_ce_get_engine_number(), so that a variant can pick the
+flow by type (the A733 support that follows does). On the earlier SoCs
+the TRNG keeps flow 3 and the hashes the others, so the locks never meet
+and nothing changes.
+
+Tested on Radxa Cubie A7S: the hashes and the TRNG share the hash unit
+without errors while the crypto self-tests run.
+
+Assisted-by: LLM
+---
+ drivers/crypto/allwinner/sun8i-ce/sun8i-ce-cipher.c | 4 ++--
+ drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c   | 4 ++--
+ drivers/crypto/allwinner/sun8i-ce/sun8i-ce-hash.c   | 8 ++++++--
+ drivers/crypto/allwinner/sun8i-ce/sun8i-ce-trng.c   | 4 ++--
+ drivers/crypto/allwinner/sun8i-ce/sun8i-ce.h        | 6 +++---
+ 5 files changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-cipher.c b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-cipher.c
+index 021614b65e39..64245cef6c91 100644
+--- a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-cipher.c
++++ b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-cipher.c
+@@ -386,7 +386,7 @@ int sun8i_ce_skdecrypt(struct skcipher_request *areq)
+ 	if (sun8i_ce_cipher_need_fallback(areq))
+ 		return sun8i_ce_cipher_fallback(areq);
+ 
+-	e = sun8i_ce_get_engine_number(op->ce);
++	e = sun8i_ce_get_engine_number(op->ce, CRYPTO_ALG_TYPE_SKCIPHER);
+ 	rctx->flow = e;
+ 	engine = op->ce->chanlist[e].engine;
+ 
+@@ -405,7 +405,7 @@ int sun8i_ce_skencrypt(struct skcipher_request *areq)
+ 	if (sun8i_ce_cipher_need_fallback(areq))
+ 		return sun8i_ce_cipher_fallback(areq);
+ 
+-	e = sun8i_ce_get_engine_number(op->ce);
++	e = sun8i_ce_get_engine_number(op->ce, CRYPTO_ALG_TYPE_SKCIPHER);
+ 	rctx->flow = e;
+ 	engine = op->ce->chanlist[e].engine;
+ 
+diff --git a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c
+index 7ae28e692295..97c163510ae7 100644
+--- a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c
++++ b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-core.c
+@@ -170,7 +170,7 @@ static void sun8i_ce_dump_task_descriptors(struct sun8i_ce_flow *chan)
+  * This is a simple round-robin way of getting the next channel
+  * The flow 3 is reserve for xRNG operations
+  */
+-int sun8i_ce_get_engine_number(struct sun8i_ce_dev *ce)
++int sun8i_ce_get_engine_number(struct sun8i_ce_dev *ce, u32 type)
+ {
+ 	return atomic_inc_return(&ce->flow) % (MAXFLOW - 1);
+ }
+@@ -703,6 +703,7 @@ static int sun8i_ce_allocate_chanlist(struct sun8i_ce_dev *ce)
+ 
+ 	for (i = 0; i < MAXFLOW; i++) {
+ 		init_completion(&ce->chanlist[i].complete);
++		mutex_init(&ce->chanlist[i].lock);
+ 
+ 		ce->chanlist[i].engine = crypto_engine_alloc_init(ce->dev, true);
+ 		if (!ce->chanlist[i].engine) {
+@@ -964,7 +965,6 @@ static int sun8i_ce_probe(struct platform_device *pdev)
+ 				     "No reset control found\n");
+ 
+ 	mutex_init(&ce->mlock);
+-	mutex_init(&ce->rnglock);
+ 
+ 	err = sun8i_ce_allocate_chanlist(ce);
+ 	if (err)
+diff --git a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-hash.c b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-hash.c
+index d01594353d9a..22cede7a2dfa 100644
+--- a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-hash.c
++++ b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-hash.c
+@@ -248,7 +248,7 @@ int sun8i_ce_hash_digest(struct ahash_request *areq)
+ 	if (sun8i_ce_hash_need_fallback(areq))
+ 		return sun8i_ce_hash_digest_fb(areq);
+ 
+-	e = sun8i_ce_get_engine_number(ce);
++	e = sun8i_ce_get_engine_number(ce, CRYPTO_ALG_TYPE_AHASH);
+ 	rctx->flow = e;
+ 	engine = ce->chanlist[e].engine;
+ 
+@@ -466,13 +466,17 @@ int sun8i_ce_hash_run(struct crypto_engine *engine, void *async_req)
+ 
+ 	chan = &ce->chanlist[rctx->flow];
+ 
++	mutex_lock(&chan->lock);
+ 	err = sun8i_ce_hash_prepare(areq, chan->tl);
+-	if (err)
++	if (err) {
++		mutex_unlock(&chan->lock);
+ 		return err;
++	}
+ 
+ 	err = sun8i_ce_run_task(ce, rctx->flow, crypto_ahash_alg_name(tfm));
+ 
+ 	sun8i_ce_hash_unprepare(areq, chan->tl);
++	mutex_unlock(&chan->lock);
+ 
+ 	if (!err)
+ 		memcpy(areq->result, rctx->result,
+diff --git a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-trng.c b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-trng.c
+index 244529bf0616..bbfbd69b04af 100644
+--- a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-trng.c
++++ b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce-trng.c
+@@ -58,8 +58,8 @@ static int sun8i_ce_trng_read(struct hwrng *rng, void *data, size_t max, bool wa
+ 	if (err < 0)
+ 		goto err_pm;
+ 
+-	mutex_lock(&ce->rnglock);
+ 	chan = &ce->chanlist[flow];
++	mutex_lock(&chan->lock);
+ 
+ 	cet = &chan->tl[0];
+ 	memset(cet, 0, sizeof(struct ce_task));
+@@ -81,7 +81,7 @@ static int sun8i_ce_trng_read(struct hwrng *rng, void *data, size_t max, bool wa
+ 	cet->t_dst[0].len = cpu_to_le32(todo / 4);
+ 
+ 	err = sun8i_ce_run_task(ce, 3, "TRNG");
+-	mutex_unlock(&ce->rnglock);
++	mutex_unlock(&chan->lock);
+ 
+ 	pm_runtime_put(ce->dev);
+ 
+diff --git a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce.h b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce.h
+index 468d99bf5bf6..4d216fd70973 100644
+--- a/drivers/crypto/allwinner/sun8i-ce/sun8i-ce.h
++++ b/drivers/crypto/allwinner/sun8i-ce/sun8i-ce.h
+@@ -177,6 +177,7 @@ struct ce_task {
+  * @engine:	ptr to the crypto_engine for this flow
+  * @complete:	completion for the current task on this flow
+  * @status:	set to 1 by interrupt if task is done
++ * @lock:	serializes the hash and TRNG tasks of this flow
+  * @t_phy:	Physical address of task
+  * @tl:		pointer to the current ce_task for this flow
+  * @stat_req:	number of request done by this flow
+@@ -185,6 +186,7 @@ struct sun8i_ce_flow {
+ 	struct crypto_engine *engine;
+ 	struct completion complete;
+ 	int status;
++	struct mutex lock; /* hash and TRNG tasks of this flow */
+ 	dma_addr_t t_phy;
+ 	struct ce_task *tl;
+ #ifdef CONFIG_CRYPTO_DEV_SUN8I_CE_DEBUG
+@@ -199,7 +201,6 @@ struct sun8i_ce_flow {
+  * @reset:	pointer to reset controller
+  * @dev:	the platform device
+  * @mlock:	Control access to device registers
+- * @rnglock:	Control access to the RNG (dedicated channel 3)
+  * @chanlist:	array of all flow
+  * @flow:	flow to use in next request
+  * @variant:	pointer to variant specific data
+@@ -212,7 +213,6 @@ struct sun8i_ce_dev {
+ 	struct reset_control *reset;
+ 	struct device *dev;
+ 	struct mutex mlock;
+-	struct mutex rnglock;
+ 	struct sun8i_ce_flow *chanlist;
+ 	atomic_t flow;
+ 	const struct ce_variant *variant;
+@@ -360,7 +360,7 @@ int sun8i_ce_cipher_do_one(struct crypto_engine *engine, void *areq);
+ int sun8i_ce_skdecrypt(struct skcipher_request *areq);
+ int sun8i_ce_skencrypt(struct skcipher_request *areq);
+ 
+-int sun8i_ce_get_engine_number(struct sun8i_ce_dev *ce);
++int sun8i_ce_get_engine_number(struct sun8i_ce_dev *ce, u32 type);
+ 
+ int sun8i_ce_run_task(struct sun8i_ce_dev *ce, int flow, const char *name);
+ 

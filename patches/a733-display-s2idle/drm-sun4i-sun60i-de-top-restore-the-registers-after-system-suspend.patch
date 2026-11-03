@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 16 Oct 2026 09:58:52 +0200
+Subject: [PATCH] drm/sun4i: sun60i_de_top: Restore the registers after system
+ suspend
+
+The top block of the A733 display engine sits in the DE_SYS power
+domain. In system suspend genpd powers the domain off once all of its
+devices have suspended, and the block comes back with its registers at
+their reset values: the display and MBUS resets asserted, their gates
+closed and the blender port map of display 0 back at 0, which feeds VI
+channel 0 into every port. Without this, the display stays dark after
+resume, because nothing writes these registers again: the mixer keeps
+its reset deasserted and its clock enabled across suspend and the clock
+framework keeps its cached state, so every mixer register written after
+resume is lost while the display reset reads asserted. Seen on the Radxa
+Cubie A7S: after s2idle the reset, gate and MBUS words and the port map
+of display 0 read zero, and the DisplayPort sink shows no picture.
+
+Save the reset, gate, MBUS and port map words in the noirq suspend phase
+and write them back in the noirq resume phase, as clock blocks inside a
+power domain do, for example the i.MX8MP audiomix clock driver. genpd
+runs these callbacks while the domain is on, after the consumers have
+suspended and before they resume. Each reset is released before its gate
+(user manual section 4.1.4.4); if the domain stayed on, the MBUS gate
+stays open. The saved values are the state the consumers and the clock
+framework expect, so the restore changes nothing a consumer has set.
+
+Not covered: the DE-to-TCON mux, which the TCON sets again at every mode
+set, and the mixer registers, which the mixer driver programs again.
+
+Tested on Radxa Cubie A7S: after an s2idle cycle that powered the
+DE_SYS domain off, the reset, gate, MBUS and port map words read as
+before and the sink saw the same picture again.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun60i_de_top.c | 72 +++++++++++++++++++++++++++
+ 1 file changed, 72 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun60i_de_top.c b/drivers/gpu/drm/sun4i/sun60i_de_top.c
+index eb9c226e443f..e9038cb0213d 100644
+--- a/drivers/gpu/drm/sun4i/sun60i_de_top.c
++++ b/drivers/gpu/drm/sun4i/sun60i_de_top.c
+@@ -10,6 +10,10 @@
+  * and H6. It also holds the map from the blender input ports of each
+  * display to the channels, which is set once at probe.
+  *
++ * The block sits in the DE_SYS power domain and loses its registers
++ * when the domain goes off in system suspend, so it saves and restores
++ * them around it.
++ *
+  * The user manual does not document these registers. Their names, bit
+  * positions and the 0xf "not connected" code of the mux are the
+  * vendor's; only the reset of display 0 is known to be needed on our
+@@ -99,6 +103,14 @@ struct sun60i_de_top {
+ 
+ 	/* the gates and resets share their registers */
+ 	spinlock_t			reg_lock;
++
++	/* register contents across system suspend */
++	struct {
++		u32	reset;
++		u32	clk;
++		u32	mbus;
++		u32	port2chn[DE_TOP_DISP_NUM];
++	} saved;
+ };
+ 
+ static struct sun60i_de_top *rcdev_to_de_top(struct reset_controller_dev *rcdev)
+@@ -416,6 +428,65 @@ static void sun60i_de_top_remove(struct platform_device *pdev)
+ 	component_del(&pdev->dev, &sun60i_de_top_ops);
+ }
+ 
++/*
++ * The consumers keep their clocks enabled and their resets deasserted
++ * across system suspend, and the clock framework keeps its state, so
++ * the block has to come back as it was. The TCON sets the DE-to-TCON
++ * mux again at every mode set. The noirq phase runs after the consumers
++ * have suspended and before they resume.
++ */
++static int sun60i_de_top_suspend_noirq(struct device *dev)
++{
++	struct sun60i_de_top *top = dev_get_drvdata(dev);
++	unsigned long flags;
++	unsigned int i;
++
++	spin_lock_irqsave(&top->reg_lock, flags);
++
++	top->saved.reset = readl(top->regs + DE_TOP_RESET_REG);
++	top->saved.clk = readl(top->regs + DE_TOP_CLK_REG);
++	top->saved.mbus = readl(top->regs + DE_TOP_MBUS_REG);
++	for (i = 0; i < DE_TOP_DISP_NUM; i++)
++		top->saved.port2chn[i] =
++			readl(top->regs + DE_TOP_PORT2CHN_MUX_REG(i));
++
++	spin_unlock_irqrestore(&top->reg_lock, flags);
++
++	return 0;
++}
++
++/*
++ * Each reset is released before its gate (user manual section 4.1.4.4).
++ * The MBUS reset and gate share a register; if the domain stayed on,
++ * the gate stays open.
++ */
++static int sun60i_de_top_resume_noirq(struct device *dev)
++{
++	struct sun60i_de_top *top = dev_get_drvdata(dev);
++	unsigned long flags;
++	unsigned int i;
++
++	spin_lock_irqsave(&top->reg_lock, flags);
++
++	writel(top->saved.reset, top->regs + DE_TOP_RESET_REG);
++	writel(readl(top->regs + DE_TOP_MBUS_REG) |
++	       (top->saved.mbus & BIT(DE_TOP_MBUS_RESET_BIT)),
++	       top->regs + DE_TOP_MBUS_REG);
++	writel(top->saved.mbus, top->regs + DE_TOP_MBUS_REG);
++	writel(top->saved.clk, top->regs + DE_TOP_CLK_REG);
++	for (i = 0; i < DE_TOP_DISP_NUM; i++)
++		writel(top->saved.port2chn[i],
++		       top->regs + DE_TOP_PORT2CHN_MUX_REG(i));
++
++	spin_unlock_irqrestore(&top->reg_lock, flags);
++
++	return 0;
++}
++
++static DEFINE_NOIRQ_DEV_PM_OPS(sun60i_de_top_pm_ops,
++			       sun60i_de_top_suspend_noirq,
++			       sun60i_de_top_resume_noirq);
++
+ /* sun4i_drv and sun4i_tcon use this list to find the DE top block */
+ const struct of_device_id sun60i_de_top_of_table[] = {
+ 	{ .compatible = "allwinner,sun60i-a733-de-top" },
+@@ -430,6 +501,7 @@ static struct platform_driver sun60i_de_top_platform_driver = {
+ 	.driver		= {
+ 		.name		= "sun60i-de-top",
+ 		.of_match_table	= sun60i_de_top_of_table,
++		.pm		= pm_sleep_ptr(&sun60i_de_top_pm_ops),
+ 	},
+ };
+ module_platform_driver(sun60i_de_top_platform_driver);

@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 17:05:27 +0200
+Subject: [PATCH] clk: sunxi-ng: a733-cpu: Park the DSU on the 600 MHz
+ peripheral clock
+
+While the DSU's PLL relocks, the DSU runs from the 26 MHz oscillator. The
+DSU clocks the L3 cache and the snoop filter that all eight cores go
+through, so the whole memory side slows down for every change of the DSU
+rate.
+
+Park the DSU on pll-periph0-600m instead, the DSU mux's encoding 101,
+which the manual names as one of the DSU's backup sources (5.1.4.1),
+when it runs at 600 MHz. That is below the DSU rate the boot loader sets
+at the lowest voltage of the supply, so the park never runs the DSU
+faster than the supply allows. probe() holds the clock enabled, so it
+cannot be gated under a parked DSU, and defers until the main CCU
+provides it. probe() makes the choice once and says which source it
+took.
+
+Not covered: changing the DSU rate; nothing does that yet.
+
+Tested on Radxa Cubie A7S: booted on two boards; probe reports the park
+of the DSU on pll-periph0-600m, and with the DSU devfreq driver of the
+following series stepping the DSU over all its points, up and down, the
+mux reads back on the PLL after every step of the pair tests.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c | 29 +++++++++++++++++++++-
+ 1 file changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+index 9a1e88cfdff3..1cbf2e08ebde 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+@@ -102,6 +102,8 @@
+ /* Mux indices are the encodings */
+ #define CPU_MUX_SLOW		0
+ #define CPU_CORE_MUX_BACK	5
++#define CPU_DSU_MUX_PERI0_600M	5
++#define CPU_DSU_PARK_RATE	600000000UL
+ 
+ /*
+  * Operating points that the core clusters and the DSU run at the lowest
+@@ -784,11 +786,30 @@ static void sun60i_a733_cpu_park_on_back(struct device *dev)
+ 	dev_info(dev, "core clusters park on the backup PLL at %lu Hz\n", rate);
+ }
+ 
++/*
++ * Park the DSU on pll-periph0-600m instead of cpu-slow when it runs at
++ * 600 MHz. probe() holds it enabled, so it cannot be gated under a parked
++ * DSU.
++ */
++static void sun60i_a733_cpu_park_dsu(struct device *dev, struct clk *peri0)
++{
++	unsigned long rate = clk_get_rate(peri0);
++
++	if (rate != CPU_DSU_PARK_RATE) {
++		dev_info(dev, "pll-periph0-600m at %lu Hz, the DSU parks on cpu-slow\n",
++			 rate);
++		return;
++	}
++
++	cpu_dsu_mux_nb.bypass_index = CPU_DSU_MUX_PERI0_600M;
++	dev_info(dev, "the DSU parks on pll-periph0-600m\n");
++}
++
+ static int sun60i_a733_cpu_ccu_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	void __iomem *reg;
+-	struct clk *hosc;
++	struct clk *hosc, *peri0;
+ 	unsigned int i;
+ 	int ret;
+ 
+@@ -804,11 +825,17 @@ static int sun60i_a733_cpu_ccu_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	peri0 = devm_clk_get_enabled(dev, "pll-periph0-600m");
++	if (IS_ERR(peri0))
++		return dev_err_probe(dev, PTR_ERR(peri0),
++				     "cannot enable pll-periph0-600m\n");
++
+ 	ret = sun60i_a733_cpu_register_clks(dev, reg);
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "cannot register the clocks\n");
+ 
+ 	sun60i_a733_cpu_park_on_back(dev);
++	sun60i_a733_cpu_park_dsu(dev, peri0);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(sun60i_a733_cpu_clusters); i++) {
+ 		ret = sun60i_a733_cpu_register_nb(dev,

@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:10:40 +0200
+Subject: [PATCH] mmc: sunxi: Support HS400 enhanced strobe on the A733
+
+In enhanced strobe mode the card frames its command responses with the
+data strobe, which the A733 SMHC samples when DS_SAMP_RESP_EN in
+SMHC_CQE_CTRL is set.
+
+Implement ->hs400_enhanced_strobe to set and clear the bit, set it again
+whenever HS400 timing is programmed because runtime resume reprograms
+the timing, and stop masking MMC_CAP2_HS400_ES on HS400 controllers.
+
+Tested on Radxa Cubie A7S: booted on two boards; the eMMC comes up as an
+HS400 Enhanced strobe card, CQE_CTRL reads 0x103 also after a runtime
+suspend, and 1 GiB reads with the same checksum twice.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 29 +++++++++++++++++++++++++++--
+ 1 file changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 8fe2f4934542..d5c8234ff9bc 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -74,6 +74,7 @@
+ #define SDXC_REG_DRV_DL		0x140 /* Drive Delay Control Register */
+ #define SDXC_REG_SAMP_DL_REG	0x144 /* SMC sample delay control */
+ #define SDXC_REG_DS_DL_REG	0x148 /* SMC data strobe delay control */
++#define SDXC_REG_CQE_CTRL	0x1A0 /* SMC CQE Control */
+ #define SDXC_REG_THLD		0x100 /* SMC Card Threshold Control */
+ #define SDXC_REG_A23A		0x108 /* SMC Auto Command 23 Argument */
+ #define SDXC_REG_EMMC_DSBD	0x10C /* SMC eMMC DDR Start Bit Detection */
+@@ -259,6 +260,9 @@
+ /* eMMC DDR start bit detection control */
+ #define SDXC_HS400_MD_EN		BIT(31)
+ 
++/* CQE control: sample the response on the data strobe */
++#define SDXC_DS_SAMP_RESP_EN		BIT(8)
++
+ #define SDXC_CAL_TIMEOUT	3	/* in seconds, 3s is enough*/
+ 
+ struct sunxi_mmc_clk_delay {
+@@ -826,6 +830,18 @@ static int sunxi_mmc_clk_set_phase(struct sunxi_mmc_host *host,
+ 	return 0;
+ }
+ 
++static void sunxi_mmc_set_enhanced_strobe(struct sunxi_mmc_host *host,
++					  bool enable)
++{
++	u32 rval = mmc_readl(host, REG_CQE_CTRL);
++
++	if (enable)
++		rval |= SDXC_DS_SAMP_RESP_EN;
++	else
++		rval &= ~SDXC_DS_SAMP_RESP_EN;
++	mmc_writel(host, REG_CQE_CTRL, rval);
++}
++
+ /*
+  * Program the HS400 timing with the card clock gated: CRC status detection
+  * for HS400, the default data sample phase, the data strobe delay and the
+@@ -854,6 +870,9 @@ static void sunxi_mmc_set_hs400(struct sunxi_mmc_host *host,
+ 	mmc_writel(host, REG_DS_DL_REG, rval);
+ 
+ 	mmc_writel(host, REG_EMMC_DSBD, hs400 ? SDXC_HS400_MD_EN : 0);
++
++	/* Set again on every pass, a runtime resume comes through here too */
++	sunxi_mmc_set_enhanced_strobe(host, hs400 && ios->enhanced_strobe);
+ }
+ 
+ static int sunxi_mmc_clk_set_rate(struct sunxi_mmc_host *host,
+@@ -1240,6 +1259,12 @@ static int sunxi_mmc_card_busy(struct mmc_host *mmc)
+ 	return !!(mmc_readl(host, REG_STAS) & SDXC_CARD_DATA_BUSY);
+ }
+ 
++static void sunxi_mmc_hs400_enhanced_strobe(struct mmc_host *mmc,
++					    struct mmc_ios *ios)
++{
++	sunxi_mmc_set_enhanced_strobe(mmc_priv(mmc), ios->enhanced_strobe);
++}
++
+ /*
+  * Called by the core once the bus runs in HS400. Read the EXT_CSD with every
+  * data strobe delay and keep the middle of the longest passing window.
+@@ -1300,6 +1325,7 @@ static const struct mmc_host_ops sunxi_mmc_ops = {
+ 	.card_hw_reset	 = sunxi_mmc_hw_reset,
+ 	.card_busy	 = sunxi_mmc_card_busy,
+ 	.execute_hs400_tuning = sunxi_mmc_execute_hs400_tuning,
++	.hs400_enhanced_strobe = sunxi_mmc_hs400_enhanced_strobe,
+ };
+ 
+ static const struct sunxi_mmc_clk_delay sunxi_mmc_clk_delays[] = {
+@@ -1672,8 +1698,7 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	if (!host->cfg->can_hs400)
+-		mmc->caps2 &= ~MMC_CAP2_HS400;
+-	mmc->caps2 &= ~MMC_CAP2_HS400_ES;
++		mmc->caps2 &= ~(MMC_CAP2_HS400 | MMC_CAP2_HS400_ES);
+ 	host->ds_dl = host->cfg->ds_dl;
+ 
+ 	ret = sunxi_mmc_init_host(host);

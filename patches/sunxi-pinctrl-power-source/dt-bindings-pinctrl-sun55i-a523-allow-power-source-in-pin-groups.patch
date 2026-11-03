@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:54:23 +0200
+Subject: [PATCH] dt-bindings: pinctrl: sun55i-a523: Allow power-source in pin
+ groups
+
+The A523 and the A733 supply pin bank PF from two rails, 3.3 V and
+1.8 V, and select between them in the pin controller. An SD card slot
+on bank PF needs that switch for UHS signalling.
+
+Allow the generic power-source property in pin groups, in microvolts.
+
+Tested on Radxa Cubie A7S: booted on two boards; the SD card pin groups
+with power-source set to 1800000 and 3300000 are accepted and applied
+(GPIO_POW_VAL_SET_CTL bit 0 reads 0 and 1).
+
+Assisted-by: LLM
+---
+ .../bindings/pinctrl/allwinner,sun55i-a523-pinctrl.yaml    | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/pinctrl/allwinner,sun55i-a523-pinctrl.yaml b/Documentation/devicetree/bindings/pinctrl/allwinner,sun55i-a523-pinctrl.yaml
+index d7d0ba32ced4..02f7a0ab6882 100644
+--- a/Documentation/devicetree/bindings/pinctrl/allwinner,sun55i-a523-pinctrl.yaml
++++ b/Documentation/devicetree/bindings/pinctrl/allwinner,sun55i-a523-pinctrl.yaml
+@@ -99,6 +99,13 @@ patternProperties:
+           pins will repeat the last value, to allow just specifying a single
+           cell, for all cells.
+ 
++      power-source:
++        $ref: /schemas/types.yaml#/definitions/uint32
++        description:
++          I/O voltage of the bank, in microvolts. Only bank PF can switch
++          it, between its two supplies.
++        enum: [1800000, 3300000]
++
+     required:
+       - pins
+       - allwinner,pinmux

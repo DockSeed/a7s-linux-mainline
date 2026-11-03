@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:31:22 +0200
+Subject: [PATCH] clk: sunxi-ng: Let the PLL notifier wait for the PLL to
+ settle
+
+Some PLLs need a settling time after they report the lock before their
+output may be used. The PLL notifier returns as soon as the lock bit is
+set.
+
+Add a delay_us field to struct ccu_pll_nb, waited after the lock, as
+struct ccu_mux_nb has for its reparenting. It is zero for all current
+users, so they are unchanged.
+
+Tested on Radxa Cubie A7S: with the PLL_GPU0 notifier of the A733 on two
+boards, see the next patch; not tested on the SoCs of the other users,
+for which the delay stays 0.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu_common.c | 3 +++
+ drivers/clk/sunxi-ng/ccu_common.h | 1 +
+ 2 files changed, 4 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu_common.c b/drivers/clk/sunxi-ng/ccu_common.c
+index 248e58c9562d..e7a496d167a7 100644
+--- a/drivers/clk/sunxi-ng/ccu_common.c
++++ b/drivers/clk/sunxi-ng/ccu_common.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
++#include <linux/delay.h>
+ #include <linux/device.h>
+ #include <linux/iopoll.h>
+ #include <linux/module.h>
+@@ -96,6 +97,8 @@ static int ccu_pll_notifier_cb(struct notifier_block *nb,
+ 
+ 	ccu_helper_wait_for_lock(pll->common, pll->lock);
+ 
++	udelay(pll->delay_us);
++
+ out:
+ 	return notifier_from_errno(ret);
+ }
+diff --git a/drivers/clk/sunxi-ng/ccu_common.h b/drivers/clk/sunxi-ng/ccu_common.h
+index d9dc24ad5503..6027f59c8b7a 100644
+--- a/drivers/clk/sunxi-ng/ccu_common.h
++++ b/drivers/clk/sunxi-ng/ccu_common.h
+@@ -73,6 +73,7 @@ struct ccu_pll_nb {
+ 
+ 	u32	enable;
+ 	u32	lock;
++	u32	delay_us;	/* How many us to wait after the lock */
+ };
+ 
+ #define to_ccu_pll_nb(_nb) container_of(_nb, struct ccu_pll_nb, clk_nb)

@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:59:49 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the PRCM I2C controllers
+
+The PMIC and the USB Type-C port controller of A733 boards sit on the
+I2C controllers in the PRCM domain, S_TWI0 and S_TWI1. The device tree
+has no node for them.
+
+Add both: S_TWI0 at 0x07083000 and S_TWI1 at 0x07084000, with the PRCM bus
+clocks and resets, and the pin groups boards use: PL0/PL1 function 2 for
+S_TWI0 and PL12/PL13 function 3 for S_TWI1. The compatible falls back to
+the V536 and A31 controllers, as the A733 binding asks. Both nodes stay
+disabled; boards enable them.
+
+Not covered: S_TWI2, the TWI controllers of the CPUX domain and "dmas",
+which the driver does not use.
+
+Tested on Radxa Cubie A7S: booted on two boards with the buses enabled
+by the next patch; both controllers probe and register an I2C adapter.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 40 +++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 1a46a3afefe9..31d98b95d319 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -536,6 +536,46 @@ r_pio: pinctrl@7025000 {
+ 			#gpio-cells = <3>;
+ 			interrupt-controller;
+ 			#interrupt-cells = <3>;
++
++			/omit-if-no-ref/
++			r_i2c0_pl_pins: r-i2c0-pl-pins {
++				pins = "PL0", "PL1";
++				allwinner,pinmux = <2>;
++				function = "r_i2c0";
++			};
++
++			/omit-if-no-ref/
++			r_i2c1_pl12_pins: r-i2c1-pl12-pins {
++				pins = "PL12", "PL13";
++				allwinner,pinmux = <3>;
++				function = "r_i2c1";
++			};
++		};
++
++		r_i2c0: i2c@7083000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x07083000 0x400>;
++			interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_BUS_R_I2C0>;
++			resets = <&r_ccu RST_BUS_R_I2C0>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		r_i2c1: i2c@7084000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x07084000 0x400>;
++			interrupts = <GIC_SPI 204 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_BUS_R_I2C1>;
++			resets = <&r_ccu RST_BUS_R_I2C1>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
+ 		};
+ 
+ 		rtc: rtc@7090000 {

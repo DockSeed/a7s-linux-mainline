@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 15:16:16 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Describe the USB hub
+ and the WiFi module
+
+The USB-A port and the WiFi/BT module are behind a WCH CH334F hub on
+USB1. The hub is fed from the always-on 3.3 V rail and has no reset
+line.
+
+The module U3 sits on port 1 of the hub. Its supply WIFI_3V3 is a load
+switch enabled by PM0, its CHIP_EN pin is driven by PM1 and is active
+high. Let onboard_usb_dev power it before the port is enumerated.
+
+Tested on Radxa Cubie A7S: booted on two boards; the hub and the module
+node bind, WIFI_3V3 is on and the module enumerates on port 1 of the
+hub; with PM5 low the hub and the module stay.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 30 +++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index c1c70df6944b..c420665654c5 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -86,6 +86,16 @@ reg_usb1_vbus: regulator-usb1-vbus {
+ 		enable-active-high;
+ 	};
+ 
++	/* WIFI_3V3 of the WiFi/BT module, load switch Q8 enabled by USB_WIFI_PWR (PM0) */
++	reg_wifi_3v3: regulator-wifi-3v3 {
++		compatible = "regulator-fixed";
++		regulator-name = "wifi-3v3";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&r_pio 1 0 GPIO_ACTIVE_HIGH>; /* PM0 */
++		enable-active-high;
++	};
++
+ 	/* VBUS of the USB-C port J4, switched by USB0-DRVVBUS (PL2) */
+ 	reg_usbc_vbus: regulator-usbc-vbus {
+ 		compatible = "regulator-fixed";
+@@ -182,7 +192,27 @@ &dsu_pmu {
+ };
+ 
+ &ehci1 {
++	#address-cells = <1>;
++	#size-cells = <0>;
+ 	status = "okay";
++
++	/* CH334F hub U9, always powered, no reset line */
++	hub@1 {
++		compatible = "usb1a86,8091";
++		reg = <1>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		vdd33-supply = <&reg_dcdc1>;
++		v5-supply = <&reg_dcdc1>;
++
++		/* FCU760K WiFi/BT module, CHIP_EN is WL-REG-ON (PM1) */
++		wifi@1 {
++			compatible = "usba69c,8d80";
++			reg = <1>;
++			vdd-supply = <&reg_wifi_3v3>;
++			reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>; /* PM1 */
++		};
++	};
+ };
+ 
+ &gmac0 {

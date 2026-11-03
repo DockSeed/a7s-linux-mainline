@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 10:00:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the USB0 OTG controller
+
+The A733 has a MUSB OTG controller on USB0, next to the EHCI and OHCI
+of that port. It shares PHY 0 and the root port with them, and the PHY
+driver routes PHY 0 to one of the two by the mode of the port.
+
+Add the controller disabled, with the bus gate and reset of the clock
+controller, the device interrupt, and PHY 0 as PHY and extcon. Boards
+enable it and set dr_mode.
+
+Not covered: the shared USB bus gate, which stays with the EHCI and
+OHCI nodes, as the binding has one clock.
+
+Tested on Radxa Cubie A7S: booted; the USB0 controller binds and, as a
+gadget on J16, enumerates at high speed on a host.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index d5c181e8b056..e0a063bd606e 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -869,6 +869,20 @@ mmc2: mmc@4022000 {
+ 			#size-cells = <0>;
+ 		};
+ 
++		usb_otg: usb@4100000 {
++			compatible = "allwinner,sun60i-a733-musb",
++				     "allwinner,sun8i-a33-musb";
++			reg = <0x04100000 0x400>;
++			interrupts = <GIC_SPI 156 IRQ_TYPE_LEVEL_HIGH 0>;
++			interrupt-names = "mc";
++			clocks = <&ccu CLK_BUS_OTG>;
++			resets = <&ccu RST_BUS_OTG>;
++			extcon = <&usbphy 0>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			status = "disabled";
++		};
++
+ 		usbphy: phy@4100400 {
+ 			compatible = "allwinner,sun60i-a733-usb-phy",
+ 				     "allwinner,sun20i-d1-usb-phy";

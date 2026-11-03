@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 12:15:00 +0200
+Subject: [PATCH] arm64: lib: clear_user: Branch to the loop body, not to its
+ padding
+
+The loop label in __arch_clear_user() stands in front of its .p2align
+directive, so every iteration branches back into the alignment padding
+and runs up to three NOPs. Put the label after the directive: the
+padding then runs once and the loop keeps its alignment. At the boot
+clock, 20000 MiB through /dev/zero take 5.37 s instead of 7.95 s on an
+A55 and 2.74 s instead of 5.30 s on an A76.
+
+Tested on Radxa Cubie A7S: booted on two boards; reads from /dev/zero
+return zeros (md5 of 64 MiB in 1 MiB reads and of 1000 reads of 4097
+bytes).
+
+Fixes: fe59e0358d9b ("arm64: lib: Use MOPS for usercopy routines")
+Assisted-by: LLM
+---
+ arch/arm64/lib/clear_user.S | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/lib/clear_user.S b/arch/arm64/lib/clear_user.S
+index de9a303b6ad0..143d2f75ccf2 100644
+--- a/arch/arm64/lib/clear_user.S
++++ b/arch/arm64/lib/clear_user.S
+@@ -37,7 +37,8 @@ USER(6f, setet	[x0]!, x1!, xzr)
+ 	subs	x1, x1, #8
+ 	b.mi	2f
+ 
+-1:	.p2align 4
++	.p2align 4
++1:
+ USER(9f, sttr	xzr, [x0])
+ 	add	x0, x0, #8
+ 	subs	x1, x1, #8

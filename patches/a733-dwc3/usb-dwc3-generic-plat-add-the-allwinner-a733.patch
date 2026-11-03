@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:58:55 +0200
+Subject: [PATCH] usb: dwc3: generic-plat: Add the Allwinner A733
+
+The DWC3 controller of the A733 needs five clocks and its reset handled
+before the core can be probed, two of the clocks being bus gates in the
+SERDES CCU. The generic platform glue does exactly that, so add the A733
+compatible to it.
+
+Tested on Radxa Cubie A7S: booted on two boards; 6a00000.usb binds to
+dwc3-generic-plat once the PHYs are loaded, the core comes out of reset,
+and it survives two unbind and bind cycles in both plug orientations.
+
+Assisted-by: LLM
+---
+ drivers/usb/dwc3/dwc3-generic-plat.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/usb/dwc3/dwc3-generic-plat.c b/drivers/usb/dwc3/dwc3-generic-plat.c
+index ca69ac0eb07c..06efd29a0f99 100644
+--- a/drivers/usb/dwc3/dwc3-generic-plat.c
++++ b/drivers/usb/dwc3/dwc3-generic-plat.c
+@@ -232,6 +232,7 @@ static const struct dwc3_generic_config eic7700_dwc3 =  {
+ };
+ 
+ static const struct of_device_id dwc3_generic_of_match[] = {
++	{ .compatible = "allwinner,sun60i-a733-dwc3", },
+ 	{ .compatible = "spacemit,k1-dwc3", &spacemit_k1_dwc3},
+ 	{ .compatible = "spacemit,k3-dwc3", },
+ 	{ .compatible = "fsl,ls1028a-dwc3", &fsl_ls1028_dwc3},

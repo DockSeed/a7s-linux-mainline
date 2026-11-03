@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 8 Oct 2026 12:00:00 +0200
+Subject: [PATCH] dt-bindings: mfd: syscon: Add the Allwinner A733 SERDES top
+ registers
+
+One 4 KiB page of the SERDES block of the A733 holds the protocol and
+lane muxes of both combo PHYs: the DisplayPort lane width conversion and
+the USB3 PIPE clock and RX data muxes of the first combo PHY, and the
+PIPE TX data mux of the second. Each PHY driver writes its own
+registers, but the page cannot be split between the two PHY nodes.
+
+Add the page as a system controller, so that both PHYs reach it through
+a phandle and a shared regmap.
+
+Tested on Radxa Cubie A7S: booted on two boards; both combo PHYs reach
+their registers through the node as a syscon, and the registers read
+back the values the PHYs program.
+
+Assisted-by: LLM
+---
+ Documentation/devicetree/bindings/mfd/syscon.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/mfd/syscon.yaml b/Documentation/devicetree/bindings/mfd/syscon.yaml
+index 945a168b613d..937199157b51 100644
+--- a/Documentation/devicetree/bindings/mfd/syscon.yaml
++++ b/Documentation/devicetree/bindings/mfd/syscon.yaml
+@@ -30,6 +30,7 @@ properties:
+               - allwinner,sun8i-h3-system-controller
+               - allwinner,sun8i-v3s-system-controller
+               - allwinner,sun50i-a64-system-controller
++              - allwinner,sun60i-a733-serdes-top
+               - altr,l3regs
+               - altr,sdr-ctl
+               - amd,pensando-elba-syscon

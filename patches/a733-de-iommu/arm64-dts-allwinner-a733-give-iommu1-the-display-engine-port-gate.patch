@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 10:00:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Give IOMMU1 the display engine
+ port gate
+
+A master's register block in the IOMMU does not answer while the
+master's port on the MBUS matrix is gated, and the access stalls the
+bus. The IOMMU driver takes a reference on the port gate of a master,
+given as a "masterN" clock, for as long as the master translates. The
+A733 clock driver marks these gates CLK_IS_CRITICAL, so they stay
+enabled and the reference does not change their state.
+
+Name the port gate of the display engine, master 2 of the second IOMMU
+(manual chapter 10). Its MBUS port is DESYS, bit 11 of
+MBUS_MAT_CLK_GATING_REG (manual section 4.1.6.83). The display engine
+top driver takes a reference on that gate, but only from its probe to its
+unbind.
+The IOMMU is built in and touches the master's block when it attaches
+the master at boot, on a flush, on a fault and on resume, also before a
+modular display driver has bound and after the driver has unbound.
+
+Seen on the Radxa Cubie A7S: with the port gates of the video engine
+cleared, the first unmap through its masters stalls the bus until the
+watchdog resets the SoC.
+
+Nothing changes until a node lists the IOMMU in "iommus": the driver
+enables a master clock only for a master with a user.
+
+Tested on Radxa Cubie A7S: on two boards the IOMMU holds the display
+engine's port gate from boot, before the display driver binds, while
+master 2 translates.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 334d5880d32f..384e13a004b3 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1037,9 +1037,10 @@ iommu1: iommu@3910000 {
+ 				 <&ccu CLK_AHB_IOMMU1_SYS>,
+ 				 <&ccu CLK_MBUS_IOMMU1>,
+ 				 <&ccu CLK_MBUS_VE_DEC0_GATE>,
+-				 <&ccu CLK_MBUS_VE_DEC0_GATE>;
++				 <&ccu CLK_MBUS_VE_DEC0_GATE>,
++				 <&ccu CLK_MBUS_DESYS>;
+ 			clock-names = "mclk", "pclk", "hclk", "mbus",
+-				      "master0", "master1";
++				      "master0", "master1", "master2";
+ 			resets = <&ccu RST_BUS_IOMMU1_SYS>;
+ 			#iommu-cells = <1>;
+ 		};

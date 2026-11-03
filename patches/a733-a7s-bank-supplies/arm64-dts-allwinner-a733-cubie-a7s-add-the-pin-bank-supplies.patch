@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 20:20:24 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Add the pin bank
+ supplies
+
+Banks PB, PC and PD have no supply in the DT, so the pin controller
+uses dummy regulators for them. PB runs from VCC-IO, which is SWOUT2,
+and PC from CLDO5, which now takes its schematic name vcc-pc. PD runs
+from VCC33-LCD, which is SWOUT1: in the schematic the VCC-PD ball is
+connected to it through R251, not to BLDO2, whose output also carries a
+VCC-PD label.
+
+Add the three supplies. The A733 pin controller does not program the
+withstand voltage from them, so no register changes.
+
+Not covered: banks PE, PF, PG, PJ and PK, whose supplies are either
+not described yet, switched off or dual.
+
+Tested on Radxa Cubie A7S: booted on one board; the pin controller holds
+vcc33-lcd (SWOUT1) as a consumer.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index d7248efc83eb..e7ef3e436076 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -157,6 +157,9 @@ &osc {
+ };
+ 
+ &pio {
++	vcc-pb-supply = <&reg_swout2>;
++	vcc-pc-supply = <&reg_cldo5>;
++	vcc-pd-supply = <&reg_swout1>;
+ 	vcc-ph-supply = <&reg_swout2>;
+ };
+ 
+@@ -181,7 +184,7 @@ reg_dcdc1: dcdc1 {
+ 
+ 			/* 1.8 V I/O: eMMC VCCQ, bank PC */
+ 			reg_cldo5: cldo5 {
+-				regulator-name = "vcc-1v8";
++				regulator-name = "vcc-pc";
+ 				regulator-min-microvolt = <1800000>;
+ 				regulator-max-microvolt = <1800000>;
+ 				regulator-always-on;

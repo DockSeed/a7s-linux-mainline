@@ -1,0 +1,195 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:02:55 +0200
+Subject: [PATCH] thermal/drivers/sun8i: Add support for the A733 THS
+
+The A733 has one THS controller with five sensors. Its registers follow the
+H6 layout, but conversion, calibration and programming differ, so add its
+own chip data.
+
+The raw value converts to temperature on two straight segments, joined
+at raw 1770, where the reading steps by 2.3 degrees Celsius. The manual
+does not give the conversion; it is the vendor's, checked against the
+vendor driver over the range swept on these boards. The SID holds the
+factory test temperature and each sensor's reading at it; the difference
+goes into THSn_CDATA.
+
+The init follows the manual's query mode: THS_PER 0x3a and the 4-sample
+filter, set while the sensors are disabled, and no data interrupt, as the
+zones are polled. Unlike the vendor driver, the calibration offset is
+rounded rather than truncated, and an empty or short calibration is
+reported.
+
+Not covered: the alarm and shutdown interrupts.
+
+Tested on Radxa Cubie A7S: booted on two boards; the driver writes each
+board's calibration from the SID, the sensor runs from its 24 MHz clock
+without interrupts, and the readings change between polls.
+
+Assisted-by: LLM
+---
+ drivers/thermal/sun8i_thermal.c | 113 +++++++++++++++++++++++++++++++-
+ 1 file changed, 112 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/thermal/sun8i_thermal.c b/drivers/thermal/sun8i_thermal.c
+index 284684137c43..0ba32f58008c 100644
+--- a/drivers/thermal/sun8i_thermal.c
++++ b/drivers/thermal/sun8i_thermal.c
+@@ -22,10 +22,11 @@
+ #include <linux/reset.h>
+ #include <linux/slab.h>
+ #include <linux/thermal.h>
++#include <linux/unaligned.h>
+ 
+ #include "thermal_hwmon.h"
+ 
+-#define MAX_SENSOR_NUM	4
++#define MAX_SENSOR_NUM	5
+ 
+ #define FT_TEMP_MASK				GENMASK(11, 0)
+ #define TEMP_CALIB_MASK				GENMASK(11, 0)
+@@ -114,6 +115,22 @@ static int sun50i_h5_calc_temp(struct ths_device *tmdev,
+ 		return -1590 * reg / 10 + 276000;
+ }
+ 
++/*
++ * The manual does not give the conversion. This is the vendor's: two
++ * straight segments, joined at raw 1770 with a step of 2.3 degrees
++ * Celsius. It agrees with the vendor driver over the range the sensors
++ * were swept through on our boards. Above that range it is a vendor
++ * value, not checked against an external thermometer.
++ */
++static int sun60i_a733_calc_temp(struct ths_device *tmdev,
++				 int id, int reg)
++{
++	if (reg >= 1770)
++		return 174964 - 62 * reg;
++
++	return 167265 - 59 * reg;
++}
++
+ static int sun8i_ths_get_temp(struct thermal_zone_device *tz, int *temp)
+ {
+ 	struct tsensor *s = thermal_zone_device_priv(tz);
+@@ -298,6 +315,64 @@ static int sun50i_h6_ths_calibrate(struct ths_device *tmdev,
+ 	return 0;
+ }
+ 
++/* The A733 packs the calibration data into 12-bit fields. */
++static int sun60i_a733_ths_field(const u8 *caldata, int i)
++{
++	u16 val = get_unaligned_le16(caldata + i * 3 / 2);
++
++	return (i % 2 ? val >> 4 : val) & TEMP_CALIB_MASK;
++}
++
++static int sun60i_a733_ths_calibrate(struct ths_device *tmdev,
++				     u16 *caldata, int callen)
++{
++	const u8 *cal = (const u8 *)caldata;
++	struct device *dev = tmdev->dev;
++	int i, ft_temp;
++
++	/*
++	 * Field 0 is the factory test temperature in units of 0.1 degree
++	 * Celsius, fields 1 to 5 are the readings of the sensors at that
++	 * temperature.
++	 */
++	if (callen < DIV_ROUND_UP((tmdev->chip->sensor_num + 1) * 12, 8)) {
++		dev_warn(dev, "calibration data too short\n");
++		return -EINVAL;
++	}
++
++	ft_temp = sun60i_a733_ths_field(cal, 0) * 100;
++	if (!ft_temp) {
++		dev_warn(dev, "no calibration data\n");
++		return -ENODATA;
++	}
++
++	for (i = 0; i < tmdev->chip->sensor_num; i++) {
++		int reg = sun60i_a733_ths_field(cal, i + 1);
++		int cdata, offset;
++
++		/*
++		 * The sensor reading moves by one code per calibration
++		 * code. The factory readings all fall on the segment below
++		 * 65 degrees Celsius, where a code is 62 millidegrees.
++		 */
++		cdata = CALIBRATE_DEFAULT -
++			DIV_ROUND_CLOSEST(tmdev->chip->calc_temp(tmdev, i, reg) -
++					  ft_temp, 62);
++		if (!reg || (cdata & ~TEMP_CALIB_MASK)) {
++			dev_warn(dev, "sensor%d is not calibrated.\n", i);
++			continue;
++		}
++
++		offset = (i % 2) * 16;
++		regmap_update_bits(tmdev->regmap,
++				   SUN50I_H6_THS_TEMP_CALIB + (i / 2 * 4),
++				   TEMP_CALIB_MASK << offset,
++				   cdata << offset);
++	}
++
++	return 0;
++}
++
+ static int sun8i_ths_calibrate(struct ths_device *tmdev)
+ {
+ 	struct nvmem_cell *calcell;
+@@ -520,6 +595,30 @@ static int sun50i_h6_thermal_init(struct ths_device *tmdev)
+ 	return 0;
+ }
+ 
++static int sun60i_a733_thermal_init(struct ths_device *tmdev)
++{
++	/* THS_PER only takes effect while the sensors are disabled. */
++	regmap_write(tmdev->regmap, SUN50I_H6_THS_ENABLE, 0);
++
++	/* 2 us acquire time, 20 us sample period at 24 MHz */
++	regmap_write(tmdev->regmap, SUN50I_THS_CTRL0,
++		     SUN50I_THS_CTRL0_T_ACQ(48) |
++		     SUN50I_THS_CTRL0_T_SAMPLE_PER(480));
++	/* one conversion every 4096 * (0x3a + 1) cycles, about 10 ms */
++	regmap_write(tmdev->regmap, SUN50I_H6_THS_PC,
++		     SUN50I_H6_THS_PC_TEMP_PERIOD(0x3a));
++	/* average over 4 samples */
++	regmap_write(tmdev->regmap, SUN50I_H6_THS_MFC,
++		     SUN50I_THS_FILTER_EN |
++		     SUN50I_THS_FILTER_TYPE(1));
++	/* the thermal zones are polled, no interrupt per sample */
++	regmap_write(tmdev->regmap, SUN50I_H6_THS_DIC, 0);
++	regmap_write(tmdev->regmap, SUN50I_H6_THS_ENABLE,
++		     GENMASK(tmdev->chip->sensor_num - 1, 0));
++
++	return 0;
++}
++
+ static int sun8i_ths_register(struct ths_device *tmdev)
+ {
+ 	int i;
+@@ -708,6 +807,17 @@ static const struct ths_thermal_chip sun50i_h616_ths = {
+ 	.calc_temp = sun8i_ths_calc_temp,
+ };
+ 
++static const struct ths_thermal_chip sun60i_a733_ths = {
++	.sensor_num = 5,
++	.has_mod_clk = true,
++	.has_bus_clk_reset = true,
++	.temp_data_base = SUN50I_H6_THS_TEMP_DATA,
++	.calibrate = sun60i_a733_ths_calibrate,
++	.init = sun60i_a733_thermal_init,
++	.irq_ack = sun50i_h6_irq_ack,
++	.calc_temp = sun60i_a733_calc_temp,
++};
++
+ static const struct of_device_id of_ths_match[] = {
+ 	{ .compatible = "allwinner,sun8i-a83t-ths", .data = &sun8i_a83t_ths },
+ 	{ .compatible = "allwinner,sun8i-h3-ths", .data = &sun8i_h3_ths },
+@@ -718,6 +828,7 @@ static const struct of_device_id of_ths_match[] = {
+ 	{ .compatible = "allwinner,sun50i-h6-ths", .data = &sun50i_h6_ths },
+ 	{ .compatible = "allwinner,sun20i-d1-ths", .data = &sun20i_d1_ths },
+ 	{ .compatible = "allwinner,sun50i-h616-ths", .data = &sun50i_h616_ths },
++	{ .compatible = "allwinner,sun60i-a733-ths", .data = &sun60i_a733_ths },
+ 	{ /* sentinel */ },
+ };
+ MODULE_DEVICE_TABLE(of, of_ths_match);

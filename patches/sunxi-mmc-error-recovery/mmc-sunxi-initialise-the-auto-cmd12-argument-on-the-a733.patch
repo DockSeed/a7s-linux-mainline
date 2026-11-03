@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 13:25:31 +0200
+Subject: [PATCH] mmc: sunxi: Initialise the auto-CMD12 argument on the A733
+
+When a multiple-block transfer is sent without CMD23, the controller
+ends it with a CMD12 of its own and takes the argument from SMHC_A12A.
+On the A733 that register resets to 0x0000ffff, and the driver has
+never written it, so the automatic stop goes out with 0xffff instead of
+the zero argument CMD12 takes. On eMMC 4.41 and later, bit 0 of that
+argument selects the high priority interrupt form of the command.
+
+Write zero to SMHC_A12A in sunxi_mmc_init_host(), which runs after
+every controller reset, behind a new configuration flag set only for
+the A733. The flag keeps the other controllers as they are: their
+reset values have not been checked here.
+
+The value only matters for transfers without CMD23. On the A733 those
+are the ones whose card does not support CMD23, since the controller
+sends CMD23 by itself otherwise.
+
+Tested on Radxa Cubie A7S: booted on two boards; SMHC_A12A reads 0 on
+the SD and the eMMC controller, also after a runtime suspend and resume.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 9a2850710152..731f5d3ad275 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -316,6 +316,9 @@ struct sunxi_mmc_cfg {
+ 	/* controller has the HS400 data strobe path, and its initial delay */
+ 	bool can_hs400;
+ 	u32 ds_dl;
++
++	/* SMHC_A12A does not reset to zero, the auto-CMD12 argument */
++	bool needs_a12a_init;
+ };
+ 
+ struct sunxi_mmc_host {
+@@ -398,6 +401,9 @@ static int sunxi_mmc_init_host(struct sunxi_mmc_host *host)
+ 	mmc_writel(host, REG_RINTR, 0xffffffff);
+ 	/* Debug register? undocumented */
+ 	mmc_writel(host, REG_DBGC, 0xdeb);
++	/* Argument of the CMD12 the controller sends by itself */
++	if (host->cfg->needs_a12a_init)
++		mmc_writel(host, REG_A12A, 0);
+ 	/* Enable CEATA support */
+ 	if (!host->cfg->no_ceata_funs)
+ 		mmc_writel(host, REG_FUNS, SDXC_CEATA_ON);
+@@ -1444,6 +1450,7 @@ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	.thld_fifo_bytes = 1024,
+ 	.can_hs400 = true,
+ 	.ds_dl = 20,
++	.needs_a12a_init = true,
+ };
+ 
+ static const struct of_device_id sunxi_mmc_of_match[] = {

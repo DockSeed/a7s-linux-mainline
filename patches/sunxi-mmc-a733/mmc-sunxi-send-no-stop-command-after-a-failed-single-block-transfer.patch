@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:10:03 +0200
+Subject: [PATCH] mmc: sunxi: Send no stop command after a failed single-block
+ transfer
+
+After a failed single-block transfer the card has already left the data
+phase, so the manual CMD12 arrives in transfer state, fails as an
+illegal command and shows up in the next card status.
+
+Send the stop only for SDIO extended transfers, for requests with a
+stop command attached and for multiple-block transfers.
+
+Tested on Radxa Cubie A7S: booted on two boards; on the board with an
+eMMC, HS400 tuning fails the EXT_CSD read at every delay outside its
+window, and no "send stop command failed" is logged.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 6ae07a72b31b..f854e1b5e4e7 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -506,6 +506,21 @@ static void sunxi_mmc_dump_errinfo(struct sunxi_mmc_host *host)
+ 		);
+ }
+ 
++/*
++ * A failed transfer needs a stop command only while the card may still be
++ * in its data phase: SDIO extended transfers, transfers the core attached a
++ * stop command to, and multiple-block transfers. After a single-block
++ * transfer the card is back in transfer state, and a CMD12 there is an
++ * illegal command.
++ */
++static bool sunxi_mmc_needs_manual_stop(struct mmc_request *mrq)
++{
++	if (mrq->cmd->opcode == SD_IO_RW_EXTENDED || mrq->stop)
++		return true;
++
++	return mrq->data->blocks > 1;
++}
++
+ /* Called in interrupt context! */
+ static irqreturn_t sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
+ {
+@@ -522,7 +537,8 @@ static irqreturn_t sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
+ 
+ 		if (data) {
+ 			data->error = -ETIMEDOUT;
+-			host->manual_stop_mrq = mrq;
++			if (sunxi_mmc_needs_manual_stop(mrq))
++				host->manual_stop_mrq = mrq;
+ 		}
+ 
+ 		if (mrq->stop)

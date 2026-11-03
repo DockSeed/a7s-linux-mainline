@@ -1,0 +1,290 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:35:57 +0200
+Subject: [PATCH] phy: allwinner: Add a driver for the A733 DisplayPort AUX PHY
+
+The AUX channel of the A733 DisplayPort transmitter, and its hot plug
+detect input, go through an analog front end in the SERDES block beside
+the first combo PHY. Without it the transmitter cannot reach the sink.
+
+Add a driver for it. Init enables the SERDES clock and the shared SERDES
+reset. Power on sets the front end up for DisplayPort with the defaults
+the user manual marks: 15 mV receiver hysteresis, 558.5 mV bandgap start
+sense, the DisplayPort transmit current, 94 ohm termination, no
+polarity inversion (sections 18.2.6.13 to 18.2.6.15). It then enables
+the decoupling capacitance in two steps, which limits the inrush current
+and enables the HPD circuit, and the bias last.
+
+Differences from the vendor code: the fields of a register are written
+together, not one at a time; the analog test bus tap on the receiver
+pair is written as a whole field. That tap and the two settling delays
+are vendor values, not measured on our boards; the user manual gives no
+reason for the tap.
+
+Not covered: switching the AUX polarity bits with the plug direction;
+they stay at normal.
+
+Tested on Radxa Cubie A7S: booted on one board; AUX transactions through
+the PHY read the sink's capabilities and EDID.
+
+Assisted-by: LLM
+---
+ drivers/phy/allwinner/Kconfig                 |  13 ++
+ drivers/phy/allwinner/Makefile                |   1 +
+ .../phy/allwinner/phy-sun60i-a733-dp-aux.c    | 212 ++++++++++++++++++
+ 3 files changed, 226 insertions(+)
+ create mode 100644 drivers/phy/allwinner/phy-sun60i-a733-dp-aux.c
+
+diff --git a/drivers/phy/allwinner/Kconfig b/drivers/phy/allwinner/Kconfig
+index 158d35cc0492..407886a5c06a 100644
+--- a/drivers/phy/allwinner/Kconfig
++++ b/drivers/phy/allwinner/Kconfig
+@@ -91,6 +91,19 @@ config PHY_SUN60I_A733_COMBO
+ 
+ 	  If unsure and building for an A733, say M.
+ 
++config PHY_SUN60I_A733_DP_AUX
++	tristate "Allwinner A733 DisplayPort AUX PHY driver"
++	depends on ARCH_SUNXI || COMPILE_TEST
++	depends on HAS_IOMEM && OF
++	depends on RESET_CONTROLLER
++	select GENERIC_PHY
++	help
++	  Enable this to support the analog front end of the AUX channel
++	  and the hot plug detect input of the DisplayPort transmitter in
++	  the Allwinner A733 SoC.
++
++	  If unsure and building for an A733, say M.
++
+ config PHY_SUN60I_A733_PCIE_COMBO
+ 	tristate "Allwinner A733 PCIe combo PHY driver"
+ 	depends on ARCH_SUNXI || COMPILE_TEST
+diff --git a/drivers/phy/allwinner/Makefile b/drivers/phy/allwinner/Makefile
+index 0e7f819d11da..a36428bf1fc6 100644
+--- a/drivers/phy/allwinner/Makefile
++++ b/drivers/phy/allwinner/Makefile
+@@ -4,5 +4,6 @@ obj-$(CONFIG_PHY_SUN6I_MIPI_DPHY)	+= phy-sun6i-mipi-dphy.o
+ obj-$(CONFIG_PHY_SUN9I_USB)		+= phy-sun9i-usb.o
+ obj-$(CONFIG_PHY_SUN50I_USB3)		+= phy-sun50i-usb3.o
+ obj-$(CONFIG_PHY_SUN60I_A733_COMBO)	+= phy-sun60i-a733-combophy.o
++obj-$(CONFIG_PHY_SUN60I_A733_DP_AUX)	+= phy-sun60i-a733-dp-aux.o
+ obj-$(CONFIG_PHY_SUN60I_A733_PCIE_COMBO)	+= phy-sun60i-a733-pcie-combophy.o
+ obj-$(CONFIG_PHY_SUN60I_A733_USB2)	+= phy-sun60i-a733-usb2.o
+diff --git a/drivers/phy/allwinner/phy-sun60i-a733-dp-aux.c b/drivers/phy/allwinner/phy-sun60i-a733-dp-aux.c
+new file mode 100644
+index 000000000000..a9b44a6551d6
+--- /dev/null
++++ b/drivers/phy/allwinner/phy-sun60i-a733-dp-aux.c
+@@ -0,0 +1,212 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Allwinner A733 DisplayPort AUX PHY
++ *
++ * The analog front end of the AUX channel and the hot plug detect input of
++ * the A733 DisplayPort transmitter sits in the SERDES block, beside the
++ * first combo PHY, with three registers of its own.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bits.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/phy/phy.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++
++#define AUX_CTRL0			0x00
++#define  AUX_CTRL0_RX_HYST_LVL		GENMASK(27, 24)
++#define  AUX_CTRL0_RX_DEGLITCH		GENMASK(21, 20)
++#define  AUX_CTRL0_TX_SLEW		GENMASK(17, 16)
++#define  AUX_CTRL0_BG_START_ADJ		GENMASK(13, 12)
++#define  AUX_CTRL0_AUX_EN		BIT(8)
++#define  AUX_CTRL0_DECAP_EN_DEL		BIT(5)
++#define  AUX_CTRL0_DECAP_EN		BIT(4)
++#define  AUX_CTRL0_BG_EN		BIT(0)
++#define AUX_CTRL1			0x04
++#define  AUX_CTRL1_RX_OFFSET_DISABLE	BIT(28)
++#define  AUX_CTRL1_TERM_HIGHZ_EN	BIT(24)
++#define  AUX_CTRL1_ATBSEL		GENMASK(23, 16)
++#define  AUX_CTRL1_TX_CUR_CTRL		GENMASK(12, 8)
++#define  AUX_CTRL1_TERM_SEG_EN		GENMASK(4, 0)
++/* AUX polarity, HPD pad and swing level: all zero for DisplayPort */
++#define AUX_CTRL2			0x08
++
++/* The defaults the user manual marks for each field */
++#define AUX_RX_HYST_15MV		3
++#define AUX_RX_DEGLITCH_HIGHEST		3
++#define AUX_TX_SLEW_81PS		3
++#define AUX_BG_START_558MV		1
++#define AUX_TX_CUR_DP			0xe
++#define AUX_TERM_94OHM			0xd
++/*
++ * Analog test bus tap on the AUX receiver pair: set by the vendor code and
++ * read back on a running link, its purpose is not documented.
++ */
++#define AUX_ATBSEL_RX			0x01
++
++/* Vendor value, not measured on our boards */
++#define AUX_SETTLE_MS			10
++
++struct a733_dp_aux_phy {
++	void __iomem		*base;
++	struct clk		*clk;
++	struct reset_control	*reset;
++};
++
++static void a733_dp_aux_rmw(struct a733_dp_aux_phy *aux, u32 reg, u32 clr,
++			    u32 set)
++{
++	u32 val = readl(aux->base + reg);
++
++	val &= ~clr;
++	val |= set;
++	writel(val, aux->base + reg);
++}
++
++static int a733_dp_aux_init(struct phy *phy)
++{
++	struct a733_dp_aux_phy *aux = phy_get_drvdata(phy);
++	int ret;
++
++	ret = clk_prepare_enable(aux->clk);
++	if (ret)
++		return ret;
++
++	ret = reset_control_deassert(aux->reset);
++	if (ret) {
++		clk_disable_unprepare(aux->clk);
++		return ret;
++	}
++
++	msleep(AUX_SETTLE_MS);
++
++	return 0;
++}
++
++static int a733_dp_aux_exit(struct phy *phy)
++{
++	struct a733_dp_aux_phy *aux = phy_get_drvdata(phy);
++
++	reset_control_assert(aux->reset);
++	clk_disable_unprepare(aux->clk);
++
++	return 0;
++}
++
++/*
++ * Set the front end up for DisplayPort, then enable the decoupling
++ * capacitance in two steps to limit the inrush current, which also enables
++ * the HPD circuit, and the bias last (user manual section 18.2.6.13).
++ */
++static int a733_dp_aux_power_on(struct phy *phy)
++{
++	struct a733_dp_aux_phy *aux = phy_get_drvdata(phy);
++
++	msleep(AUX_SETTLE_MS);
++
++	a733_dp_aux_rmw(aux, AUX_CTRL0,
++			AUX_CTRL0_RX_HYST_LVL | AUX_CTRL0_RX_DEGLITCH |
++			AUX_CTRL0_TX_SLEW | AUX_CTRL0_BG_START_ADJ,
++			FIELD_PREP(AUX_CTRL0_RX_HYST_LVL, AUX_RX_HYST_15MV) |
++			FIELD_PREP(AUX_CTRL0_RX_DEGLITCH,
++				   AUX_RX_DEGLITCH_HIGHEST) |
++			FIELD_PREP(AUX_CTRL0_TX_SLEW, AUX_TX_SLEW_81PS) |
++			FIELD_PREP(AUX_CTRL0_BG_START_ADJ, AUX_BG_START_558MV) |
++			AUX_CTRL0_AUX_EN);
++
++	a733_dp_aux_rmw(aux, AUX_CTRL1,
++			AUX_CTRL1_RX_OFFSET_DISABLE | AUX_CTRL1_TERM_HIGHZ_EN |
++			AUX_CTRL1_ATBSEL | AUX_CTRL1_TX_CUR_CTRL |
++			AUX_CTRL1_TERM_SEG_EN,
++			FIELD_PREP(AUX_CTRL1_ATBSEL, AUX_ATBSEL_RX) |
++			FIELD_PREP(AUX_CTRL1_TX_CUR_CTRL, AUX_TX_CUR_DP) |
++			FIELD_PREP(AUX_CTRL1_TERM_SEG_EN, AUX_TERM_94OHM));
++
++	writel(0, aux->base + AUX_CTRL2);
++
++	a733_dp_aux_rmw(aux, AUX_CTRL0, 0, AUX_CTRL0_DECAP_EN);
++	a733_dp_aux_rmw(aux, AUX_CTRL0, 0, AUX_CTRL0_DECAP_EN_DEL);
++	a733_dp_aux_rmw(aux, AUX_CTRL0, 0, AUX_CTRL0_BG_EN);
++
++	return 0;
++}
++
++static int a733_dp_aux_power_off(struct phy *phy)
++{
++	struct a733_dp_aux_phy *aux = phy_get_drvdata(phy);
++
++	a733_dp_aux_rmw(aux, AUX_CTRL0, AUX_CTRL0_BG_EN, 0);
++	a733_dp_aux_rmw(aux, AUX_CTRL0, AUX_CTRL0_DECAP_EN_DEL, 0);
++	a733_dp_aux_rmw(aux, AUX_CTRL0, AUX_CTRL0_DECAP_EN, 0);
++	a733_dp_aux_rmw(aux, AUX_CTRL0, AUX_CTRL0_AUX_EN, 0);
++
++	return 0;
++}
++
++static const struct phy_ops a733_dp_aux_ops = {
++	.init		= a733_dp_aux_init,
++	.exit		= a733_dp_aux_exit,
++	.power_on	= a733_dp_aux_power_on,
++	.power_off	= a733_dp_aux_power_off,
++	.owner		= THIS_MODULE,
++};
++
++static int a733_dp_aux_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct phy_provider *provider;
++	struct a733_dp_aux_phy *aux;
++	struct phy *phy;
++
++	aux = devm_kzalloc(dev, sizeof(*aux), GFP_KERNEL);
++	if (!aux)
++		return -ENOMEM;
++
++	aux->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(aux->base))
++		return PTR_ERR(aux->base);
++
++	aux->clk = devm_clk_get(dev, "serdes");
++	if (IS_ERR(aux->clk))
++		return dev_err_probe(dev, PTR_ERR(aux->clk),
++				     "failed to get serdes clock\n");
++
++	/* Shared with the combo PHYs and the SERDES CCU */
++	aux->reset = devm_reset_control_get_shared(dev, NULL);
++	if (IS_ERR(aux->reset))
++		return dev_err_probe(dev, PTR_ERR(aux->reset),
++				     "failed to get reset\n");
++
++	phy = devm_phy_create(dev, NULL, &a733_dp_aux_ops);
++	if (IS_ERR(phy))
++		return PTR_ERR(phy);
++
++	phy_set_drvdata(phy, aux);
++
++	provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
++
++	return PTR_ERR_OR_ZERO(provider);
++}
++
++static const struct of_device_id a733_dp_aux_of_match[] = {
++	{ .compatible = "allwinner,sun60i-a733-dp-aux-phy" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, a733_dp_aux_of_match);
++
++static struct platform_driver a733_dp_aux_driver = {
++	.probe	= a733_dp_aux_probe,
++	.driver	= {
++		.name		= "sun60i-a733-dp-aux-phy",
++		.of_match_table	= a733_dp_aux_of_match,
++	},
++};
++module_platform_driver(a733_dp_aux_driver);
++
++MODULE_DESCRIPTION("Allwinner A733 DisplayPort AUX PHY driver");
++MODULE_LICENSE("GPL");

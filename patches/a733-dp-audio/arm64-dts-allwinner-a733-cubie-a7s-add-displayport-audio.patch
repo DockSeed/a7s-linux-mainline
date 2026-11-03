@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 18:46:02 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733-cubie-a7s: Add DisplayPort audio
+
+The DisplayPort transmitter of the A733 takes audio from the I2S3
+controller over an internal connection (user manual sections 17.1.1 and
+15.4.7.66), so no pins are involved. The manual also names I2S4 for
+that connection and documents no select field (section 15.2.9.1); I2S3
+is an assumption, not measured. The Cubie A7S carries DisplayPort
+on its USB Type-C port only.
+
+Make the transmitter a sound DAI and describe a card from I2S3, as bit
+and frame clock master, to it. Enable I2S3. The card needs a fixed
+mclk-fs: without it simple-audio-card takes the first clock of the I2S
+node, the bus gate, as the system clock and the I2S driver refuses the
+oversample rate.
+
+Tested on Radxa Cubie A7S: the card from I2S3 registers and plays; audio
+not heard, no DisplayPort sink with speakers was at hand.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 28 +++++++++++++++++++
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi |  1 +
+ 2 files changed, 29 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 3927cb05e8d2..80f65c643263 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -143,6 +143,30 @@ reg_ldo2v5_input: regulator-ldo2v5-input {
+ 		regulator-always-on;
+ 		vin-supply = <&reg_vcc5v0_sys>;
+ 	};
++
++	/*
++	 * Audio of the DisplayPort output. I2S3 reaches the transmitter over an
++	 * internal connection, so no pins are involved, and it is clock master.
++	 * A fixed mclk-fs: without it simple-audio-card takes the first clock of
++	 * the I2S node, the bus gate, as the system clock and the I2S driver
++	 * refuses the oversample rate.
++	 */
++	sound-dp {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "DisplayPort";
++		simple-audio-card,format = "i2s";
++		simple-audio-card,mclk-fs = <256>;
++		simple-audio-card,bitclock-master = <&sound_dp_cpu>;
++		simple-audio-card,frame-master = <&sound_dp_cpu>;
++
++		sound_dp_cpu: simple-audio-card,cpu {
++			sound-dai = <&i2s3>;
++		};
++
++		simple-audio-card,codec {
++			sound-dai = <&dp>;
++		};
++	};
+ };
+ 
+ &combophy0 {
+@@ -354,6 +378,10 @@ eeprom_mac: mac-address@9e {
+ 	};
+ };
+ 
++&i2s3 {
++	status = "okay";
++};
++
+ &mixer0 {
+ 	status = "okay";
+ };
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index cf78be254f5a..81cdf109a880 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1498,6 +1498,7 @@ dp: displayport@5740000 {
+ 			phy-names = "aux", "dp";
+ 			/* the domain of the TCON TVs, by the manual's grouping */
+ 			power-domains = <&pck600 PD_VO1>;
++			#sound-dai-cells = <0>;
+ 			status = "disabled";
+ 
+ 			ports {

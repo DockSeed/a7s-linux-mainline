@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:10:20 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add Timer1
+
+Core power-down idle states need a clock event device outside the cores for
+the tick broadcast.
+
+Add Timer1_CPUX. It counts at the rate of the oscillator (26 MHz on the
+Cubie A7S), so it takes the oscillator clock.
+
+Tested on Radxa Cubie A7S: booted on two boards; Timer1 registers with its
+interrupt and is the tick broadcast device.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 14dbf8f7bd58..c17794b1233a 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -338,6 +338,15 @@ ccu: clock-controller@2002000 {
+ 			#reset-cells = <1>;
+ 		};
+ 
++		timer@2052000 {
++			compatible = "allwinner,sun60i-a733-timer",
++				     "allwinner,sun8i-a23-timer";
++			reg = <0x02052000 0x50>;
++			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&osc>;
++		};
++
+ 		uart0: serial@2500000 {
+ 			compatible = "snps,dw-apb-uart";
+ 			reg = <0x02500000 0x400>;

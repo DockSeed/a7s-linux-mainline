@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 16:02:00 +0200
+Subject: [PATCH] dt-bindings: media: Add Allwinner A733 image signal processor
+
+The A733 has an image signal processor, the ISP, in the video input
+system beside the camera sensor interface controller (manual section
+16.1.2). Add its binding, in media with the other camera interfaces.
+
+No existing binding fits. The manual of the A733 describes no register
+of the ISP window, so a match with the ISP of the older Allwinner SoCs
+cannot be shown. The block shares the power domain PD_VI, the bus
+gate and the bus reset of CSI_BGR_REG with the controller (manual
+sections 16.1.6.8, 4.1.6.245), and has its bus master behind the first
+IOMMU, master 2 (manual chapter 10).
+
+The five clocks are the bus gate, the AHB and MBUS clock enables of the
+video input system, the MBUS clock enable of the ISP and the module
+clock (manual sections 4.1.6.245, 4.1.6.82, 4.1.6.83, 4.1.6.84 and
+4.1.6.246). The four interrupts are CSI_ISP0 to CSI_ISP3 (manual
+section 12.2.3.1); only the first channel processes data (manual
+section 16.1.2).
+
+Not covered: the camera function and any register of the block. No
+camera is attached to the board, the manual describes no register of
+the ISP, and there is no driver.
+
+Tested on Radxa Cubie A7S: with the node enabled for a test, the image
+signal processor probes with the clocks, reset, power domain and IOMMU
+master this binding names. Its window reads zero in every word read; as
+the manual describes no register of the block, that it answers is not
+shown.
+
+Assisted-by: LLM
+---
+ .../media/allwinner,sun60i-a733-isp.yaml      | 98 +++++++++++++++++++
+ 1 file changed, 98 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/media/allwinner,sun60i-a733-isp.yaml
+
+diff --git a/Documentation/devicetree/bindings/media/allwinner,sun60i-a733-isp.yaml b/Documentation/devicetree/bindings/media/allwinner,sun60i-a733-isp.yaml
+new file mode 100644
+index 000000000000..6a292021702a
+--- /dev/null
++++ b/Documentation/devicetree/bindings/media/allwinner,sun60i-a733-isp.yaml
+@@ -0,0 +1,98 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/media/allwinner,sun60i-a733-isp.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Allwinner A733 Image Signal Processor
++
++maintainers:
++  - Norman Herms <dockseed@proton.me>
++
++description:
++  The ISP of the A733 processes the raw data of a camera sensor, with lens
++  compensation, bad pixel removal, gain and gamma, among others. It takes
++  its input from the camera sensor interface controller (CSIC) and sits in
++  the same video input system, with the same power domain, bus gate and
++  reset. Only the first of its four channels processes data, the others
++  pass it through. Its bus master is behind the first IOMMU.
++
++properties:
++  compatible:
++    const: allwinner,sun60i-a733-isp
++
++  reg:
++    maxItems: 1
++
++  interrupts:
++    items:
++      - description: Channel 0
++      - description: Channel 1
++      - description: Channel 2
++      - description: Channel 3
++
++  clocks:
++    items:
++      - description: Bus gate of the video input system (CSI_BGR_REG)
++      - description: AHB clock enable of the video input system
++      - description: MBUS clock enable of the video input port
++      - description: MBUS clock enable of the ISP
++      - description: Module clock (ISP_CLK_REG)
++
++  clock-names:
++    items:
++      - const: bus
++      - const: ahb
++      - const: mbus
++      - const: mclk
++      - const: mod
++
++  resets:
++    maxItems: 1
++
++  power-domains:
++    maxItems: 1
++
++  iommus:
++    maxItems: 1
++
++required:
++  - compatible
++  - reg
++  - interrupts
++  - clocks
++  - clock-names
++  - resets
++  - power-domains
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
++    #include <dt-bindings/interrupt-controller/arm-gic.h>
++    #include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
++    #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
++
++    bus {
++        #address-cells = <1>;
++        #size-cells = <1>;
++
++        isp@5900000 {
++            compatible = "allwinner,sun60i-a733-isp";
++            reg = <0x05900000 0x400000>;
++            interrupts = <GIC_SPI 129 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 130 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 131 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 132 IRQ_TYPE_LEVEL_HIGH>;
++            clocks = <&ccu CLK_BUS_CSI>, <&ccu CLK_AHB_VID_IN>,
++                     <&ccu CLK_MBUS_VID_IN>, <&ccu CLK_MBUS_ISP>,
++                     <&ccu CLK_ISP>;
++            clock-names = "bus", "ahb", "mbus", "mclk", "mod";
++            resets = <&ccu RST_BUS_CSI>;
++            power-domains = <&pck600 PD_VI>;
++            iommus = <&iommu0 2>;
++        };
++    };
++
++...

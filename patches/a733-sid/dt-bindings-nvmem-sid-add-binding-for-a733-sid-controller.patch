@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:02:08 +0200
+Subject: [PATCH] dt-bindings: nvmem: SID: Add binding for A733 SID controller
+
+The A733 SID shows its fuse array at offset 0x200 of the block, read
+with plain MMIO accesses, as on the A64. Document it with the A64
+compatible as fallback.
+
+Tested on Radxa Cubie A7S: booted on two boards with the node of the
+next patch; sunxi-sid binds to it.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/nvmem/allwinner,sun4i-a10-sid.yaml       | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/nvmem/allwinner,sun4i-a10-sid.yaml b/Documentation/devicetree/bindings/nvmem/allwinner,sun4i-a10-sid.yaml
+index f67470b8a2ed..52de91285ebb 100644
+--- a/Documentation/devicetree/bindings/nvmem/allwinner,sun4i-a10-sid.yaml
++++ b/Documentation/devicetree/bindings/nvmem/allwinner,sun4i-a10-sid.yaml
+@@ -28,6 +28,7 @@ properties:
+               - allwinner,sun50i-a100-sid
+               - allwinner,sun50i-h616-sid
+               - allwinner,sun55i-a523-sid
++              - allwinner,sun60i-a733-sid
+           - const: allwinner,sun50i-a64-sid
+       - const: allwinner,sun50i-h5-sid
+       - const: allwinner,sun50i-h6-sid

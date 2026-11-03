@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:05:04 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the CPU PMUs
+
+The CPU performance monitors of the A733 are not described, so perf
+has no hardware counters and no sampling.
+
+Add one PMU node per core type, so that each gets the event map of its
+core: Cortex-A55 on cpu0-5 and Cortex-A76 on cpu6-7, each bound to its
+cores through a PPI partition. The overflow interrupt is PPI 7 (INTID
+23, "PMU interrupt request" in the user manual's interrupt table). On
+the A733 a sampling event raises it only in the column of the core it
+runs on, on both core types, and its trigger field in the
+redistributor is read-only at level.
+
+Tested on Radxa Cubie A7S: booted on two boards; the kernel registers
+armv8_cortex_a55 for cpus 0-5 and armv8_cortex_a76 for cpus 6-7, each
+with 7 counters, both on INTID 23. No events were counted in this test.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 0ce0162f0d14..9cc778a2c00d 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -300,6 +300,16 @@ osc: osc-clk {
+ 		clock-output-names = "hosc";
+ 	};
+ 
++	pmu-a55 {
++		compatible = "arm,cortex-a55-pmu";
++		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_HIGH &ppi_partition0>;
++	};
++
++	pmu-a76 {
++		compatible = "arm,cortex-a76-pmu";
++		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_HIGH &ppi_partition1>;
++	};
++
+ 	psci {
+ 		compatible = "arm,psci-1.0", "arm,psci-0.2";
+ 		method = "smc";
+@@ -509,6 +519,16 @@ gic: interrupt-controller@3400000 {
+ 			reg = <0x03400000 0x10000>,
+ 			      <0x03460000 0x100000>;
+ 			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH 0>;
++
++			ppi-partitions {
++				ppi_partition0: interrupt-partition-0 {
++					affinity = <&cpu0 &cpu1 &cpu2 &cpu3 &cpu4 &cpu5>;
++				};
++
++				ppi_partition1: interrupt-partition-1 {
++					affinity = <&cpu6 &cpu7>;
++				};
++			};
+ 		};
+ 
+ 		mmc0: mmc@4020000 {

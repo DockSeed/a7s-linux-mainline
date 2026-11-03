@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 6 Oct 2026 19:41:21 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Take the MBUS clock from PLL_PERI0
+
+MBUS_CLK_REG selects 600 MHz, 480 MHz and 400 MHz with the values 001,
+011 and 100. The A733 manual names these sources PERI0_600M, PERI0_480M
+and PERI0_400M, and its clock tree lists MBUS under PLL_PERI0. The
+driver maps them to the PLL_PERI1 outputs, so the clock tree shows mbus
+and every mbus gate under pll-periph1-600M while the value the firmware
+sets selects PLL_PERI0, and a rate change on PLL_PERI1 would be reported
+as a change of mbus.
+
+Map the three values to the PLL_PERI0 outputs. The register is not
+written: the value the firmware set stays, only the parent Linux sees
+for it changes.
+
+Tested on Radxa Cubie A7S: booted to a shell; with the PERI1 2x output
+gated, a read from the SD card through MBUS completed with the same data
+while a clock on PERI1_600M stood still.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 1df3f76fced9..ee5925122e0e 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -533,10 +533,10 @@ static SUNXI_CCU_GATE_DATA(bus_its_pcie0_aclk_clk, "bus-its-pcie0-aclk", hosc, 0
+ 
+ static const struct clk_parent_data mbus_parents[] = {
+ 	{ .hw = &sys_24M_clk.hw },
+-	{ .hw = &pll_periph1_600M_clk.hw },
++	{ .hw = &pll_periph0_600M_clk.hw },
+ 	{ .hw = &pll_ddr_clk.common.hw },
+-	{ .hw = &pll_periph1_480M_clk.common.hw },
+-	{ .hw = &pll_periph1_400M_clk.hw },
++	{ .hw = &pll_periph0_480M_clk.common.hw },
++	{ .hw = &pll_periph0_400M_clk.hw },
+ 	{ .hw = &pll_npu_clk.common.hw },
+ };
+ static SUNXI_CCU_M_DATA_WITH_MUX_GATE_FEAT(mbus_clk, "mbus", mbus_parents, 0x588,

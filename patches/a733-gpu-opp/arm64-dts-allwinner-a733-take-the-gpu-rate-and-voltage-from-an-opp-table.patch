@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 17:00:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Take the GPU rate and voltage
+ from an OPP table
+
+The GPU runs at 1008 MHz on 960 mV. The board pins the rate with
+assigned-clock-rates, which the platform bus applies before the driver
+probes, and the 960 mV sits on DCDC4 from the time the PMIC probes.
+Nothing orders the two, and the driver cannot defer the rate.
+
+Describe the point as an OPP table in the SoC dtsi, one row of
+1008 MHz at 960 mV, the pair of the vendor firmware, and give the GPU
+node the table. The board gives it the supply, DCDC4, and drops the
+rates: the driver now sets the voltage and then the rate once at probe,
+before the firmware reads it. The board keeps GPU0 on PLL_GPU0 as its
+parent, as the core clock takes the rate from that PLL and must not pick
+another parent. PLL_GPU0 is no longer listed in the assigned clocks.
+
+DCDC4 keeps regulator-always-on and its fixed 960 mV window; the OPP core
+requests the same voltage.
+
+Not covered: more rows, which need the voltage of each point measured;
+dropping regulator-always-on.
+
+Tested on Radxa Cubie A7S: booted on two boards; the GPU probes after
+the PMIC, runs at the table's operating point, and its firmware boots.
+
+Assisted-by: LLM
+---
+ .../boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 12 +++++++-----
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi   | 16 ++++++++++++++++
+ 2 files changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 62ca10cdf37b..2237d89662c8 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -188,12 +188,14 @@ ext_rgmii_phy: ethernet-phy@1 {
+ 
+ &gpu {
+ 	/*
+-	 * Fixed operating point: PLL_GPU0 at 1008 MHz (VCO 2016 MHz, P0 2)
+-	 * with the core clock undivided, on VDD-GPU at 960 mV (DCDC4).
++	 * Fixed operating point from the OPP table: the driver sets VDD-GPU
++	 * (DCDC4) to 960 mV, then the core clock to 1008 MHz (PLL_GPU0 VCO
++	 * 2016 MHz, P0 2, core clock undivided). The core clock takes its
++	 * rate from PLL_GPU0, so the parent is chosen here.
+ 	 */
+-	assigned-clocks = <&ccu CLK_PLL_GPU0>, <&ccu CLK_GPU0>;
+-	assigned-clock-parents = <0>, <&ccu CLK_PLL_GPU0>;
+-	assigned-clock-rates = <1008000000>, <1008000000>;
++	assigned-clocks = <&ccu CLK_GPU0>;
++	assigned-clock-parents = <&ccu CLK_PLL_GPU0>;
++	gpu-supply = <&reg_dcdc4>;
+ 	status = "okay";
+ };
+ 
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index c1f2c042eb82..d95ccb60ee36 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -360,6 +360,21 @@ dsu_pmu: dsu-pmu {
+ 		status = "disabled";
+ 	};
+ 
++	/*
++	 * The GPU core runs at 1008 MHz on 960 mV, the pair of the vendor
++	 * firmware; the voltage is not measured on our boards. The GPU
++	 * firmware reads the clock once, so the driver sets this point at
++	 * probe and the table has no other row.
++	 */
++	gpu_opp_table: opp-table-gpu {
++		compatible = "operating-points-v2";
++
++		opp-1008000000 {
++			opp-hz = /bits/ 64 <1008000000>;
++			opp-microvolt = <960000 960000 960000>;
++		};
++	};
++
+ 	/* 19.2, 24 or 26 MHz, set by the board */
+ 	osc: osc-clk {
+ 		#clock-cells = <0>;
+@@ -409,6 +424,7 @@ gpu: gpu@1800000 {
+ 			resets = <&ccu RST_BUS_GPU0>;
+ 			power-domains = <&pck600 PD_GPU_TOP>;
+ 			power-domain-names = "a";
++			operating-points-v2 = <&gpu_opp_table>;
+ 			status = "disabled";
+ 		};
+ 

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 05:37:15 +0200
+Subject: [PATCH] dt-bindings: opp: allwinner,sun50i-h6-operating-points: Add
+ the A733
+
+The A733 picks the voltage and frequency set of each CPU operating
+point by a speed bin that its eFuse holds, the same way the A100, H6
+and H616 do. Add its compatible string to the binding.
+
+The speed bin is the fuse value, and the A733 has bins 20 and 21. Allow
+more than one digit in the opp-microvolt-speed<N> property names.
+
+Tested on Radxa Cubie A7S: booted on two boards; the OPP table with this
+compatible is found, and the cpufreq driver binds to it and creates the
+policies of both clusters.
+
+Assisted-by: LLM
+---
+ .../bindings/opp/allwinner,sun50i-h6-operating-points.yaml     | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/opp/allwinner,sun50i-h6-operating-points.yaml b/Documentation/devicetree/bindings/opp/allwinner,sun50i-h6-operating-points.yaml
+index 75ab552f6ecd..96f67697fd97 100644
+--- a/Documentation/devicetree/bindings/opp/allwinner,sun50i-h6-operating-points.yaml
++++ b/Documentation/devicetree/bindings/opp/allwinner,sun50i-h6-operating-points.yaml
+@@ -25,6 +25,7 @@ properties:
+       - allwinner,sun50i-a100-operating-points
+       - allwinner,sun50i-h6-operating-points
+       - allwinner,sun50i-h616-operating-points
++      - allwinner,sun60i-a733-operating-points
+ 
+   nvmem-cells:
+     description: |
+@@ -56,7 +57,7 @@ patternProperties:
+           bit per speed bin index.
+ 
+     patternProperties:
+-      "^opp-microvolt-speed[0-9]$": true
++      "^opp-microvolt-speed[0-9]+$": true
+ 
+     required:
+       - opp-hz

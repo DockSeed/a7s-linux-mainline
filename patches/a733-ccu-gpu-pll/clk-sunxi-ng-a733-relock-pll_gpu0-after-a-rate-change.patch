@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:31:04 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Relock PLL_GPU0 after a rate change
+
+The lock detector of PLL_GPU0 is switched on once at probe and stays
+on. A rate change writes the new factors and polls the lock bit without
+restarting the detector. The manual's sequence for a factor change
+restarts it after the write and waits for the lock again.
+
+Register the common PLL notifier for PLL_GPU0 with LOCK_ENABLE as its
+toggle bit, as the H616 does for its GPU PLL. It clears and sets the
+bit after every rate change and waits for the lock.
+
+Not covered: the other PLLs of this unit take the same generic path.
+
+Tested on Radxa Cubie A7S: on two boards the GPU's probe changed the
+rate of PLL_GPU0 while its output was gated, the PLL relocked, and the
+GPU firmware booted, also after reloading the GPU driver.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 8f94408b29a1..7002df3a8e23 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -2394,6 +2394,16 @@ static const struct sunxi_ccu_desc sun60i_a733_ccu_desc = {
+ 	.num_resets	= ARRAY_SIZE(sun60i_a733_ccu_resets),
+ };
+ 
++/*
++ * After a factor change the manual restarts the lock detector of the PLL
++ * and waits for the lock again (4.1.4.1).
++ */
++static struct ccu_pll_nb sun60i_a733_pll_gpu0_nb = {
++	.common		= &pll_gpu0_clk.common,
++	.enable		= BIT(29),	/* LOCK_ENABLE */
++	.lock		= BIT(28),
++};
++
+ static const u32 pll_regs[] = {
+ 	SUN60I_A733_PLL_REF_REG,
+ 	SUN60I_A733_PLL_DDR_REG,
+@@ -2456,7 +2466,8 @@ static int sun60i_a733_ccu_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	return 0;
++	/* Re-lock PLL_GPU0 after any rate change */
++	return ccu_pll_notifier_register(&sun60i_a733_pll_gpu0_nb);
+ }
+ 
+ static const struct of_device_id sun60i_a733_ccu_ids[] = {

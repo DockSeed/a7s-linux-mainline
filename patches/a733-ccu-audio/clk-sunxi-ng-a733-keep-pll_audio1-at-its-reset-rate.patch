@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 10:06:42 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Keep PLL_AUDIO1 at its reset rate
+
+PLL_AUDIO1 has two fixed output taps, DIV2 and DIV5, and the audio
+module clocks can take either of them as a parent. Both taps pass rate
+requests up to the PLL, so a block on one tap can retune the rate of a
+block running on the other.
+
+PLL_AUDIO1 comes out of reset at the manual's 48 kHz point: DIV5 gives
+614.4 MHz, which divides to 24.576 MHz (512 x 48 kHz) exactly. Stop
+passing rate requests up from the taps, so the PLL stays there and the
+taps act as two fixed sources. The 44.1 kHz rates come from PLL_AUDIO0.
+
+Tested on Radxa Cubie A7S: booted on two boards; PLL_AUDIO1 reads
+0xF1147F00 (N-1 = 0x7f) before and after OWA streams at 48 kHz and at
+44.1 kHz.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index be50812f8c16..38cf2bc6afd0 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -408,9 +408,9 @@ static const struct clk_hw *pll_audio1_hws[] = {
+ 	&pll_audio1_clk.common.hw
+ };
+ static CLK_FIXED_FACTOR_HWS(pll_audio1_div2_clk, "pll-audio1-div2",
+-			    pll_audio1_hws, 2, 1, CLK_SET_RATE_PARENT);
++			    pll_audio1_hws, 2, 1, 0);
+ static CLK_FIXED_FACTOR_HWS(pll_audio1_div5_clk, "pll-audio1-div5",
+-			    pll_audio1_hws, 5, 1, CLK_SET_RATE_PARENT);
++			    pll_audio1_hws, 5, 1, 0);
+ 
+ #define SUN60I_A733_PLL_NPU_REG		0x2a0
+ static struct ccu_nkmp pll_npu_clk = {

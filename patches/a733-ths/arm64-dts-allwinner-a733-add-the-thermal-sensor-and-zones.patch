@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:03:18 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the thermal sensor and zones
+
+Add the THS controller with its calibration cell in the SID, and a polled
+thermal zone for each of its five sensors with a critical trip at 110
+degrees Celsius, which keeps the sensor accuracy of 3 degrees clear of the
+junction limit of 115.
+
+Measured on the A733, sensor 0 sits in the little and sensor 3 in the big
+cluster, the opposite of the manual, so the zones follow the measurement.
+
+Not covered: passive trips and CPU cooling, which need cpufreq.
+
+Tested on Radxa Cubie A7S: booted on two boards; the five zones read
+plausible temperatures at idle, with the critical trip at 110 degC.
+Load on the A76 cores raises cpub-thermal more than cpul-thermal, load
+on the A55 cores the other way round.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 90 +++++++++++++++++++
+ 1 file changed, 90 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index aaf9ebbcbc2d..ddc1cee29e79 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -447,12 +447,28 @@ uart4: serial@2504000 {
+ 			status = "disabled";
+ 		};
+ 
++		ths: thermal-sensor@2522000 {
++			compatible = "allwinner,sun60i-a733-ths";
++			reg = <0x02522000 0x400>;
++			interrupts = <GIC_SPI 39 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_THS0>, <&ccu CLK_GPADC0_24M>;
++			clock-names = "bus", "mod";
++			resets = <&ccu RST_BUS_THS0>;
++			nvmem-cells = <&ths_calibration>;
++			nvmem-cell-names = "calibration";
++			#thermal-sensor-cells = <1>;
++		};
++
+ 		sid: efuse@3006000 {
+ 			compatible = "allwinner,sun60i-a733-sid",
+ 				     "allwinner,sun50i-a64-sid";
+ 			reg = <0x03006000 0x1000>;
+ 			#address-cells = <1>;
+ 			#size-cells = <1>;
++
++			ths_calibration: thermal-sensor-calibration@44 {
++				reg = <0x44 0xc>;
++			};
+ 		};
+ 
+ 		gic: interrupt-controller@3400000 {
+@@ -598,4 +614,78 @@ rtc: rtc@7090000 {
+ 			#clock-cells = <1>;
+ 		};
+ 	};
++
++	thermal-zones {
++		/* sensor 3 sits next to the Cortex-A76 cores */
++		cpub-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <1000>;
++			thermal-sensors = <&ths 3>;
++
++			trips {
++				cpub-crit {
++					temperature = <110000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++		};
++
++		/* sensor 0 sits next to the Cortex-A55 cores */
++		cpul-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <1000>;
++			thermal-sensors = <&ths 0>;
++
++			trips {
++				cpul-crit {
++					temperature = <110000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++		};
++
++		ddr-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <1000>;
++			thermal-sensors = <&ths 1>;
++
++			trips {
++				ddr-crit {
++					temperature = <110000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++		};
++
++		gpu-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <1000>;
++			thermal-sensors = <&ths 4>;
++
++			trips {
++				gpu-crit {
++					temperature = <110000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++		};
++
++		npu-thermal {
++			polling-delay-passive = <0>;
++			polling-delay = <1000>;
++			thermal-sensors = <&ths 2>;
++
++			trips {
++				npu-crit {
++					temperature = <110000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++		};
++	};
+ };

@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:02:23 +0200
+Subject: [PATCH] dt-bindings: thermal: sun8i: Add A733 THS controller
+
+The A733 has one THS controller with five sensors in the H6 register
+layout. Unlike the H6, it needs its conversion clock from the CCU as a
+second clock, so it falls into the two-clock branch of the schema.
+
+Tested on Radxa Cubie A7S: booted on two boards with the node of the
+following patches; sun8i-thermal binds to it.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/thermal/allwinner,sun8i-a83t-ths.yaml    | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/thermal/allwinner,sun8i-a83t-ths.yaml b/Documentation/devicetree/bindings/thermal/allwinner,sun8i-a83t-ths.yaml
+index 3e61689f6dd4..5cb50087a8c4 100644
+--- a/Documentation/devicetree/bindings/thermal/allwinner,sun8i-a83t-ths.yaml
++++ b/Documentation/devicetree/bindings/thermal/allwinner,sun8i-a83t-ths.yaml
+@@ -24,6 +24,7 @@ properties:
+       - allwinner,sun50i-h5-ths
+       - allwinner,sun50i-h6-ths
+       - allwinner,sun50i-h616-ths
++      - allwinner,sun60i-a733-ths
+ 
+   clocks:
+     minItems: 1

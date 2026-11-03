@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 09:40:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Give the IOMMUs the video engine
+ port gates
+
+A master's register block in the IOMMU does not answer while the
+master's port on the MBUS matrix is gated, and the access stalls the
+bus. The IOMMU driver takes a reference on the port gate of a master,
+given as a "masterN" clock, for as long as the master translates. The
+A733 clock driver marks these gates CLK_IS_CRITICAL, so they stay
+enabled and the reference does not change their state.
+
+Name the port gates of the video engine's masters. The decoder's two
+masters, 0 and 1 of the second IOMMU, share the decoder's port gate,
+bit 14 of MBUS_MAT_CLK_GATING_REG. The encoder's master, 3 of the first
+IOMMU, has the encoder's, bit 12 (manual section 4.1.6.83; the master
+numbers are in chapter 10).
+
+Seen on the Radxa Cubie A7S: with the port gates of the video engine
+cleared, the first unmap through its masters stalls the bus until the
+watchdog resets the SoC. With only the port gates set, and the engine's
+resets, bus gates and clocks off, the unmaps complete.
+
+Nothing changes until a node lists the IOMMU in "iommus": the driver
+enables a master clock only for a master with a user. The other masters
+have no consumer yet and no port gate named.
+
+Tested on Radxa Cubie A7S: booted on one board; the IOMMUs bound and
+appear as consumers of the port gates of the video engine's decoder and
+encoder masters, and the gates read enabled in MBUS_MAT_CLK_GATING_REG.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index e0a063bd606e..0351369ef174 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -813,8 +813,10 @@ iommu0: iommu@3900000 {
+ 			clocks = <&ccu CLK_MBUS_IOMMU0_SYS>,
+ 				 <&ccu CLK_APB_IOMMU0_SYS>,
+ 				 <&ccu CLK_AHB_IOMMU0_SYS>,
+-				 <&ccu CLK_MBUS_IOMMU0>;
+-			clock-names = "mclk", "pclk", "hclk", "mbus";
++				 <&ccu CLK_MBUS_IOMMU0>,
++				 <&ccu CLK_MBUS_VE_ENC0_GATE>;
++			clock-names = "mclk", "pclk", "hclk", "mbus",
++				      "master3";
+ 			resets = <&ccu RST_BUS_IOMMU0_SYS>;
+ 			#iommu-cells = <1>;
+ 		};
+@@ -826,8 +828,11 @@ iommu1: iommu@3910000 {
+ 			clocks = <&ccu CLK_MBUS_IOMMU1_SYS>,
+ 				 <&ccu CLK_APB_IOMMU1_SYS>,
+ 				 <&ccu CLK_AHB_IOMMU1_SYS>,
+-				 <&ccu CLK_MBUS_IOMMU1>;
+-			clock-names = "mclk", "pclk", "hclk", "mbus";
++				 <&ccu CLK_MBUS_IOMMU1>,
++				 <&ccu CLK_MBUS_VE_DEC0_GATE>,
++				 <&ccu CLK_MBUS_VE_DEC0_GATE>;
++			clock-names = "mclk", "pclk", "hclk", "mbus",
++				      "master0", "master1";
+ 			resets = <&ccu RST_BUS_IOMMU1_SYS>;
+ 			#iommu-cells = <1>;
+ 		};

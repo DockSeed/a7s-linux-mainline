@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:29:01 +0200
+Subject: [PATCH] dt-bindings: usb: Add the Allwinner A733 EHCI and OHCI
+ controllers
+
+The USB0 and USB1 ports of the A733 have the EHCI and OHCI host
+controllers of the earlier Allwinner SoCs. Add A733 compatibles to the
+generic EHCI and OHCI bindings.
+
+Tested on Radxa Cubie A7S: booted on two boards; the EHCI and OHCI nodes
+with these compatibles bind through ehci-platform and ohci-platform.
+
+Assisted-by: LLM
+---
+ Documentation/devicetree/bindings/usb/generic-ehci.yaml | 1 +
+ Documentation/devicetree/bindings/usb/generic-ohci.yaml | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/generic-ehci.yaml b/Documentation/devicetree/bindings/usb/generic-ehci.yaml
+index ae9fb70d0212..705abe8ae4a9 100644
+--- a/Documentation/devicetree/bindings/usb/generic-ehci.yaml
++++ b/Documentation/devicetree/bindings/usb/generic-ehci.yaml
+@@ -21,6 +21,7 @@ properties:
+               - allwinner,sun50i-h616-ehci
+               - allwinner,sun55i-a523-ehci
+               - allwinner,sun5i-a13-ehci
++              - allwinner,sun60i-a733-ehci
+               - allwinner,sun6i-a31-ehci
+               - allwinner,sun7i-a20-ehci
+               - allwinner,sun8i-a23-ehci
+diff --git a/Documentation/devicetree/bindings/usb/generic-ohci.yaml b/Documentation/devicetree/bindings/usb/generic-ohci.yaml
+index 322808aaa283..ea2fccb8083f 100644
+--- a/Documentation/devicetree/bindings/usb/generic-ohci.yaml
++++ b/Documentation/devicetree/bindings/usb/generic-ohci.yaml
+@@ -21,6 +21,7 @@ properties:
+               - allwinner,sun50i-h616-ohci
+               - allwinner,sun55i-a523-ohci
+               - allwinner,sun5i-a13-ohci
++              - allwinner,sun60i-a733-ohci
+               - allwinner,sun6i-a31-ohci
+               - allwinner,sun7i-a20-ohci
+               - allwinner,sun8i-a23-ohci

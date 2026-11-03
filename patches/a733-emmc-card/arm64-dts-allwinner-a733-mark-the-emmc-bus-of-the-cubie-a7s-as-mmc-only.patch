@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 09:40:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Mark the eMMC bus of the Cubie
+ A7S as MMC only
+
+The eMMC node of the Cubie A7S says non-removable and nothing else about
+the card, so the MMC core treats it as a socket that may hold anything.
+Every rescan of mmc_rescan_try_freq() then opens with an SDIO reset and
+an SD attach (sdio_reset(), mmc_send_if_cond_pcie(), mmc_attach_sdio(),
+mmc_attach_sd(); drivers/mmc/core/core.c), each guarded by
+MMC_CAP2_NO_SDIO or MMC_CAP2_NO_SD, before mmc_attach_mmc() is reached.
+
+SMHC2 only reaches the eMMC footprint U8 (schematic V1.10 page 9), which
+is not fitted on every board, so no SD card and no SDIO function can ever
+appear there. Add no-sd and no-sdio, which mmc_of_parse() turns into
+those two bits, so the core goes straight to mmc_attach_mmc(), and on a
+board without the eMMC it no longer sends SD and SDIO commands to an
+empty bus either.
+
+Not covered: mmc-ddr-1_8v, as sunxi-mmc already sets MMC_CAP_1_8V_DDR for
+every host with new timings; the driver type (no fixed-emmc-driver-type,
+nothing selects one) and the card's RST_n function, which stays as it is.
+
+Tested on Radxa Cubie A7S: on a board without the eMMC fitted, a re-probe
+of SMHC2 sends no SD or SDIO command.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 475449dc57c3..b217ceea5135 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -377,6 +377,8 @@ &mmc2 {
+ 	vqmmc-supply = <&reg_cldo5>;
+ 	bus-width = <8>;
+ 	non-removable;
++	no-sd;
++	no-sdio;
+ 	cap-mmc-hw-reset;
+ 	mmc-hs200-1_8v;
+ 	mmc-hs400-1_8v;

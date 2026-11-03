@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>
+Date: Sun, 27 Sep 2026 09:56:24 +0700
+Subject: [PATCH] hwspinlock: sun6i: Get the clock and the reset without names
+
+The driver looks up its clock and reset by the name "ahb", but the
+binding doesn't define clock-names or reset-names, so a node that
+follows the binding fails to probe:
+
+  sun6i_hwspinlock 3005000.hwlock: unable to get AHB clock (-2)
+
+There is only one of each, so get them without a name. That is what
+was asked for when the names were added to an A64 node, and nodes that
+do set "ahb" keep working. For the reset, call the explicit
+devm_reset_control_get_exclusive(), which devm_reset_control_get()
+only wraps.
+
+Fixes: 3c881e05c814 ("hwspinlock: add sun6i hardware spinlock support")
+Link: https://lore.kernel.org/f720eaf9-01d0-0e57-f6bf-9aade00aafb8@linaro.org
+Signed-off-by: Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>
+---
+ drivers/hwspinlock/sun6i_hwspinlock.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hwspinlock/sun6i_hwspinlock.c b/drivers/hwspinlock/sun6i_hwspinlock.c
+index c2d314588046..e7cc1213109b 100644
+--- a/drivers/hwspinlock/sun6i_hwspinlock.c
++++ b/drivers/hwspinlock/sun6i_hwspinlock.c
+@@ -104,14 +104,14 @@ static int sun6i_hwspinlock_probe(struct platform_device *pdev)
+ 	if (!priv)
+ 		return -ENOMEM;
+ 
+-	priv->ahb_clk = devm_clk_get(&pdev->dev, "ahb");
++	priv->ahb_clk = devm_clk_get(&pdev->dev, NULL);
+ 	if (IS_ERR(priv->ahb_clk)) {
+ 		err = PTR_ERR(priv->ahb_clk);
+ 		dev_err(&pdev->dev, "unable to get AHB clock (%d)\n", err);
+ 		return err;
+ 	}
+ 
+-	priv->reset = devm_reset_control_get(&pdev->dev, "ahb");
++	priv->reset = devm_reset_control_get_exclusive(&pdev->dev, NULL);
+ 	if (IS_ERR(priv->reset))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(priv->reset),
+ 				     "unable to get reset control\n");

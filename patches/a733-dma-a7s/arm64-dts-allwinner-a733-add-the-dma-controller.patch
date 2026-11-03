@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:24:14 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the DMA controller
+
+The A733 has two DMA controllers with the same register layout. Without
+a node for either, nothing on the SoC can use the DMA engine.
+
+Describe DMAC0, the controller Linux uses: 8 KiB at 0x04601000, 16
+channels and DRQ ports up to 63, with the bus clock, MBUS clock and reset
+of DMA0. The driver takes "dma-requests" as the highest port number.
+
+Not covered: DMAC1 at 0x04024000, which no device needs, and the "dmas"
+of the clients.
+
+Tested on Radxa Cubie A7S: booted on two boards; sun6i-dma binds DMAC0
+at 0x04601000 and dmatest copies through it on 17 channels with 0
+failures, its interrupt counting up.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 11776d44e3ac..b68cb5058217 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -611,6 +611,18 @@ mdio0: mdio {
+ 			};
+ 		};
+ 
++		dma: dma-controller@4601000 {
++			compatible = "allwinner,sun60i-a733-dma";
++			reg = <0x04601000 0x2000>;
++			interrupts = <GIC_SPI 111 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_DMA0>, <&ccu CLK_MBUS_DMA0>;
++			clock-names = "bus", "mbus";
++			dma-channels = <16>;
++			dma-requests = <63>;
++			resets = <&ccu RST_BUS_DMA0>;
++			#dma-cells = <1>;
++		};
++
+ 		r_ccu: clock-controller@7010000 {
+ 			compatible = "allwinner,sun60i-a733-r-ccu";
+ 			reg = <0x07010000 0x230>;

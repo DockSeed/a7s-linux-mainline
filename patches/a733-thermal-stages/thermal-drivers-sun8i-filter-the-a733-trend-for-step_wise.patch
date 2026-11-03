@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 06:17:53 +0200
+Subject: [PATCH] thermal/drivers/sun8i: Filter the A733 trend for step_wise
+
+The driver has no get_trend callback, so the thermal core takes the
+trend from the last two samples. The A733 sensors are noisy: at a
+constant load a reading spreads over several degrees within the thermal
+time constant of the board, differently on each sensor. step_wise then
+raises the CPU cooling state on a noise peak and gives it back in full
+on the first lower sample under the trip hysteresis, so a CPU zone
+toggles between full clock and one step down and runs above its trip.
+
+Track the highest reading per sensor. Report RAISING on every new
+maximum, DROPPING once the reading has fallen trend_hyst below it, and
+STABLE in between. A new maximum is reported at once. A rise that stays
+below the maximum is reported STABLE, so step_wise holds the cooling
+state where the core's own trend would report RAISING, and only a new
+maximum raises it. DROPPING only comes on samples where the two-sample
+trend reports it too. trend_hyst is 6 degrees C on the A733, more than
+twice the 90th percentile of the noise within the thermal time constant
+on the noisier CPU sensor, at the conversion period and filter the
+driver sets, one value for both CPU zones; the other SoCs keep the
+core's trend. As step_wise asks once per passive trip, the filter
+advances once per get_temp sample, and reads through sysfs and hwmon do
+not advance it.
+
+With the cpufreq trip lowered to 55 degrees C under an all-core load,
+the cooling devices change state 6 to 11 times in 240 s instead of 412
+to 445, and full releases near the trip fall from 13 to 1 over two
+boots each. The cost is the cooling state held longer: about one step
+more on average, summed over both clusters.
+
+Not covered: thermal emulation. The core does not ask the driver while
+a temperature is emulated, so after the emulation a cooling state is
+kept until the real reading falls trend_hyst below its maximum.
+
+Tested on Radxa Cubie A7S: with the cpufreq trip lowered under an
+all-core load, the cooling state settled with this patch and toggled
+without it, in alternating boots.
+
+Assisted-by: LLM
+---
+ drivers/thermal/sun8i_thermal.c | 89 +++++++++++++++++++++++++++++++++
+ 1 file changed, 89 insertions(+)
+
+diff --git a/drivers/thermal/sun8i_thermal.c b/drivers/thermal/sun8i_thermal.c
+index 0ba32f58008c..06c03a70dff6 100644
+--- a/drivers/thermal/sun8i_thermal.c
++++ b/drivers/thermal/sun8i_thermal.c
+@@ -64,6 +64,16 @@ struct tsensor {
+ 	struct ths_device		*tmdev;
+ 	struct thermal_zone_device	*tzd;
+ 	int				id;
++	/*
++	 * Trend filter state, see sun8i_ths_get_trend(). Touched only from
++	 * ->get_temp and ->get_trend, which the thermal core calls with the
++	 * zone lock held.
++	 */
++	int				last_temp;
++	int				trend_ref;
++	unsigned int			temp_seq;
++	unsigned int			trend_seq;
++	enum thermal_trend		trend;
+ };
+ 
+ struct ths_thermal_chip {
+@@ -75,6 +85,12 @@ struct ths_thermal_chip {
+ 	int		scale;
+ 	int		ft_deviation;
+ 	int		temp_data_base;
++	/*
++	 * Millidegrees the reading has to fall below the highest value seen
++	 * before ->get_trend reports DROPPING. Zero disables the callback,
++	 * and the core takes the trend from two consecutive samples.
++	 */
++	int		trend_hyst;
+ 	int		(*calibrate)(struct ths_device *tmdev,
+ 				     u16 *caldata, int callen);
+ 	int		(*init)(struct ths_device *tmdev);
+@@ -155,11 +171,74 @@ static int sun8i_ths_get_temp(struct thermal_zone_device *tz, int *temp)
+ 	 */
+ 	*temp += tmdev->chip->ft_deviation;
+ 
++	/*
++	 * Publish the sample for ->get_trend. This does not advance the
++	 * filter: sysfs and hwmon reads land here too, and a reader must not
++	 * change what the governor sees.
++	 */
++	s->last_temp = *temp;
++	s->temp_seq++;
++
++	return 0;
++}
++
++/*
++ * Without ->get_trend the core takes the trend from two consecutive samples.
++ * The A733 sensors are noisy: at a constant load the reading spreads over
++ * several degrees within the thermal time constant of the board, far more
++ * than the conversion step, and differently on each sensor. step_wise then
++ * raises the cooling state on a noise peak and, on the first lower sample
++ * below the trip hysteresis, releases it completely in one poll, so it
++ * never settles.
++ *
++ * Track the highest reading seen instead: report RAISING on every new
++ * maximum, DROPPING once the reading has fallen trend_hyst below it, and
++ * STABLE in between. A reading above all earlier ones is reported as
++ * RAISING at once. A rise that stays below the maximum is reported STABLE,
++ * so step_wise holds the cooling state where the core's own trend would
++ * report RAISING, and only a new maximum raises it. The samples that report
++ * DROPPING are a subset of those the core's comparison would report, so
++ * cooling is never given back where the core would have kept it.
++ *
++ * step_wise asks for the trend once per passive trip in each update, and a
++ * zone may have several. The filter therefore advances at most once per
++ * ->get_temp sample, keyed on its sequence number, so that every trip of
++ * one update sees the same trend.
++ */
++static int sun8i_ths_get_trend(struct thermal_zone_device *tz,
++			       const struct thermal_trip *trip,
++			       enum thermal_trend *trend)
++{
++	struct tsensor *s = thermal_zone_device_priv(tz);
++	int hyst = s->tmdev->chip->trend_hyst;
++
++	if (!hyst)
++		return -EOPNOTSUPP;
++
++	if (s->trend_seq != s->temp_seq) {
++		int temp = s->last_temp;
++
++		s->trend_seq = s->temp_seq;
++
++		if (temp > s->trend_ref) {
++			s->trend_ref = temp;
++			s->trend = THERMAL_TREND_RAISING;
++		} else if (temp <= s->trend_ref - hyst) {
++			s->trend_ref = temp;
++			s->trend = THERMAL_TREND_DROPPING;
++		} else {
++			s->trend = THERMAL_TREND_STABLE;
++		}
++	}
++
++	*trend = s->trend;
++
+ 	return 0;
+ }
+ 
+ static const struct thermal_zone_device_ops ths_ops = {
+ 	.get_temp = sun8i_ths_get_temp,
++	.get_trend = sun8i_ths_get_trend,
+ };
+ 
+ static const struct regmap_config config = {
+@@ -626,6 +705,8 @@ static int sun8i_ths_register(struct ths_device *tmdev)
+ 	for (i = 0; i < tmdev->chip->sensor_num; i++) {
+ 		tmdev->sensor[i].tmdev = tmdev;
+ 		tmdev->sensor[i].id = i;
++		/* below any reading, so the first sample reports RAISING */
++		tmdev->sensor[i].trend_ref = THERMAL_TEMP_INVALID;
+ 		tmdev->sensor[i].tzd =
+ 			devm_thermal_of_zone_register(tmdev->dev,
+ 						      i,
+@@ -811,6 +892,14 @@ static const struct ths_thermal_chip sun60i_a733_ths = {
+ 	.sensor_num = 5,
+ 	.has_mod_clk = true,
+ 	.has_bus_clk_reset = true,
++	/*
++	 * More than twice the 90th percentile of the peak-to-peak noise of
++	 * the noisier CPU sensor within 10 s, the thermal time constant of
++	 * the board, with the conversion period and the filter set in
++	 * sun60i_a733_thermal_init(), and three times the hysteresis of the
++	 * passive trips.
++	 */
++	.trend_hyst = 6000,
+ 	.temp_data_base = SUN50I_H6_THS_TEMP_DATA,
+ 	.calibrate = sun60i_a733_ths_calibrate,
+ 	.init = sun60i_a733_thermal_init,

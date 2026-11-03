@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 14:14:53 +0200
+Subject: [PATCH] dt-bindings: hwlock: sun6i: Add compatible for Allwinner A733
+
+The A733 spinlock unit has 32 locks (A733 manual, 6.2.1). Its
+SPINLOCK_SYSTATUS reads 0x10000000 at reset, LOCKS_NUM = 1 for 32
+locks (6.2.6.1), and lock n sits at 0x100 + 4 * n, where a read of 0
+takes the lock and a write of 0 frees it (6.2.6.10). That is the
+register model of the sun6i driver. Like the A31 unit it has a bus
+gate and a reset (4.1.6.87) and no module clock.
+
+Add "allwinner,sun60i-a733-hwspinlock" with
+"allwinner,sun6i-a31-hwspinlock" as the fallback.
+
+Tested on Radxa Cubie A7S: the driver binds through the fallback and
+reports 32 locks.
+
+Assisted-by: LLM
+---
+ .../bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml          | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml b/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml
+index 13f9a20ae18f..7dce5329a656 100644
+--- a/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml
++++ b/Documentation/devicetree/bindings/hwlock/allwinner,sun6i-a31-hwspinlock.yaml
+@@ -20,6 +20,7 @@ properties:
+       - items:
+           - enum:
+               - allwinner,sun20i-d1-hwspinlock
++              - allwinner,sun60i-a733-hwspinlock
+           - const: allwinner,sun6i-a31-hwspinlock
+ 
+   reg:

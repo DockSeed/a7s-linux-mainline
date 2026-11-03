@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 10:00:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Add the remaining pin
+ bank supplies
+
+Banks PE, PF, PJ and PK of the pin controller and bank PM of the
+r-pin controller have no supply in the DT, so the pin controllers use
+dummy regulators for them.
+
+In the schematic, banks PE and PK run from BLDO1 (1.8 V in this device
+tree; the schematic gives no voltage), which also
+feeds VCC-MCSI and has no node yet. Bank PJ runs from VCC33-LCD
+(SWOUT1) with no series part. Bank PF switches between VCC-IO (SWOUT2)
+and VCC18-PF (CLDO5) through its power-source; it names VCC-IO, the
+selection after reset. The VCC-PM ball of bank PM goes through RA13
+(0R) to VCC-PL (ALDO1); the net named VCC-PM on CLDO1 does not reach
+the SoC.
+
+Add BLDO1 at 1.8 V and always on, as the boot chain leaves it: VCC-MCSI
+and the camera signals on J5 have no consumer, so the regulator core
+would otherwise switch the rail off. Add the five supplies. Bank PL
+stays without a supply, for the reason given at ALDO1.
+
+The A733 pin controllers do not program the withstand voltage from the
+supplies, so no register changes.
+
+Tested on Radxa Cubie A7S: with one line of each bank requested, the
+five supplies resolve to their regulators instead of the dummy one,
+BLDO1 stays on after the regulator late cleanup, and the SoC's bank
+voltage detector reads 1.8 V for PE and PK and 3.3 V for PJ and PM.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 36 ++++++++++++++-----
+ 1 file changed, 28 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 027cdedfab7f..475449dc57c3 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -403,8 +403,12 @@ &pio {
+ 	vcc-pb-supply = <&reg_swout2>;
+ 	vcc-pc-supply = <&reg_cldo5>;
+ 	vcc-pd-supply = <&reg_swout1>;
++	vcc-pe-supply = <&reg_bldo1>;
++	vcc-pf-supply = <&reg_swout2>;	/* or VCC18-PF, see power-source */
+ 	vcc-pg-supply = <&reg_aldo1>;
+ 	vcc-ph-supply = <&reg_swout2>;
++	vcc-pj-supply = <&reg_swout1>;
++	vcc-pk-supply = <&reg_bldo1>;
+ };
+ 
+ &r_i2c0 {
+@@ -434,13 +438,13 @@ axp318: pmic@36 {
+ 
+ 		regulators {
+ 			/*
+-			 * VCC-PL: bank PL (the PMIC bus pins), bank PG, the
+-			 * EEPROM and the TWI0 pull-ups. Always on: the PMIC bus
+-			 * runs on bank PL. Bank PL has no vcc-pl-supply on
++			 * VCC-PL: bank PL (the PMIC bus pins), banks PG and PM,
++			 * the EEPROM and the TWI0 pull-ups. Always on: the PMIC
++			 * bus runs on bank PL. Bank PL has no vcc-pl-supply on
+ 			 * r_pio: the PMIC sits on r_i2c0 (PL0/PL1), and the pin
+ 			 * driver requests the bank supply when r_i2c0 gets its
+-			 * pins, so the supply of ALDO1 would defer the pins
+-			 * and the PMIC that provides ALDO1 would never probe.
++			 * pins, so the supply of ALDO1 would defer the pins and
++			 * the PMIC that provides ALDO1 would never probe.
+ 			 */
+ 			reg_aldo1: aldo1 {
+ 				regulator-name = "vcc-pl";
+@@ -456,7 +460,7 @@ reg_dcdc1: dcdc1 {
+ 				regulator-always-on;
+ 			};
+ 
+-			/* 1.8 V I/O: eMMC VCCQ, bank PC */
++			/* 1.8 V I/O: eMMC VCCQ, bank PC, VCC18-PF of bank PF */
+ 			reg_cldo5: cldo5 {
+ 				regulator-name = "vcc-pc";
+ 				regulator-min-microvolt = <1800000>;
+@@ -466,8 +470,8 @@ reg_cldo5: cldo5 {
+ 
+ 			/*
+ 			 * Ethernet PHY, bank PD through R251, bank PJ, the
+-			 * TWI2/TWI7 pull-ups on J11. Always on: bank PJ and the
+-			 * pull-ups name no supply.
++			 * TWI2/TWI7 pull-ups on J11. Always on: the pull-ups
++			 * name no supply.
+ 			 */
+ 			reg_swout1: swout1 {
+ 				regulator-name = "vcc33-lcd";
+@@ -483,6 +487,17 @@ reg_swout2: swout2 {
+ 				regulator-always-on;
+ 			};
+ 
++			/*
++			 * 1.8 V I/O: banks PE and PK, VCC-MCSI and the camera
++			 * signals on J5. Always on: VCC-MCSI names no supply.
++			 */
++			reg_bldo1: bldo1 {
++				regulator-name = "vcc-pe-pk-mcsi";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <1800000>;
++				regulator-always-on;
++			};
++
+ 			reg_dcdc3: dcdc3 {
+ 				regulator-name = "vdd-cpub";
+ 				regulator-min-microvolt = <800000>;
+@@ -575,6 +590,11 @@ usbc_sbu: endpoint {
+ 	};
+ };
+ 
++&r_pio {
++	/* No vcc-pl-supply: see ALDO1 */
++	vcc-pm-supply = <&reg_aldo1>;
++};
++
+ &rtc {
+ 	clocks = <&r_ccu CLK_BUS_R_RTC>, <&osc>,
+ 		 <&r_ccu CLK_R_AHB>, <&ext_osc32k>;

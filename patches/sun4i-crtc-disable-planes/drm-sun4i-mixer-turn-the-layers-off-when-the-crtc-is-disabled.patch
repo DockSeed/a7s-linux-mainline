@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 17 Oct 2026 08:18:56 +0200
+Subject: [PATCH] drm/sun4i: mixer: Turn the layers off when the CRTC is
+ disabled
+
+The layers of the mixer keep their enable bit and buffer address when
+the CRTC is disabled, and the plane commits that would clear them are
+skipped while the CRTC is inactive. Without this, a layer whose
+framebuffer was freed in the meantime is fetched from as soon as the
+CRTC is enabled again, before the planes are committed. Seen on the
+Radxa Cubie A7S: after DPMS off and the close of the DRM master, the
+layer still read enabled with the address of the freed buffer, and the
+IOMMU of the display engine reported faults on it once the fbdev
+restore had enabled the TCON.
+
+Implement the engine disable callback: clear the attribute word of
+every layer the CRTC can use, with the existing layer disable helpers,
+and the pipe enables of the blender, as sun8i_mixer_init() does. On the
+DE2 and DE3 mixers, set the double buffer bit afterwards, as
+sun8i_mixer_commit() does for them; it writes the DE33 mixer without it.
+The planes of a CRTC that needs a modeset are part of its commit, so
+their atomic_update and the mixer commit write the layers, routes and
+pipe enables again when the CRTC is enabled.
+
+Not covered: whether the DE2 and DE3 mixers take the double-buffered
+writes after the TCON has stopped; not tested on DE2 or DE3.
+
+Tested on Radxa Cubie A7S: on its DE33, a blanked display has all its
+layers and blender pipes off, enabling it again raises no IOMMU fault,
+and the layer fetches from the new framebuffer.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c    | 28 ++++++++++++++++++++++++++
+ drivers/gpu/drm/sun4i/sun8i_ui_layer.c |  2 +-
+ drivers/gpu/drm/sun4i/sun8i_ui_layer.h |  1 +
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.c |  2 +-
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.h |  1 +
+ 5 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index d973d56cbd11..5ce0d12520ac 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -467,8 +467,36 @@ static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
+ 			 interlaced ? "on" : "off");
+ }
+ 
++static void sun8i_mixer_disable(struct sunxi_engine *engine,
++				struct drm_crtc *crtc)
++{
++	struct sun8i_mixer *mixer = engine_to_sun8i_mixer(engine);
++	struct drm_plane *plane;
++
++	drm_for_each_plane(plane, crtc->dev) {
++		struct sun8i_layer *layer = plane_to_sun8i_layer(plane);
++
++		if (!(plane->possible_crtcs & drm_crtc_mask(crtc)))
++			continue;
++
++		if (layer->type == SUN8I_LAYER_TYPE_VI)
++			sun8i_vi_layer_disable(layer);
++		else
++			sun8i_ui_layer_disable(layer);
++	}
++
++	regmap_update_bits(sun8i_blender_regmap(mixer),
++			   SUN8I_MIXER_BLEND_PIPE_CTL(sun8i_blender_base(mixer)),
++			   SUN8I_MIXER_BLEND_PIPE_CTL_EN_MSK, 0);
++
++	if (mixer->cfg->de_type != SUN8I_MIXER_DE33)
++		regmap_write(engine->regs, SUN8I_MIXER_GLOBAL_DBUFF,
++			     SUN8I_MIXER_GLOBAL_DBUFF_ENABLE);
++}
++
+ static const struct sunxi_engine_ops sun8i_engine_ops = {
+ 	.commit		= sun8i_mixer_commit,
++	.disable	= sun8i_mixer_disable,
+ 	.layers_init	= sun8i_layers_init,
+ 	.mode_set	= sun8i_mixer_mode_set,
+ };
+diff --git a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+index d9f6a2bcc14f..f4c1cc2b89f3 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+@@ -27,7 +27,7 @@
+ #include "sun8i_ui_scaler.h"
+ #include "sun8i_vi_scaler.h"
+ 
+-static void sun8i_ui_layer_disable(struct sun8i_layer *layer)
++void sun8i_ui_layer_disable(struct sun8i_layer *layer)
+ {
+ 	u32 ch_base = sun8i_channel_base(layer);
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun8i_ui_layer.h b/drivers/gpu/drm/sun4i/sun8i_ui_layer.h
+index 1581ffc6d4e5..0b7929f92690 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_ui_layer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_ui_layer.h
+@@ -49,6 +49,7 @@
+ struct sun8i_mixer;
+ struct sun8i_layer;
+ 
++void sun8i_ui_layer_disable(struct sun8i_layer *layer);
+ struct sun8i_layer *sun8i_ui_layer_init_one(struct drm_device *drm,
+ 					    enum drm_plane_type type,
+ 					    struct regmap *regs,
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+index 17252b6a0afc..4ff4d66559d9 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+@@ -24,7 +24,7 @@
+ #include "sun8i_vi_layer.h"
+ #include "sun8i_vi_scaler.h"
+ 
+-static void sun8i_vi_layer_disable(struct sun8i_layer *layer)
++void sun8i_vi_layer_disable(struct sun8i_layer *layer)
+ {
+ 	u32 ch_base = sun8i_channel_base(layer);
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.h b/drivers/gpu/drm/sun4i/sun8i_vi_layer.h
+index 3c600c4a51c0..1ed324d41918 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.h
+@@ -55,6 +55,7 @@
+ struct sun8i_mixer;
+ struct sun8i_layer;
+ 
++void sun8i_vi_layer_disable(struct sun8i_layer *layer);
+ bool sun8i_vi_layer_premultiplied(const struct sun8i_layer *layer,
+ 				  const struct drm_plane_state *state);
+ struct sun8i_layer *sun8i_vi_layer_init_one(struct drm_device *drm,

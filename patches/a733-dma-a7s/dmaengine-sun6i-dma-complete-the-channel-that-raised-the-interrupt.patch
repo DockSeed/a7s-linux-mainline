@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:56:00 +0200
+Subject: [PATCH] dmaengine: sun6i-dma: Complete the channel that raised the
+ interrupt
+
+The interrupt handler reads one status register per group of
+num_channels_per_reg channels, but picks the physical channel by the
+bit position inside the register alone. An interrupt of a channel in
+register i > 0 is matched against the channel at the same position in
+register 0.
+
+On the A733 every channel has a status register of its own
+(num_channels_per_reg is 1), so the interrupts of channels 1 to 15 are
+all taken for channel 0: a transfer on any other channel never
+completes, and a transfer on channel 0 can be completed by the
+interrupt of another channel. On controllers with 16 channels in two
+registers the same happens to channels 8 to 15.
+
+Index the channel by register and bit, the same way
+sun6i_dma_start_desc() picks the register and the bit for a channel.
+
+Tested on Radxa Cubie A7S: booted on two boards; dmatest with 1000
+copies on each of 17 channels at once ends with 0 failures and no
+timeout.
+
+Assisted-by: LLM
+---
+ drivers/dma/sun6i-dma.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/dma/sun6i-dma.c b/drivers/dma/sun6i-dma.c
+index 2d23be1a67f1..db4946947b5b 100644
+--- a/drivers/dma/sun6i-dma.c
++++ b/drivers/dma/sun6i-dma.c
+@@ -603,7 +603,8 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
+ 		sun6i_write_irq_stat(sdev, i, status);
+ 
+ 		for (j = 0; (j < sdev->cfg->num_channels_per_reg) && status; j++) {
+-			pchan = sdev->pchans + j;
++			pchan = sdev->pchans +
++				i * sdev->cfg->num_channels_per_reg + j;
+ 			vchan = pchan->vchan;
+ 			if (vchan && (status & vchan->irq_type)) {
+ 				if (vchan->cyclic) {

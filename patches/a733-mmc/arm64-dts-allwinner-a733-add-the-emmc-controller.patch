@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:55:41 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the eMMC controller
+
+The A733 has a second MMC controller for eMMC, SMHC2, but the SoC dtsi
+only describes SMHC0, so an eMMC cannot be used.
+
+Add SMHC2 at 0x04022000 with its interrupt, bus and module clocks and
+reset, and the same compatible pair as SMHC0. Add its pins, PC0, PC1, PC5,
+PC6, PC8-PC11 and PC13-PC16 on function 3, as one group each for clock and
+reset, data strobe and command with data, with their own drive strength
+and pulls. max-frequency is 200 MHz. The node is disabled; a board enables
+it with its bus width and supplies.
+
+Not covered: HS400 and the data strobe delay, which the driver does not
+support.
+
+Tested on Radxa Cubie A7S: booted on two boards; the controller probes on
+both, and on the board with an eMMC the card runs at HS200, 200 MHz, 8 bit.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 47 +++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index e28314652e67..1a46a3afefe9 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -327,6 +327,34 @@ mmc0_pins: mmc0-pins {
+ 				bias-pull-up;
+ 			};
+ 
++			/* RST and CLK */
++			mmc2_clk_rst_pins: mmc2-clk-rst-pins {
++				pins = "PC1", "PC5";
++				allwinner,pinmux = <3>;
++				function = "mmc2";
++				drive-strength = <40>;
++				bias-pull-up;
++			};
++
++			/* data strobe, driven by the card */
++			mmc2_ds_pin: mmc2-ds-pins {
++				pins = "PC0";
++				allwinner,pinmux = <3>;
++				function = "mmc2";
++				drive-strength = <40>;
++				bias-pull-down;
++			};
++
++			/* CMD and D0-D7 */
++			mmc2_pins: mmc2-pins {
++				pins = "PC6", "PC8", "PC9", "PC10", "PC11",
++				       "PC13", "PC14", "PC15", "PC16";
++				allwinner,pinmux = <3>;
++				function = "mmc2";
++				drive-strength = <20>;
++				bias-pull-up;
++			};
++
+ 			uart0_pb_pins: uart0-pb-pins {
+ 				pins = "PB9", "PB10";
+ 				allwinner,pinmux = <2>;
+@@ -446,6 +474,25 @@ mmc0: mmc@4020000 {
+ 			#size-cells = <0>;
+ 		};
+ 
++		mmc2: mmc@4022000 {
++			compatible = "allwinner,sun60i-a733-mmc",
++				     "allwinner,sun20i-d1-mmc";
++			reg = <0x04022000 0x1000>;
++			interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_MMC2>, <&ccu CLK_MMC2>;
++			clock-names = "ahb", "mmc";
++			resets = <&ccu RST_BUS_MMC2>;
++			reset-names = "ahb";
++			pinctrl-names = "default";
++			pinctrl-0 = <&mmc2_pins>, <&mmc2_clk_rst_pins>,
++				    <&mmc2_ds_pin>;
++			max-frequency = <200000000>;
++			cap-mmc-highspeed;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
+ 		r_ccu: clock-controller@7010000 {
+ 			compatible = "allwinner,sun60i-a733-r-ccu";
+ 			reg = <0x07010000 0x230>;

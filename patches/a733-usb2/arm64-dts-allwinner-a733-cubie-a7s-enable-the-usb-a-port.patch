@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:29:53 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable the USB-A port
+
+The USB-A port of the Cubie A7S sits behind an on-board USB 2.0 hub on
+USB1. The hub runs from the always-on 3.3 V rail; only the 5 V VBUS of
+the port is switched by PM5.
+
+Enable USB1 and its PHY, with the switch as the VBUS supply of the PHY.
+
+Not covered: USB0 on the Type-C power inlet and the USB 3 Type-C port.
+
+Tested on Radxa Cubie A7S: booted on two boards; the port is powered,
+the on-board hub enumerates at high speed, and a stick behind it reads
+without errors.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 23 +++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index fc2dcd3a0aec..df4722cf4a47 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -57,6 +57,20 @@ scp@48100000 {
+ 			no-map;
+ 		};
+ 	};
++
++	/* VBUS of the USB-A port J8, switched by USB_HOST_EN (PM5) */
++	reg_usb1_vbus: regulator-usb1-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "usb1-vbus";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		gpio = <&r_pio 1 5 GPIO_ACTIVE_HIGH>; /* PM5 */
++		enable-active-high;
++	};
++};
++
++&ehci1 {
++	status = "okay";
+ };
+ 
+ &gmac0 {
+@@ -108,6 +122,10 @@ &mmc2 {
+ 	status = "okay";
+ };
+ 
++&ohci1 {
++	status = "okay";
++};
++
+ &osc {
+ 	clock-frequency = <26000000>;
+ };
+@@ -184,3 +202,8 @@ &uart0 {
+ 	pinctrl-0 = <&uart0_pb_pins>;
+ 	status = "okay";
+ };
++
++&usbphy {
++	usb1_vbus-supply = <&reg_usb1_vbus>;
++	status = "okay";
++};

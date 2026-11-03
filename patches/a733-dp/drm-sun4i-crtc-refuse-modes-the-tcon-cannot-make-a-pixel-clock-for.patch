@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 18:00:21 +0200
+Subject: [PATCH] drm/sun4i: crtc: Refuse modes the TCON cannot make a pixel
+ clock for
+
+The pixel clock of a TV TCON is its channel 1 clock, and the clock tree
+decides which rates it can make. A mode whose clock the tree cannot make
+to within 0.5 % passes the CRTC, so every output driver on that TCON has
+to refuse it with a private copy of the test, or the mode is accepted and
+runs at another rate than its timings say. The test belongs to the
+component that makes the clock.
+
+Add a mode_valid hook to the sun4i CRTC. It asks the TCON, which
+rounds the mode's pixel clock through tcon-ch1 with clk_round_rate()
+and returns MODE_NOCLOCK when the result is off by more than 0.5 %, the
+tolerance of sun4i_hdmi_enc.c and sun4i_rgb.c. The test is switched on
+by a quirk of the A733 TV TCON. The other TCONs keep their checks in
+their encoders, where the HDMI and RGB outputs have them.
+
+Not covered: the checks of the other TCONs are not moved, and no
+ceiling on the pixel clock is set here; that stays with the output that
+has one.
+
+Tested on Radxa Cubie A7S: booted on one board with a DisplayPort
+monitor, once at its preferred mode and once with a smaller mode set on
+the command line; both ran at the pixel clock of their timings, no
+offered mode was refused by the new check, and no mode was found whose
+clock the tree misses, so the refusal itself was not seen.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_crtc.c |  9 +++++++++
+ drivers/gpu/drm/sun4i/sun4i_tcon.c | 24 ++++++++++++++++++++++++
+ drivers/gpu/drm/sun4i/sun4i_tcon.h |  3 +++
+ 3 files changed, 36 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_crtc.c b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+index 3fa1f4fda0f0..55d507d477e5 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_crtc.c
++++ b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+@@ -45,6 +45,14 @@ static struct drm_encoder *sun4i_crtc_get_encoder(struct drm_crtc *crtc)
+ 	return NULL;
+ }
+ 
++static enum drm_mode_status sun4i_crtc_mode_valid(struct drm_crtc *crtc,
++						  const struct drm_display_mode *mode)
++{
++	struct sun4i_crtc *scrtc = drm_crtc_to_sun4i_crtc(crtc);
++
++	return sun4i_tcon_mode_valid(scrtc->tcon, mode);
++}
++
+ static int sun4i_crtc_atomic_check(struct drm_crtc *crtc,
+ 				    struct drm_atomic_commit *state)
+ {
+@@ -150,6 +158,7 @@ static void sun4i_crtc_mode_set_nofb(struct drm_crtc *crtc)
+ }
+ 
+ static const struct drm_crtc_helper_funcs sun4i_crtc_helper_funcs = {
++	.mode_valid	= sun4i_crtc_mode_valid,
+ 	.atomic_check	= sun4i_crtc_atomic_check,
+ 	.atomic_begin	= sun4i_crtc_atomic_begin,
+ 	.atomic_flush	= sun4i_crtc_atomic_flush,
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.c b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+index 89cb743a4118..bf45edc6a37a 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+@@ -8,6 +8,7 @@
+ 
+ #include <linux/component.h>
+ #include <linux/ioport.h>
++#include <linux/math.h>
+ #include <linux/media-bus-format.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -15,6 +16,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
++#include <linux/units.h>
+ 
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_bridge.h>
+@@ -758,6 +760,27 @@ static void sun4i_tcon1_mode_set(struct sun4i_tcon *tcon,
+ 			   SUN4I_TCON_GCTL_IOMAP_TCON1);
+ }
+ 
++/*
++ * Channel 1 is the pixel clock of the TCON. Where the clock tree cannot
++ * make the rate of a mode to within the 0.5 % that VESA DMT allows, refuse
++ * the mode, as sun4i_hdmi_enc does for the TMDS clock.
++ */
++enum drm_mode_status sun4i_tcon_mode_valid(struct sun4i_tcon *tcon,
++					   const struct drm_display_mode *mode)
++{
++	unsigned long clock = mode->clock * HZ_PER_KHZ;
++	long rounded;
++
++	if (!tcon->quirks->checks_ch1_rate)
++		return MODE_OK;
++
++	rounded = clk_round_rate(tcon->sclk1, clock);
++	if (rounded > 0 && abs_diff((unsigned long)rounded, clock) < clock / 200)
++		return MODE_OK;
++
++	return MODE_NOCLOCK;
++}
++
+ void sun4i_tcon_mode_set(struct sun4i_tcon *tcon,
+ 			 const struct drm_encoder *encoder,
+ 			 const struct drm_display_mode *mode)
+@@ -1629,6 +1652,7 @@ static const struct sun4i_tcon_quirks sun60i_a733_tv_quirks = {
+ 	.has_channel_1		= true,
+ 	.polarity_in_ch0	= true,
+ 	.has_tv_layout		= true,
++	.checks_ch1_rate	= true,
+ 	.set_mux		= sun60i_a733_tcon_tv_set_mux,
+ };
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.h b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+index 1965e70932f0..e15f31a13abb 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.h
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+@@ -277,6 +277,7 @@ struct sun4i_tcon_quirks {
+ 	bool	supports_lvds;   /* Does the TCON support an LVDS output? */
+ 	bool	polarity_in_ch0; /* some tcon1 channels have polarity bits in tcon0 pol register */
+ 	bool	has_tv_layout;	/* a733 TCON TV: VT in BASIC1, no BASIC0, no TCON1 IO regs */
++	bool	checks_ch1_rate; /* modes whose pixel clock tcon-ch1 cannot make are refused */
+ 	u8	dclk_min_div;	/* minimum divider for TCON0 DCLK */
+ 
+ 	/* callback to handle tcon muxing options */
+@@ -326,6 +327,8 @@ struct drm_bridge *sun4i_tcon_find_bridge(struct device_node *node);
+ struct drm_panel *sun4i_tcon_find_panel(struct device_node *node);
+ 
+ void sun4i_tcon_enable_vblank(struct sun4i_tcon *tcon, bool enable);
++enum drm_mode_status sun4i_tcon_mode_valid(struct sun4i_tcon *tcon,
++					   const struct drm_display_mode *mode);
+ void sun4i_tcon_mode_set(struct sun4i_tcon *tcon,
+ 			 const struct drm_encoder *encoder,
+ 			 const struct drm_display_mode *mode);

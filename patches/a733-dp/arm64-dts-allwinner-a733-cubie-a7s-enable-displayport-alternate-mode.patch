@@ -1,0 +1,156 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:54:26 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733-cubie-a7s: Enable DisplayPort
+ alternate mode
+
+The USB Type-C connector of the Cubie A7S carries DisplayPort in
+alternate mode: the main link lanes through the first combo PHY, the
+AUX channel on the SBU lines, and the hot plug state over the CC line.
+The DisplayPort hot plug detect input of the SoC is not connected.
+
+Enable the display pipeline from the display engine to the DisplayPort
+transmitter and connect the transmitter to the SBU port of the
+connector. Make the combo PHY the mode switch of the connector, with
+the polarity of its DisplayPort lanes as wired on the board.
+
+DisplayPort alternate mode is negotiated with USB Power Delivery
+messages, so the connector now does USB PD as a source: it offers 5 V
+at 900 mA, the USB default current it already offered without PD, and
+DisplayPort with pin assignments C and E, all four lanes on DisplayPort.
+Pin assignment D, two lanes each for DisplayPort and USB3, is not
+offered. The I2C bus of the port controller runs
+at 400 kHz, as in the vendor device tree.
+
+Tested on Radxa Cubie A7S: booted on one board with a monitor on the
+USB-C port; the port entered the DisplayPort alternate mode in pin
+assignment C and the monitor showed the console.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 59 ++++++++++++++++++-
+ 1 file changed, 58 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 2237d89662c8..c1c70df6944b 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -8,6 +8,7 @@
+ 
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/leds/common.h>
++#include <dt-bindings/usb/pd.h>
+ 
+ / {
+ 	model = "Radxa Cubie A7S";
+@@ -98,6 +99,10 @@ reg_usbc_vbus: regulator-usbc-vbus {
+ 
+ &combophy0 {
+ 	orientation-switch;
++	mode-switch;
++	/* The DisplayPort lanes are wired with P and N swapped */
++	tx-polarity = <PHY_POL_INVERT>, <PHY_POL_NORMAL>;
++	tx-polarity-names = "dp", "usb-ss";
+ 	status = "okay";
+ 
+ 	port {
+@@ -145,6 +150,28 @@ &cpu7 {
+ 	operating-points-v2 = <&cluster1_opp>;
+ };
+ 
++&de {
++	status = "okay";
++};
++
++&de_top {
++	status = "okay";
++};
++
++&dp {
++	status = "okay";
++};
++
++&dp_aux_phy {
++	status = "okay";
++};
++
++&dp_out {
++	dp_out_usbc: endpoint {
++		remote-endpoint = <&usbc_sbu>;
++	};
++};
++
+ &dsu {
+ 	dsu-supply = <&reg_dcdc5>;
+ };
+@@ -199,6 +226,10 @@ &gpu {
+ 	status = "okay";
+ };
+ 
++&mixer0 {
++	status = "okay";
++};
++
+ &mmc0 {
+ 	pinctrl-names = "default", "sdmmc-3v3", "sdmmc-1v8";
+ 	pinctrl-1 = <&mmc0_3v3_pins>, <&mmc0_clk_pin>;
+@@ -324,6 +355,7 @@ reg_dcdc5: dcdc5 {
+ &r_i2c1 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&r_i2c1_pl12_pins>;
++	clock-frequency = <400000>;
+ 	status = "okay";
+ 
+ 	typec@4e {
+@@ -341,7 +373,16 @@ connector {
+ 			/* the board is powered through J16, not this port */
+ 			self-powered;
+ 			typec-power-opmode = "default";
+-			pd-disable;
++			/* USB default current, now stated as a PD source */
++			source-pdos = <PDO_FIXED(5000, 900, PDO_FIXED_USB_COMM)>;
++
++			/* DisplayPort alternate mode, pin assignments C and E */
++			altmodes {
++				displayport {
++					svid = /bits/ 16 <0xff01>;
++					vdo = <0x00001446>;
++				};
++			};
+ 
+ 			ports {
+ 				#address-cells = <1>;
+@@ -362,6 +403,14 @@ usbc_ss: endpoint {
+ 						remote-endpoint = <&combophy0_ss>;
+ 					};
+ 				};
++
++				port@2 {
++					reg = <2>;
++
++					usbc_sbu: endpoint {
++						remote-endpoint = <&dp_out_usbc>;
++					};
++				};
+ 			};
+ 		};
+ 	};
+@@ -375,6 +424,10 @@ &rtc {
+ 	assigned-clock-rates = <32768>;
+ };
+ 
++&tcon_tv1 {
++	status = "okay";
++};
++
+ &uart0 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&uart0_pb_pins>;
+@@ -403,3 +456,7 @@ &usbphy {
+ 	usb1_vbus-supply = <&reg_usb1_vbus>;
+ 	status = "okay";
+ };
++
++&vo1_ccu {
++	status = "okay";
++};

@@ -1,0 +1,211 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 18:03:25 +0200
+Subject: [PATCH] clk: sunxi-ng: Add the A733 video output 1 clock unit
+
+TCON TV1 of the A733, which feeds the DisplayPort transmitter, gets no
+pixel clock until the VIDEO_OUT1_SYS block selects the eDP side as its
+clock source and releases its clock gate (user manual sections 15.2.9.1
+and 15.2.9.2).
+
+Add a driver for the block. Its two registers hold a clock source select
+per TCON TV, the HDMI or the eDP side, a clock gate per TCON TV and the
+gate of the clock from TCON TV0 to HDMI, and no display route, so it is
+a clock unit in the form of the DE2 clock unit rather than a display
+driver like the R40 TCON TOP, which also routes the display. The device
+tree chooses the source with assigned-clock-parents, and the TCON takes
+its channel 1 clock from the gate.
+
+Figure 15-18 of the user manual draws its registers as the DPSS top
+registers of the video output 1 subsystem, so its bus clock and reset
+are taken to be those of DPSS_TOP1 in the CCU, with the video output 1
+gate of the AHB bus matrix. They are not measured on our boards.
+
+Not covered: the CVBS clock sources and the HDMI PHY clock source of
+TCON TV0.
+
+Tested on Radxa Cubie A7S: booted on one board; the clock unit opened
+the TCON and transmitter clocks of video output 1, and the stream
+reached the sink at the pixel clock of the mode.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/Kconfig               |  10 ++
+ drivers/clk/sunxi-ng/Makefile              |   2 +
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c | 126 +++++++++++++++++++++
+ 3 files changed, 138 insertions(+)
+ create mode 100644 drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c
+
+diff --git a/drivers/clk/sunxi-ng/Kconfig b/drivers/clk/sunxi-ng/Kconfig
+index b67201708ad2..16bb1dd291e7 100644
+--- a/drivers/clk/sunxi-ng/Kconfig
++++ b/drivers/clk/sunxi-ng/Kconfig
+@@ -99,6 +99,16 @@ config SUN60I_A733_SERDES_CCU
+ 	  and keeps the SERDES bus matrix gates of the main clock unit
+ 	  running while it is bound.
+ 
++config SUN60I_A733_VO1_CCU
++	tristate "Support for the Allwinner A733 video output 1 clock unit"
++	default ARCH_SUNXI
++	depends on ARM64 || COMPILE_TEST
++	help
++	  Support for the clock unit of the video output 1 block on the
++	  Allwinner A733. It selects whether each TCON TV takes its clock
++	  from the HDMI or the eDP side and gates the clocks of the TCON
++	  TVs. The DisplayPort output of the A733 needs it.
++
+ config SUN4I_A10_CCU
+ 	tristate "Support for the Allwinner A10/A20 CCU"
+ 	default ARCH_SUNXI
+diff --git a/drivers/clk/sunxi-ng/Makefile b/drivers/clk/sunxi-ng/Makefile
+index fa2d2574c87f..1da8c8a82238 100644
+--- a/drivers/clk/sunxi-ng/Makefile
++++ b/drivers/clk/sunxi-ng/Makefile
+@@ -40,6 +40,7 @@ obj-$(CONFIG_SUN60I_A733_CCU)	+= sun60i-a733-ccu.o
+ obj-$(CONFIG_SUN60I_A733_R_CCU)	+= sun60i-a733-r-ccu.o
+ obj-$(CONFIG_SUN60I_A733_CPU_CCU)	+= sun60i-a733-cpu-ccu.o
+ obj-$(CONFIG_SUN60I_A733_SERDES_CCU)	+= sun60i-a733-serdes-ccu.o
++obj-$(CONFIG_SUN60I_A733_VO1_CCU)	+= sun60i-a733-vo1-ccu.o
+ obj-$(CONFIG_SUN4I_A10_CCU)	+= sun4i-a10-ccu.o
+ obj-$(CONFIG_SUN5I_CCU)		+= sun5i-ccu.o
+ obj-$(CONFIG_SUN6I_A31_CCU)	+= sun6i-a31-ccu.o
+@@ -72,6 +73,7 @@ sun60i-a733-ccu-y		+= ccu-sun60i-a733.o
+ sun60i-a733-r-ccu-y		+= ccu-sun60i-a733-r.o
+ sun60i-a733-cpu-ccu-y		+= ccu-sun60i-a733-cpu.o
+ sun60i-a733-serdes-ccu-y	+= ccu-sun60i-a733-serdes.o
++sun60i-a733-vo1-ccu-y		+= ccu-sun60i-a733-vo1.o
+ sun4i-a10-ccu-y			+= ccu-sun4i-a10.o
+ sun5i-ccu-y			+= ccu-sun5i.o
+ sun6i-a31-ccu-y			+= ccu-sun6i-a31.o
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c
+new file mode 100644
+index 000000000000..b8a76f6d5f75
+--- /dev/null
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c
+@@ -0,0 +1,126 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Clock unit of the Allwinner A733 video output 1 block (VIDEO_OUT1_SYS)
++ *
++ * It selects whether each TCON TV takes its clock from the HDMI or the eDP
++ * side, and gates the clocks of both TCONs and the clock from TCON TV0 to
++ * HDMI (user manual sections 15.2.9.1 and 15.2.9.2).
++ */
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++
++#include <dt-bindings/clock/allwinner,sun60i-a733-vo1-ccu.h>
++
++#include "ccu_common.h"
++#include "ccu_gate.h"
++#include "ccu_mux.h"
++
++#define VO1_TV_CLK_SRC_REG	0x000
++#define VO1_MODULE_GATING_REG	0x020
++
++/* Select value 0 is the HDMI side, 1 the eDP side */
++static const struct clk_parent_data tv_parents[] = {
++	{ .fw_name = "hdmi" },
++	{ .fw_name = "edp" },
++};
++
++static SUNXI_CCU_MUX_DATA(tv0_sel_clk, "vo1-tv0-sel", tv_parents,
++			  VO1_TV_CLK_SRC_REG, 1, 1,
++			  CLK_SET_RATE_PARENT | CLK_SET_RATE_NO_REPARENT);
++static SUNXI_CCU_MUX_DATA(tv1_sel_clk, "vo1-tv1-sel", tv_parents,
++			  VO1_TV_CLK_SRC_REG, 5, 1,
++			  CLK_SET_RATE_PARENT | CLK_SET_RATE_NO_REPARENT);
++
++static const struct clk_hw *tv0_sel_hws[] = { &tv0_sel_clk.common.hw };
++static const struct clk_hw *tv1_sel_hws[] = { &tv1_sel_clk.common.hw };
++
++static SUNXI_CCU_GATE_HWS(tv0_clk, "vo1-tv0", tv0_sel_hws,
++			  VO1_MODULE_GATING_REG, BIT(20), CLK_SET_RATE_PARENT);
++static SUNXI_CCU_GATE_HWS(tv1_clk, "vo1-tv1", tv1_sel_hws,
++			  VO1_MODULE_GATING_REG, BIT(21), CLK_SET_RATE_PARENT);
++
++static const struct clk_hw *tv0_hws[] = { &tv0_clk.common.hw };
++
++static SUNXI_CCU_GATE_HWS(tv0_hdmi_clk, "vo1-tv0-hdmi", tv0_hws,
++			  VO1_MODULE_GATING_REG, BIT(28), CLK_SET_RATE_PARENT);
++
++static struct ccu_common *sun60i_a733_vo1_ccu_clks[] = {
++	&tv0_sel_clk.common,
++	&tv1_sel_clk.common,
++	&tv0_clk.common,
++	&tv1_clk.common,
++	&tv0_hdmi_clk.common,
++};
++
++static struct clk_hw_onecell_data sun60i_a733_vo1_hw_clks = {
++	.num	= CLK_VO1_TV0_HDMI + 1,
++	.hws	= {
++		[CLK_VO1_TV0_SEL]	= &tv0_sel_clk.common.hw,
++		[CLK_VO1_TV1_SEL]	= &tv1_sel_clk.common.hw,
++		[CLK_VO1_TV0]		= &tv0_clk.common.hw,
++		[CLK_VO1_TV1]		= &tv1_clk.common.hw,
++		[CLK_VO1_TV0_HDMI]	= &tv0_hdmi_clk.common.hw,
++	},
++};
++
++static const struct sunxi_ccu_desc sun60i_a733_vo1_ccu_desc = {
++	.ccu_clks	= sun60i_a733_vo1_ccu_clks,
++	.num_ccu_clks	= ARRAY_SIZE(sun60i_a733_vo1_ccu_clks),
++	.hw_clks	= &sun60i_a733_vo1_hw_clks,
++};
++
++/*
++ * The block is reachable with the video output 1 gate of the AHB bus
++ * matrix, its reset deasserted and its bus clock running, the reset before
++ * the bus clock (user manual section 4.1.4.4). It stays reachable while the
++ * unit is bound, as its clocks may be in use.
++ */
++static int sun60i_a733_vo1_ccu_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct reset_control *rstc;
++	void __iomem *reg;
++	struct clk *clk;
++
++	reg = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(reg))
++		return PTR_ERR(reg);
++
++	clk = devm_clk_get_enabled(dev, "ahb");
++	if (IS_ERR(clk))
++		return dev_err_probe(dev, PTR_ERR(clk), "Failed to enable ahb\n");
++
++	rstc = devm_reset_control_get_exclusive_deasserted(dev, NULL);
++	if (IS_ERR(rstc))
++		return dev_err_probe(dev, PTR_ERR(rstc),
++				     "Failed to deassert reset\n");
++
++	clk = devm_clk_get_enabled(dev, "bus");
++	if (IS_ERR(clk))
++		return dev_err_probe(dev, PTR_ERR(clk), "Failed to enable bus\n");
++
++	return devm_sunxi_ccu_probe(dev, reg, &sun60i_a733_vo1_ccu_desc);
++}
++
++static const struct of_device_id sun60i_a733_vo1_ccu_ids[] = {
++	{ .compatible = "allwinner,sun60i-a733-vo1-ccu" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sun60i_a733_vo1_ccu_ids);
++
++static struct platform_driver sun60i_a733_vo1_ccu_driver = {
++	.probe	= sun60i_a733_vo1_ccu_probe,
++	.driver	= {
++		.name			= "sun60i-a733-vo1-ccu",
++		.suppress_bind_attrs	= true,
++		.of_match_table		= sun60i_a733_vo1_ccu_ids,
++	},
++};
++module_platform_driver(sun60i_a733_vo1_ccu_driver);
++
++MODULE_IMPORT_NS("SUNXI_CCU");
++MODULE_DESCRIPTION("Support for the Allwinner A733 video output 1 clock unit");
++MODULE_LICENSE("GPL");

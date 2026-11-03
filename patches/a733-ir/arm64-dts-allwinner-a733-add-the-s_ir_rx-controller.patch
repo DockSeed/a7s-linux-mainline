@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 13:16:15 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the S_IR_RX controller
+
+Add the CIR receiver of the CPUS domain at 0x07040000 (A733 manual,
+memory map and 18.16), interrupt SPI 206 (12.2.3.1), with its bus gate,
+reset and module clock in the PRCM (4.2.5.20, 4.2.5.21), disabled.
+Add the pin group for PL6, function 5 (18.14.7.1), which the Radxa
+Cubie A7S routes to pin 13 of its header J11; the board carries no
+IR receiver.
+
+Tested on Radxa Cubie A7S: with the node enabled on PL6 in a copy of the
+DTB, every level change of the open pin, made with its pull resistor,
+raises the interrupt and gives raw samples.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index b0473c959c7f..0c0e96a99043 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1695,6 +1695,24 @@ r_i2c1_pl12_pins: r-i2c1-pl12-pins {
+ 				allwinner,pinmux = <3>;
+ 				function = "r_i2c1";
+ 			};
++
++			/omit-if-no-ref/
++			r_ir_rx_pl6_pin: r-ir-rx-pl6-pin {
++				pins = "PL6";
++				allwinner,pinmux = <5>;
++				function = "s_cir_rx";
++			};
++		};
++
++		r_ir: ir@7040000 {
++			compatible = "allwinner,sun60i-a733-ir",
++				     "allwinner,sun6i-a31-ir";
++			reg = <0x07040000 0x400>;
++			interrupts = <GIC_SPI 206 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&r_ccu CLK_BUS_R_IR_RX>, <&r_ccu CLK_R_IR_RX>;
++			clock-names = "apb", "ir";
++			resets = <&r_ccu RST_BUS_R_IR_RX>;
++			status = "disabled";
+ 		};
+ 
+ 		pck600: power-controller@7060000 {

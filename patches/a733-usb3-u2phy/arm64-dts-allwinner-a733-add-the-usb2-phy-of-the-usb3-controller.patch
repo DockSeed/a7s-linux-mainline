@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:54:45 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the USB2 PHY of the USB3
+ controller
+
+Add the node of the USB 2.0 PHY of the USB3 DRD controller. Its reset
+comes from the SERDES CCU, its resistor calibration sits in the system
+control block, which it reaches through the system control node.
+
+Tested on Radxa Cubie A7S: booted on two boards; the PHY node binds, and
+the USB3 controller comes up through it.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 3f3d90cd4041..66f3532a1954 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -740,6 +740,16 @@ dma: dma-controller@4601000 {
+ 			#dma-cells = <1>;
+ 		};
+ 
++		usb3_u2phy: phy@6b00000 {
++			compatible = "allwinner,sun60i-a733-usb2-phy";
++			reg = <0x06b00000 0x800>;
++			allwinner,sram = <&syscon>;
++			clocks = <&ccu CLK_RES_DCAP_24M>;
++			resets = <&serdes_ccu RST_USB3_USB2_PHY>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
++
+ 		serdes_ccu: clock-controller@6c00000 {
+ 			compatible = "allwinner,sun60i-a733-serdes-ccu";
+ 			reg = <0x06c00000 0x10>;

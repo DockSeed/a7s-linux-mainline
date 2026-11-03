@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 20:35:44 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable PCIe on the
+ FPC connector
+
+The Cubie A7S routes the PCIe lane to the FPC connector J3 for an M.2
+adapter. The adapter carries its own regulator, fed from the 5 V system
+rail, whose enable is PCIE_PWR_EN on PD20; PERST# is PCIE-PERSTn on
+PD22 (Radxa schematic V1.10, pages 7 and 14). Without PD20 the device
+stays unpowered and the link never leaves Detect.
+
+Model the adapter supply as a fixed regulator on PD20 for the
+controller's vpcie3v3-supply, give the controller PD22 as PERST#, and
+enable the controller and COMB1.
+
+Not covered: PCIE-WAKEn on PD21 and PCIE-CLKREQn on PD23, which the
+controller does not use, and the I/O supply of bank PD.
+
+Tested on Radxa Cubie A7S: booted on one board; with the controller enabled
+on the FPC connector the link trained and the NVMe drive behind it
+enumerated.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 26 +++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 0d5e8cb21ccd..62ca10cdf37b 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -60,6 +60,21 @@ scp@48100000 {
+ 		};
+ 	};
+ 
++	/*
++	 * Supply of the PCIe adapter on the FPC connector J3, which carries its
++	 * own regulator; PCIE_PWR_EN (PD20) is that regulator's enable. Its
++	 * start-up time is not documented and not measured.
++	 */
++	reg_pcie: regulator-pcie {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc3v3-pcie";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&pio 3 20 GPIO_ACTIVE_HIGH>; /* PD20 */
++		enable-active-high;
++		startup-delay-us = <20000>;
++	};
++
+ 	/* VBUS of the USB-A port J8, switched by USB_HOST_EN (PM5) */
+ 	reg_usb1_vbus: regulator-usb1-vbus {
+ 		compatible = "regulator-fixed";
+@@ -92,6 +107,10 @@ combophy0_ss: endpoint {
+ 	};
+ };
+ 
++&combophy1 {
++	status = "okay";
++};
++
+ &cpu0 {
+ 	operating-points-v2 = <&cluster0_opp>;
+ 	cpu-supply = <&reg_dcdc5>;
+@@ -212,6 +231,13 @@ &osc {
+ 	clock-frequency = <26000000>;
+ };
+ 
++/* PCIe on the FPC connector J3 */
++&pcie {
++	reset-gpios = <&pio 3 22 GPIO_ACTIVE_LOW>; /* PD22 */
++	vpcie3v3-supply = <&reg_pcie>;
++	status = "okay";
++};
++
+ &pio {
+ 	vcc-pb-supply = <&reg_swout2>;
+ 	vcc-pc-supply = <&reg_cldo5>;

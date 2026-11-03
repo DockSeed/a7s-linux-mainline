@@ -1,0 +1,851 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 18:00:21 +0200
+Subject: [PATCH] drm/sun4i: Add the A733 DisplayPort transmitter
+
+The A733 has a DisplayPort 1.4 / eDP 1.4 transmitter with one, two or
+four lanes at up to 5.4 Gb/s per lane, fed by TCON TV1 (user manual
+section 15.4). On the Cubie A7S it reaches the USB Type-C connector in
+alternate mode, and the hot plug state comes from the port controller.
+
+Add a driver in the form of the sun4i HDMI encoder: a component that
+creates the encoder of its TCON channel, a bridge, and the connector of
+its bridge chain. Its link and AUX registers are those of the Xilinx
+ZynqMP DisplayPort controller, but stream, reset and PHY control differ
+and that driver is bound to its display subsystem. This patch has the
+AUX channel, detection, EDID and mode validation; the link follows.
+
+AUX requests follow section 15.4.7; the end of a request is taken from
+the latched reply bits, cleared before each request. The AUX divider is
+the bus clock in MHz, and the AUX PHY is powered while a sink is
+reported, or for the one request that looks for it. Modes must fit the
+link at 8 bits per component. Pixel clocks above 154 MHz, the highest
+this pipe has carried, are refused; that is a tested value, not a limit
+of the hardware. Whether the TCON can make the pixel clock of a mode is
+checked by its CRTC.
+
+Seen on the Radxa Cubie A7S: with the monitor already plugged in when the
+driver binds, the connector stayed disconnected and no mode was found.
+Without a probe in detect, the transmitter knows the hot plug state only
+from the port controller, which reports it on a change, and the DRM core
+drops a report for which no connector is registered yet. Nothing sends it
+again, so the state stays wrong while the sink is there. When no hot plug
+is reported, detect therefore powers the AUX PHY and makes one DPCD
+read of the revision; an answer means a sink, and the next report of the
+port controller replaces that state. On a port without a sink the DRM
+helper retries that read until it gives up.
+
+The sink capabilities are copied under the driver lock, which the AUX
+transfer takes itself, so the read is made outside it. The option
+depends on PM: the bus clock and the reset come with runtime PM.
+For system sleep the runtime state is forced in the late and early
+phases, so the DRM core disables the bridge in the normal phase before
+the block is gated and enables it again after it is ungated, whatever
+the order of the display engine and the transmitter on the PM list.
+
+Differences from the vendor code: the AUX divider follows the bus clock,
+an AUX request is sent only to a reported sink or to look for one, and
+the channel is a DRM AUX device.
+
+Tested on Radxa Cubie A7S: booted on one board; the sink's capabilities
+and EDID were read, the mode list stayed the same over repeated forced
+detects running alongside the picture, and the link came up with
+enhanced framing; after an s2idle cycle the link came back and the sink
+saw the same picture as before.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/Kconfig     |  15 +
+ drivers/gpu/drm/sun4i/Makefile    |   1 +
+ drivers/gpu/drm/sun4i/sun60i_dp.c | 747 ++++++++++++++++++++++++++++++
+ 3 files changed, 763 insertions(+)
+ create mode 100644 drivers/gpu/drm/sun4i/sun60i_dp.c
+
+diff --git a/drivers/gpu/drm/sun4i/Kconfig b/drivers/gpu/drm/sun4i/Kconfig
+index 4808e2e746c8..77be8bdc8307 100644
+--- a/drivers/gpu/drm/sun4i/Kconfig
++++ b/drivers/gpu/drm/sun4i/Kconfig
+@@ -85,6 +85,21 @@ config DRM_SUN8I_TCON_TOP
+ 	  TCON TOP is responsible for configuring display pipeline for
+ 	  HDMI, TVE and LCD.
+ 
++config DRM_SUN60I_DP
++	tristate "Support for the Allwinner A733 DisplayPort transmitter"
++	depends on PM
++	select DRM_BRIDGE_CONNECTOR
++	select DRM_DISPLAY_DP_HELPER
++	select DRM_DISPLAY_HELPER
++	select DRM_KMS_HELPER
++	select GENERIC_PHY
++	help
++	  Choose this option if you have an Allwinner A733 SoC and want to
++	  use its DisplayPort transmitter, on a DisplayPort connector or on
++	  a USB Type-C connector in DisplayPort alternate mode. It drives
++	  one, two or four lanes at up to 5.4 Gb/s per lane. If M is
++	  selected the module will be called sun60i_dp.
++
+ config DRM_SUN60I_DE_TOP
+ 	tristate
+ 	default DRM_SUN4I if DRM_SUN8I_MIXER!=n
+diff --git a/drivers/gpu/drm/sun4i/Makefile b/drivers/gpu/drm/sun4i/Makefile
+index fea64b1d0a74..4c4462fc0c04 100644
+--- a/drivers/gpu/drm/sun4i/Makefile
++++ b/drivers/gpu/drm/sun4i/Makefile
+@@ -39,3 +39,4 @@ obj-$(CONFIG_DRM_SUN8I_DW_HDMI)	+= sun8i-drm-hdmi.o
+ obj-$(CONFIG_DRM_SUN8I_MIXER)	+= sun8i-mixer.o
+ obj-$(CONFIG_DRM_SUN8I_TCON_TOP) += sun8i_tcon_top.o
+ obj-$(CONFIG_DRM_SUN60I_DE_TOP) += sun60i_de_top.o
++obj-$(CONFIG_DRM_SUN60I_DP)	+= sun60i_dp.o
+diff --git a/drivers/gpu/drm/sun4i/sun60i_dp.c b/drivers/gpu/drm/sun4i/sun60i_dp.c
+new file mode 100644
+index 000000000000..4dca05f3bbf7
+--- /dev/null
++++ b/drivers/gpu/drm/sun4i/sun60i_dp.c
+@@ -0,0 +1,747 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Allwinner A733 DisplayPort transmitter
++ *
++ * The A733 has a DisplayPort 1.4 / eDP 1.4 transmitter (user manual section
++ * 15.4). Its link and AUX registers have the offsets and fields of those of
++ * the Xilinx ZynqMP DisplayPort controller (drivers/gpu/drm/xlnx/zynqmp_dp.c),
++ * and its main stream attribute registers come in the same order, 0x6a0
++ * higher. Stream enables, soft reset and PHY control differ: the main link
++ * lanes go through the first combo PHY of the SERDES block, and the AUX
++ * channel through the AUX PHY beside it. The video comes from TCON TV1.
++ *
++ * The transmitter is a component of the sun4i display engine: it creates the
++ * encoder of the TCON channel it is connected to, and the connector from its
++ * bridge chain. On a USB Type-C port in DisplayPort alternate mode, the HPD
++ * bridge of the port controller ends the chain and reports the hot plug
++ * state.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bits.h>
++#include <linux/clk.h>
++#include <linux/component.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/math64.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/phy/phy.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/reset.h>
++#include <linux/string.h>
++#include <linux/units.h>
++
++#include <drm/display/drm_dp_helper.h>
++#include <drm/drm_atomic.h>
++#include <drm/drm_atomic_state_helper.h>
++#include <drm/drm_bridge.h>
++#include <drm/drm_bridge_connector.h>
++#include <drm/drm_edid.h>
++#include <drm/drm_encoder.h>
++#include <drm/drm_managed.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_of.h>
++
++/* Transmitter controller registers (user manual section 15.4.7) */
++#define SUN60I_DP_LINK_BW_SET			0x0000
++#define SUN60I_DP_LANE_COUNT_SET		0x0004
++#define SUN60I_DP_TRAINING_PATTERN_SET		0x000c
++#define SUN60I_DP_SCRAMBLING_DISABLE		0x0014
++#define SUN60I_DP_TX_OUTPUT_ENABLE		0x0080
++#define SUN60I_DP_SOFT_RESET			0x0090
++#define  SUN60I_DP_SOFT_RESET_LINK		BIT(4)
++#define  SUN60I_DP_SOFT_RESET_VIDEO		BIT(0)
++#define SUN60I_DP_INPUT_SOURCE_ENABLE		0x0094
++#define SUN60I_DP_CORE_ID			0x00fc
++#define  SUN60I_DP_CORE_ID_A733			0x000a0509
++#define SUN60I_DP_AUX_COMMAND			0x0100
++#define  SUN60I_DP_AUX_COMMAND_ADDRESS_ONLY	BIT(12)
++#define  SUN60I_DP_AUX_COMMAND_CMD		GENMASK(11, 8)
++#define  SUN60I_DP_AUX_COMMAND_BYTES		GENMASK(3, 0)
++#define SUN60I_DP_AUX_WRITE_FIFO		0x0104
++#define SUN60I_DP_AUX_ADDRESS			0x0108
++#define SUN60I_DP_AUX_CLOCK_DIVIDER		0x010c
++#define SUN60I_DP_INTERRUPT_STATE		0x0130
++#define  SUN60I_DP_INTERRUPT_REPLY_TIMEOUT	BIT(3)
++#define  SUN60I_DP_INTERRUPT_REPLY_RECEIVED	BIT(2)
++#define SUN60I_DP_AUX_REPLY_DATA		0x0134
++#define SUN60I_DP_AUX_REPLY_CODE		0x0138
++#define  SUN60I_DP_AUX_REPLY_CODE_MASK		GENMASK(3, 0)
++/* Read to clear the latched bits of the interrupt state */
++#define SUN60I_DP_INTERRUPT_CAUSE		0x0140
++#define SUN60I_DP_REPLY_DATA_COUNT		0x0148
++#define  SUN60I_DP_REPLY_DATA_COUNT_MASK	GENMASK(4, 0)
++#define SUN60I_DP_AUX_STATUS			0x014c
++#define  SUN60I_DP_AUX_STATUS_REPLY_ERROR	BIT(3)
++#define  SUN60I_DP_AUX_STATUS_REQUEST_BUSY	BIT(2)
++
++/* Main stream of source 0 */
++#define SUN60I_DP_SRC0_SECONDARY_DATA_WINDOW	0x0808
++#define  SUN60I_DP_SECONDARY_DATA_WINDOW_MASK	GENMASK(11, 0)
++#define SUN60I_DP_SRC0_DATA_CONTROL		0x0810
++#define  SUN60I_DP_DATA_ACCUMULATION_DELAY	GENMASK(14, 8)
++#define SUN60I_DP_SRC0_HTOTAL			0x0820
++#define SUN60I_DP_SRC0_VTOTAL			0x0824
++#define SUN60I_DP_SRC0_POLARITY			0x0828
++#define  SUN60I_DP_POLARITY_VSYNC		BIT(1)
++#define  SUN60I_DP_POLARITY_HSYNC		BIT(0)
++#define SUN60I_DP_SRC0_HSWIDTH			0x082c
++#define SUN60I_DP_SRC0_VSWIDTH			0x0830
++#define SUN60I_DP_SRC0_HRES			0x0834
++#define SUN60I_DP_SRC0_VRES			0x0838
++#define SUN60I_DP_SRC0_HSTART			0x083c
++#define SUN60I_DP_SRC0_VSTART			0x0840
++#define SUN60I_DP_SRC0_MISC0			0x0844
++#define  SUN60I_DP_MISC0_BPC			GENMASK(7, 5)
++#define  SUN60I_DP_MISC0_BPC_8			1
++#define  SUN60I_DP_MISC0_FORMAT			GENMASK(2, 1)
++#define  SUN60I_DP_MISC0_FORMAT_RGB		0
++#define SUN60I_DP_SRC0_MISC1			0x0848
++#define SUN60I_DP_SRC0_MVID			0x084c
++#define  SUN60I_DP_MVID_MASK			GENMASK(23, 0)
++#define SUN60I_DP_SRC0_TU_CONFIG		0x0850
++#define  SUN60I_DP_TU_FRAC_SYMBOLS		GENMASK(27, 24)
++#define  SUN60I_DP_TU_SYMBOLS			GENMASK(23, 16)
++#define  SUN60I_DP_TU_SIZE			GENMASK(15, 0)
++#define SUN60I_DP_SRC0_NVID			0x0854
++#define SUN60I_DP_SRC0_USER_PIXEL_COUNT		0x0858
++#define SUN60I_DP_SRC0_USER_DATA_COUNT		0x085c
++#define  SUN60I_DP_USER_DATA_COUNT_MASK		GENMASK(17, 0)
++#define SUN60I_DP_SRC0_INTERLACED		0x0860
++/*
++ * The source and stream enables of source 0 have no row in the user
++ * manual's register list (section 15.4.6); their offsets are the vendor's.
++ */
++#define SUN60I_DP_SRC0_ENABLE			0x0800
++#define SUN60I_DP_SRC0_STREAM_ENABLE		0x0804
++
++/* Link and video clock gates (user manual section 15.4.8) */
++#define SUN60I_DP_PAD_LNK_CLK			0x0000
++#define SUN60I_DP_PAD_VID_CLK			0x0004
++#define  SUN60I_DP_PAD_VID0_CLK			BIT(0)
++
++#define SUN60I_DP_AUX_DIVIDER_MIN		10
++#define SUN60I_DP_AUX_DIVIDER_MAX		400
++#define SUN60I_DP_AUX_MAX_BYTES			16
++#define SUN60I_DP_AUX_POLL_US			10
++#define SUN60I_DP_AUX_TIMEOUT_US		3000
++#define SUN60I_DP_AUTOSUSPEND_MS		1000
++
++/*
++ * The highest pixel clock this pipe has carried, at one pixel per clock.
++ * It is a tested value, not a limit of the hardware; raise it only with a
++ * measurement.
++ */
++#define SUN60I_DP_PIXEL_CLOCK_MAX_KHZ		154000
++
++#define SUN60I_DP_MAX_LANES			4
++#define SUN60I_DP_MAX_LEVEL			3
++/* The video input takes one pixel per clock, 8 bits per component */
++#define SUN60I_DP_BPP				24
++
++/*
++ * Training and stream timing. The settle and wait times are those the
++ * transmitter trained and ran with on our boards; the round limits follow
++ * the DisplayPort specification's training loop.
++ */
++#define SUN60I_DP_TRAIN_SETTLE_MS		100
++#define SUN60I_DP_CR_MAX_ROUNDS			10
++#define SUN60I_DP_CR_MAX_SAME_LEVEL		5
++#define SUN60I_DP_EQ_MAX_ROUNDS			5
++#define SUN60I_DP_VIDEO_RESET_US		5000
++#define SUN60I_DP_SINK_SYNC_POLL_MS		20
++#define SUN60I_DP_SINK_SYNC_TIMEOUT_MS		500
++
++/* Transfer unit, in link symbols, and its fraction in sixteenths */
++#define SUN60I_DP_TU_SYMBOLS_MAX		64
++#define SUN60I_DP_TU_FRAC			16
++/* In asynchronous clock mode the core sends this NVID (section 15.4.5.2) */
++#define SUN60I_DP_NVID_ASYNC			0x8000
++#define SUN60I_DP_MVID_TOLERANCE_PERCENT	1
++
++/* Link rates of the PHY, in the 10 kb/s units of drm_dp_helper */
++static const unsigned int sun60i_dp_link_rates[] = { 540000, 270000, 162000 };
++
++struct sun60i_dp {
++	struct drm_bridge	bridge;
++	struct device		*dev;
++	void __iomem		*regs;
++	void __iomem		*pad;
++	struct clk		*bus_clk;
++	struct reset_control	*reset;
++	struct phy		*aux_phy;
++	struct phy		*phy;
++	struct drm_bridge	*next_bridge;
++	struct drm_dp_aux	aux;
++
++	/* protects the hot plug state and the AUX PHY power */
++	struct mutex		lock;
++	bool			hpd;
++	unsigned int		hpd_reports;
++	bool			aux_powered;
++
++	u8			dpcd[DP_RECEIVER_CAP_SIZE];
++	bool			dpcd_valid;
++	unsigned int		link_rate;
++	unsigned int		lanes;
++};
++
++static struct sun60i_dp *bridge_to_sun60i_dp(struct drm_bridge *bridge)
++{
++	return container_of(bridge, struct sun60i_dp, bridge);
++}
++
++static struct sun60i_dp *aux_to_sun60i_dp(struct drm_dp_aux *aux)
++{
++	return container_of(aux, struct sun60i_dp, aux);
++}
++
++/*
++ * One AUX request: address, write data, then the command, which starts it
++ * (section 15.4.7.21). The command field takes the request code of the
++ * DisplayPort specification as it is. The end of the request is taken from
++ * the latched reply bits of the interrupt state, cleared before the request
++ * by reading the interrupt cause: the reply received bit of the AUX status
++ * still shows the previous request until the new one is sent.
++ */
++static ssize_t sun60i_dp_aux_request(struct sun60i_dp *dp,
++				     struct drm_dp_aux_msg *msg)
++{
++	bool read = msg->request & DP_AUX_I2C_READ;
++	u8 *buf = msg->buffer;
++	u32 cmd, irq, count;
++	unsigned int i;
++	int ret;
++
++	if (readl(dp->regs + SUN60I_DP_AUX_STATUS) &
++	    SUN60I_DP_AUX_STATUS_REQUEST_BUSY)
++		return -EBUSY;
++
++	readl(dp->regs + SUN60I_DP_INTERRUPT_CAUSE);
++
++	writel(msg->address, dp->regs + SUN60I_DP_AUX_ADDRESS);
++
++	if (!read)
++		for (i = 0; i < msg->size; i++)
++			writel(buf[i], dp->regs + SUN60I_DP_AUX_WRITE_FIFO);
++
++	cmd = FIELD_PREP(SUN60I_DP_AUX_COMMAND_CMD, msg->request);
++	if (msg->size)
++		cmd |= FIELD_PREP(SUN60I_DP_AUX_COMMAND_BYTES, msg->size - 1);
++	else
++		cmd |= SUN60I_DP_AUX_COMMAND_ADDRESS_ONLY;
++	writel(cmd, dp->regs + SUN60I_DP_AUX_COMMAND);
++
++	ret = readl_poll_timeout(dp->regs + SUN60I_DP_INTERRUPT_STATE, irq,
++				 irq & (SUN60I_DP_INTERRUPT_REPLY_RECEIVED |
++					SUN60I_DP_INTERRUPT_REPLY_TIMEOUT),
++				 SUN60I_DP_AUX_POLL_US,
++				 SUN60I_DP_AUX_TIMEOUT_US);
++	if (ret || (irq & SUN60I_DP_INTERRUPT_REPLY_TIMEOUT))
++		return -ETIMEDOUT;
++
++	if (readl(dp->regs + SUN60I_DP_AUX_STATUS) &
++	    SUN60I_DP_AUX_STATUS_REPLY_ERROR)
++		return -EIO;
++
++	msg->reply = readl(dp->regs + SUN60I_DP_AUX_REPLY_CODE) &
++		     SUN60I_DP_AUX_REPLY_CODE_MASK;
++
++	if (msg->reply != DP_AUX_NATIVE_REPLY_ACK)
++		return 0;
++
++	if (!read)
++		return msg->size;
++
++	count = readl(dp->regs + SUN60I_DP_REPLY_DATA_COUNT) &
++		SUN60I_DP_REPLY_DATA_COUNT_MASK;
++	count = min_t(u32, count, msg->size);
++	for (i = 0; i < count; i++)
++		buf[i] = readl(dp->regs + SUN60I_DP_AUX_REPLY_DATA);
++
++	return count;
++}
++
++/*
++ * The AUX PHY is powered while the port controller reports a sink, or
++ * while detect looks for one. Without power the request is refused,
++ * as it would reach no sink and wait for its timeout.
++ */
++static ssize_t sun60i_dp_aux_transfer(struct drm_dp_aux *aux,
++				      struct drm_dp_aux_msg *msg)
++{
++	struct sun60i_dp *dp = aux_to_sun60i_dp(aux);
++	ssize_t ret;
++
++	if (msg->size > SUN60I_DP_AUX_MAX_BYTES)
++		return -E2BIG;
++
++	guard(mutex)(&dp->lock);
++
++	if (!dp->aux_powered)
++		return -ENODEV;
++
++	ret = pm_runtime_resume_and_get(dp->dev);
++	if (ret < 0)
++		return ret;
++
++	ret = sun60i_dp_aux_request(dp, msg);
++
++	pm_runtime_put_autosuspend(dp->dev);
++
++	return ret;
++}
++
++/* Must be called with dp->lock held */
++static void sun60i_dp_aux_power(struct sun60i_dp *dp, bool on)
++{
++	int ret;
++
++	if (on == dp->aux_powered)
++		return;
++
++	if (!on) {
++		phy_power_off(dp->aux_phy);
++		phy_exit(dp->aux_phy);
++		dp->aux_powered = false;
++		dp->dpcd_valid = false;
++		return;
++	}
++
++	ret = phy_init(dp->aux_phy);
++	if (ret) {
++		dev_err(dp->dev, "AUX PHY init failed: %d\n", ret);
++		return;
++	}
++
++	ret = phy_power_on(dp->aux_phy);
++	if (ret) {
++		dev_err(dp->dev, "AUX PHY power on failed: %d\n", ret);
++		phy_exit(dp->aux_phy);
++		return;
++	}
++
++	dp->aux_powered = true;
++}
++
++/* The AUX transfer takes dp->lock itself, so the lock is taken after it */
++static int sun60i_dp_read_caps(struct sun60i_dp *dp)
++{
++	u8 dpcd[DP_RECEIVER_CAP_SIZE];
++	int ret;
++
++	ret = drm_dp_read_dpcd_caps(&dp->aux, dpcd);
++
++	guard(mutex)(&dp->lock);
++
++	if (!ret)
++		memcpy(dp->dpcd, dpcd, sizeof(dpcd));
++	dp->dpcd_valid = !ret;
++
++	return ret;
++}
++
++/* The highest link rate and lane count both ends support */
++static void sun60i_dp_max_link(struct sun60i_dp *dp, unsigned int *rate,
++			       unsigned int *lanes)
++{
++	*rate = sun60i_dp_link_rates[0];
++	*lanes = SUN60I_DP_MAX_LANES;
++
++	guard(mutex)(&dp->lock);
++
++	if (!dp->dpcd_valid)
++		return;
++
++	*rate = min_t(unsigned int, *rate, drm_dp_max_link_rate(dp->dpcd));
++	*lanes = min_t(unsigned int, *lanes, drm_dp_max_lane_count(dp->dpcd));
++}
++
++static bool sun60i_dp_bandwidth_ok(const struct drm_display_mode *mode,
++				   unsigned int rate, unsigned int lanes)
++{
++	u64 need = div_u64((u64)mode->clock * SUN60I_DP_BPP, BITS_PER_BYTE);
++
++	return need <= drm_dp_max_dprx_data_rate(rate, lanes);
++}
++
++static int sun60i_dp_bridge_attach(struct drm_bridge *bridge,
++				   struct drm_encoder *encoder,
++				   enum drm_bridge_attach_flags flags)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	int ret;
++
++	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR))
++		return -EINVAL;
++
++	ret = drm_bridge_attach(encoder, dp->next_bridge, bridge, flags);
++	if (ret)
++		return ret;
++
++	dp->aux.drm_dev = bridge->dev;
++
++	return drm_dp_aux_register(&dp->aux);
++}
++
++static void sun60i_dp_bridge_detach(struct drm_bridge *bridge)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++
++	drm_dp_aux_unregister(&dp->aux);
++}
++
++/*
++ * The hot plug state comes from the port controller. It switches the AUX
++ * PHY: the AUX lines reach the sink only in DisplayPort alternate mode.
++ */
++static void sun60i_dp_bridge_hpd_notify(struct drm_bridge *bridge,
++					struct drm_connector *connector,
++					enum drm_connector_status status)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	bool hpd = status == connector_status_connected;
++
++	guard(mutex)(&dp->lock);
++
++	dp->hpd_reports++;
++
++	if (hpd == dp->hpd)
++		return;
++
++	dp->hpd = hpd;
++	sun60i_dp_aux_power(dp, hpd);
++}
++
++/*
++ * The port controller reports the hot plug on a change only, and a report
++ * made before the connector is registered is dropped by the DRM core
++ * without a trace. Without a report, ask the sink itself: power the AUX PHY
++ * and read the DPCD revision. The AUX lines reach a sink only in
++ * DisplayPort alternate mode, so a sink that answers is there, and the
++ * request of a port without one ends at its timeout. A sink found this way
++ * counts as reported, the next report of the port controller replaces it.
++ */
++static enum drm_connector_status
++sun60i_dp_bridge_detect(struct drm_bridge *bridge,
++			struct drm_connector *connector)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	unsigned int reports;
++	bool answered;
++
++	scoped_guard(mutex, &dp->lock) {
++		if (dp->hpd)
++			return connector_status_connected;
++
++		sun60i_dp_aux_power(dp, true);
++		if (!dp->aux_powered)
++			return connector_status_disconnected;
++
++		reports = dp->hpd_reports;
++	}
++
++	/* The AUX transfer takes dp->lock itself */
++	answered = !drm_dp_dpcd_probe(&dp->aux, DP_DPCD_REV);
++
++	guard(mutex)(&dp->lock);
++
++	/* A report made meanwhile is newer than the answer */
++	if (answered && reports == dp->hpd_reports)
++		dp->hpd = true;
++
++	if (!dp->hpd)
++		sun60i_dp_aux_power(dp, false);
++
++	return dp->hpd ? connector_status_connected :
++			 connector_status_disconnected;
++}
++
++static const struct drm_edid *
++sun60i_dp_bridge_edid_read(struct drm_bridge *bridge,
++			   struct drm_connector *connector)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	int ret;
++
++	ret = sun60i_dp_read_caps(dp);
++	if (ret) {
++		dev_err(dp->dev, "cannot read the sink capabilities: %d\n",
++			ret);
++		return NULL;
++	}
++
++	return drm_edid_read_ddc(connector, &dp->aux.ddc);
++}
++
++static enum drm_mode_status
++sun60i_dp_bridge_mode_valid(struct drm_bridge *bridge,
++			    const struct drm_display_info *info,
++			    const struct drm_display_mode *mode)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	unsigned int rate, lanes;
++
++	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
++		return MODE_NO_INTERLACE;
++
++	if (mode->clock > SUN60I_DP_PIXEL_CLOCK_MAX_KHZ)
++		return MODE_CLOCK_HIGH;
++
++	sun60i_dp_max_link(dp, &rate, &lanes);
++
++	if (!sun60i_dp_bandwidth_ok(mode, rate, lanes))
++		return MODE_CLOCK_HIGH;
++
++	return MODE_OK;
++}
++
++static const struct drm_bridge_funcs sun60i_dp_bridge_funcs = {
++	.atomic_create_state	= drm_atomic_helper_bridge_create_state,
++	.atomic_duplicate_state	= drm_atomic_helper_bridge_duplicate_state,
++	.atomic_destroy_state	= drm_atomic_helper_bridge_destroy_state,
++	.attach			= sun60i_dp_bridge_attach,
++	.detach			= sun60i_dp_bridge_detach,
++	.hpd_notify		= sun60i_dp_bridge_hpd_notify,
++	.detect			= sun60i_dp_bridge_detect,
++	.edid_read		= sun60i_dp_bridge_edid_read,
++	.mode_valid		= sun60i_dp_bridge_mode_valid,
++};
++
++/*
++ * The transmitter creates the encoder of its TCON channel, a TMDS encoder as
++ * sun4i_tcon expects of channel 1, and the connector of its bridge chain.
++ */
++static int sun60i_dp_bind(struct device *dev, struct device *master,
++			  void *data)
++{
++	struct sun60i_dp *dp = dev_get_drvdata(dev);
++	struct drm_device *drm = data;
++	struct drm_connector *connector;
++	struct drm_encoder *encoder;
++	int ret;
++
++	encoder = drmm_kzalloc(drm, sizeof(*encoder), GFP_KERNEL);
++	if (!encoder)
++		return -ENOMEM;
++
++	encoder->possible_crtcs = drm_of_find_possible_crtcs(drm, dev->of_node);
++	if (!encoder->possible_crtcs)
++		return -EPROBE_DEFER;
++
++	ret = drmm_encoder_init(drm, encoder, NULL, DRM_MODE_ENCODER_TMDS,
++				NULL);
++	if (ret)
++		return ret;
++
++	ret = drm_bridge_attach(encoder, &dp->bridge, NULL,
++				DRM_BRIDGE_ATTACH_NO_CONNECTOR);
++	if (ret)
++		return ret;
++
++	connector = drm_bridge_connector_init(drm, encoder);
++	if (IS_ERR(connector))
++		return dev_err_probe(dev, PTR_ERR(connector),
++				     "failed to create the connector\n");
++
++	return drm_connector_attach_encoder(connector, encoder);
++}
++
++static void sun60i_dp_unbind(struct device *dev, struct device *master,
++			     void *data)
++{
++}
++
++static const struct component_ops sun60i_dp_component_ops = {
++	.bind	= sun60i_dp_bind,
++	.unbind	= sun60i_dp_unbind,
++};
++
++/* The AUX clock divider is the bus clock in MHz (section 15.4.7.24) */
++static int sun60i_dp_runtime_resume(struct device *dev)
++{
++	struct sun60i_dp *dp = dev_get_drvdata(dev);
++	unsigned long mhz;
++	int ret;
++
++	ret = clk_prepare_enable(dp->bus_clk);
++	if (ret)
++		return ret;
++
++	ret = reset_control_deassert(dp->reset);
++	if (ret) {
++		clk_disable_unprepare(dp->bus_clk);
++		return ret;
++	}
++
++	mhz = clk_get_rate(dp->bus_clk) / HZ_PER_MHZ;
++	writel(clamp(mhz, SUN60I_DP_AUX_DIVIDER_MIN, SUN60I_DP_AUX_DIVIDER_MAX),
++	       dp->regs + SUN60I_DP_AUX_CLOCK_DIVIDER);
++
++	return 0;
++}
++
++static int sun60i_dp_runtime_suspend(struct device *dev)
++{
++	struct sun60i_dp *dp = dev_get_drvdata(dev);
++
++	reset_control_assert(dp->reset);
++	clk_disable_unprepare(dp->bus_clk);
++
++	return 0;
++}
++
++static const struct dev_pm_ops sun60i_dp_pm_ops = {
++	LATE_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
++	RUNTIME_PM_OPS(sun60i_dp_runtime_suspend, sun60i_dp_runtime_resume, NULL)
++};
++
++static int sun60i_dp_check_id(struct sun60i_dp *dp)
++{
++	unsigned long mhz;
++	u32 id;
++	int ret;
++
++	mhz = clk_get_rate(dp->bus_clk) / HZ_PER_MHZ;
++	if (mhz < SUN60I_DP_AUX_DIVIDER_MIN || mhz > SUN60I_DP_AUX_DIVIDER_MAX)
++		return dev_err_probe(dp->dev, -EINVAL,
++				     "bus clock of %lu MHz is out of the AUX range\n",
++				     mhz);
++
++	ret = pm_runtime_resume_and_get(dp->dev);
++	if (ret < 0)
++		return ret;
++
++	id = readl(dp->regs + SUN60I_DP_CORE_ID);
++
++	pm_runtime_put_autosuspend(dp->dev);
++
++	if (id != SUN60I_DP_CORE_ID_A733)
++		return dev_err_probe(dp->dev, -ENODEV,
++				     "unknown core id %#x\n", id);
++
++	return 0;
++}
++
++static int sun60i_dp_get_resources(struct sun60i_dp *dp,
++				   struct platform_device *pdev)
++{
++	struct device *dev = dp->dev;
++
++	dp->regs = devm_platform_ioremap_resource_byname(pdev, "dp");
++	if (IS_ERR(dp->regs))
++		return PTR_ERR(dp->regs);
++
++	dp->pad = devm_platform_ioremap_resource_byname(pdev, "pad");
++	if (IS_ERR(dp->pad))
++		return PTR_ERR(dp->pad);
++
++	dp->bus_clk = devm_clk_get(dev, "bus");
++	if (IS_ERR(dp->bus_clk))
++		return dev_err_probe(dev, PTR_ERR(dp->bus_clk),
++				     "failed to get the bus clock\n");
++
++	dp->reset = devm_reset_control_get_exclusive(dev, NULL);
++	if (IS_ERR(dp->reset))
++		return dev_err_probe(dev, PTR_ERR(dp->reset),
++				     "failed to get the reset\n");
++
++	dp->aux_phy = devm_phy_get(dev, "aux");
++	if (IS_ERR(dp->aux_phy))
++		return dev_err_probe(dev, PTR_ERR(dp->aux_phy),
++				     "failed to get the AUX PHY\n");
++
++	dp->phy = devm_phy_get(dev, "dp");
++	if (IS_ERR(dp->phy))
++		return dev_err_probe(dev, PTR_ERR(dp->phy),
++				     "failed to get the main link PHY\n");
++
++	dp->next_bridge = devm_drm_of_get_bridge(dev, dev->of_node, 1, 0);
++	if (IS_ERR(dp->next_bridge))
++		return dev_err_probe(dev, PTR_ERR(dp->next_bridge),
++				     "failed to get the next bridge\n");
++
++	return 0;
++}
++
++static int sun60i_dp_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sun60i_dp *dp;
++	int ret;
++
++	dp = devm_drm_bridge_alloc(dev, struct sun60i_dp, bridge,
++				   &sun60i_dp_bridge_funcs);
++	if (IS_ERR(dp))
++		return PTR_ERR(dp);
++
++	dp->dev = dev;
++	platform_set_drvdata(pdev, dp);
++
++	ret = devm_mutex_init(dev, &dp->lock);
++	if (ret)
++		return ret;
++
++	ret = sun60i_dp_get_resources(dp, pdev);
++	if (ret)
++		return ret;
++
++	pm_runtime_set_autosuspend_delay(dev, SUN60I_DP_AUTOSUSPEND_MS);
++	pm_runtime_use_autosuspend(dev);
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		return ret;
++
++	ret = sun60i_dp_check_id(dp);
++	if (ret)
++		return ret;
++
++	dp->aux.dev = dev;
++	dp->aux.name = dev_name(dev);
++	dp->aux.transfer = sun60i_dp_aux_transfer;
++	drm_dp_aux_init(&dp->aux);
++
++	dp->bridge.of_node = dev->of_node;
++	dp->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID;
++	dp->bridge.type = DRM_MODE_CONNECTOR_DisplayPort;
++
++	ret = devm_drm_bridge_add(dev, &dp->bridge);
++	if (ret)
++		return ret;
++
++	return component_add(dev, &sun60i_dp_component_ops);
++}
++
++static void sun60i_dp_remove(struct platform_device *pdev)
++{
++	struct sun60i_dp *dp = platform_get_drvdata(pdev);
++
++	component_del(&pdev->dev, &sun60i_dp_component_ops);
++
++	scoped_guard(mutex, &dp->lock)
++		sun60i_dp_aux_power(dp, false);
++}
++
++static const struct of_device_id sun60i_dp_of_table[] = {
++	{ .compatible = "allwinner,sun60i-a733-dp" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sun60i_dp_of_table);
++
++static struct platform_driver sun60i_dp_platform_driver = {
++	.probe		= sun60i_dp_probe,
++	.remove		= sun60i_dp_remove,
++	.driver		= {
++		.name		= "sun60i-dp",
++		.of_match_table	= sun60i_dp_of_table,
++		.pm		= pm_ptr(&sun60i_dp_pm_ops),
++	},
++};
++module_platform_driver(sun60i_dp_platform_driver);
++
++MODULE_DESCRIPTION("Allwinner A733 DisplayPort transmitter driver");
++MODULE_LICENSE("GPL");

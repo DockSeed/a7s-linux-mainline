@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 12:44:44 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Use the DSU operating
+ points
+
+Include the DSU operating points on the Cubie A7S and give the DSU its
+supply, DCDC5, the regulator of the Cortex-A55 cluster.
+
+No document names the DSU supply: the datasheet and the schematic of
+the board carry no DSU net. The silicon does: at fixed CPU rates, the
+highest DSU rate that runs moves with DCDC5 and not with DCDC3, the
+regulator of the Cortex-A76 cluster. The DSU driver finds the A55
+policy by this supply, as cpu-supply of cpu0.
+
+A kernel without the DSU driver leaves the node unused, and the DSU
+stays at the rate the boot firmware set. With the driver but without
+cpufreq, the driver waits for the CPU policies and changes nothing.
+
+Not covered: the DSU on boards whose DSU supply is not that of the A55
+cluster; the driver needs the two to be one regulator.
+
+Tested on Radxa Cubie A7S: booted on two boards; the DSU takes DCDC5,
+the supply of the A55 cluster, a forced DSU minimum raises DCDC5 and
+leaves DCDC3 alone, and the DSU rate follows the A55 policy.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index e76f308e21ba..e50a089056e7 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -4,6 +4,7 @@
+ 
+ #include "sun60i-a733.dtsi"
+ #include "sun60i-a733-cpu-opp.dtsi"
++#include "sun60i-a733-dsu-opp.dtsi"
+ 
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/leds/common.h>
+@@ -125,6 +126,10 @@ &cpu7 {
+ 	operating-points-v2 = <&cluster1_opp>;
+ };
+ 
++&dsu {
++	dsu-supply = <&reg_dcdc5>;
++};
++
+ &ehci1 {
+ 	status = "okay";
+ };

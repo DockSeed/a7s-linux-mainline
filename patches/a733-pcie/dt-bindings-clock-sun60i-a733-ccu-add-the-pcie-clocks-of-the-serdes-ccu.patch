@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 20:22:03 +0200
+Subject: [PATCH] dt-bindings: clock: sun60i-a733-ccu: Add the PCIe clocks of
+ the SERDES CCU
+
+The SERDES CCU of the A733 also holds the bus gates of the PCIe
+controller (SUBSYS_PCIE_BGR at 0x0004) and the gate of the reference
+clock that the PLL of the second combo PHY (COMB1) runs from
+(SUBSYS_DBG_CTRL at 0x00f0). That reference clock comes from the
+oscillator through the COMB1 gate in the RTC.
+
+Add the indices of the four clocks, and the oscillator gate as an
+optional fourth input. The register window grows from 0x10 to 0x100 to
+reach 0x00f0.
+
+Not covered: bit 1 of SUBSYS_PCIE_BGR, the controller's own PERST#
+output. PERST# is driven as a GPIO by the controller driver, as the
+common PCI binding describes it.
+
+Tested on Radxa Cubie A7S: booted on one board with the new SERDES CCU
+clock IDs; the PCIe driver resolved its gates and the COMB1 reference
+through them.
+
+Assisted-by: LLM
+---
+ .../bindings/clock/allwinner,sun60i-a733-ccu.yaml      | 10 +++++++---
+ .../clock/allwinner,sun60i-a733-serdes-ccu.h           |  4 ++++
+ 2 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml b/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
+index 012996e52771..ef10cef8e928 100644
+--- a/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
++++ b/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
+@@ -142,16 +142,20 @@ allOf:
+     then:
+       properties:
+         clocks:
++          minItems: 3
+           items:
+             - description: SERDES AHB bus matrix gate
+             - description: SERDES MBUS bus matrix gate
+             - description: USB2_U2_PIPE clock, the PIPE clock of the controller when the CCU feeds it
++            - description: Oscillator gate for the second combo PHY (COMB1)
+ 
+         clock-names:
++          minItems: 3
+           items:
+             - const: ahb
+             - const: mbus
+             - const: usb2-u2-pipe
++            - const: hosc-serdes1
+ 
+       required:
+         - resets
+@@ -182,9 +186,9 @@ examples:
+   - |
+     clock-controller@6c00000 {
+       compatible = "allwinner,sun60i-a733-serdes-ccu";
+-      reg = <0x06c00000 0x10>;
+-      clocks = <&ccu 68>, <&ccu 81>, <&ccu 223>;
+-      clock-names = "ahb", "mbus", "usb2-u2-pipe";
++      reg = <0x06c00000 0x100>;
++      clocks = <&ccu 68>, <&ccu 81>, <&ccu 223>, <&rtc 11>;
++      clock-names = "ahb", "mbus", "usb2-u2-pipe", "hosc-serdes1";
+       resets = <&ccu 92>;
+       #clock-cells = <1>;
+       #reset-cells = <1>;
+diff --git a/include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h b/include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h
+index ca87c2f120d6..ff06dca7b71a 100644
+--- a/include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h
++++ b/include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h
+@@ -6,5 +6,9 @@
+ #define CLK_BUS_USB3_HCLK	0
+ #define CLK_BUS_USB3_ACLK	1
+ #define CLK_USB3_PIPE_CCU	2
++#define CLK_BUS_PCIE_HCLK	3
++#define CLK_BUS_PCIE_MST_ACLK	4
++#define CLK_BUS_PCIE_SLV_ACLK	5
++#define CLK_COMB1_REF		6
+ 
+ #endif /* _DT_BINDINGS_CLK_ALLWINNER_SUN60I_A733_SERDES_CCU_H_ */

@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 17:32:01 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Build the Cubie A7S device tree
+ with symbols
+
+The Cubie A7S pin header brings out functions that its device tree
+leaves disabled, such as UART and SPI controllers. A user selects them
+with a device tree overlay that the boot loader applies, and the overlay
+refers to the nodes and pin groups by label. That needs the symbols of
+the base device tree.
+
+Compile the board file with -@, as is done for the Pine64 boards.
+
+Tested on Radxa Cubie A7S: the board DTB carries the labels of the new
+nodes and pin groups, and the test DTBs built from it with an overlay
+boot.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/Makefile b/arch/arm64/boot/dts/allwinner/Makefile
+index 8fe64328cbb8..5540aa7b8a26 100644
+--- a/arch/arm64/boot/dts/allwinner/Makefile
++++ b/arch/arm64/boot/dts/allwinner/Makefile
+@@ -4,6 +4,7 @@ DTC_FLAGS_sun50i-a64-pine64-lts := -@
+ DTC_FLAGS_sun50i-a64-pine64 := -@
+ DTC_FLAGS_sun50i-a64-pine64-plus := -@
+ DTC_FLAGS_sun50i-a64-sopine-baseboard := -@
++DTC_FLAGS_sun60i-a733-cubie-a7s := -@
+ 
+ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-a64-amarula-relic.dtb
+ dtb-$(CONFIG_ARCH_SUNXI) += sun50i-a64-bananapi-m64.dtb

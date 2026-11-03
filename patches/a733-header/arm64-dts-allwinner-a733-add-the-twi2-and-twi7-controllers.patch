@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 08:29:09 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the TWI2 and TWI7
+ controllers
+
+The SoC dtsi describes only the two R_TWI controllers. Boards that bring
+TWI2 or TWI7 out on a pin header cannot use them.
+
+Add TWI2 at 0x02512000 and TWI7 at 0x02517000, with their bus clocks and
+resets. They have the register set of the R_TWI controllers, so they use
+the same compatible chain and the mv64xxx driver binds. The TWI controllers
+have no module clock of their own. Add the pin groups that reach the
+Cubie A7S header: TWI2 on PD16/PD17 and TWI7 on PJ22/PJ23, both function 6.
+Both nodes are disabled; a board enables them.
+
+PD16/PD17 and PJ22/PJ23 can also carry UART3, so a board uses either the
+TWI or the UART function on a pin pair.
+
+Not covered: DMA requests and the packet engine at offset 0x200, which the
+driver does not use; the other TWI controllers.
+
+Tested on Radxa Cubie A7S: with both nodes enabled in a copy of the DTB,
+both controllers probe, take PD16/PD17 and PJ22/PJ23, and scan the empty
+header buses without an error.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 40 +++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 6a5e8a74d7b0..599e9a00e2d8 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -494,6 +494,20 @@ i2c0_pg_pins: i2c0-pg-pins {
+ 				function = "i2c0";
+ 			};
+ 
++			/omit-if-no-ref/
++			i2c2_pd_pins: i2c2-pd-pins {
++				pins = "PD16", "PD17";
++				allwinner,pinmux = <6>;
++				function = "i2c2";
++			};
++
++			/omit-if-no-ref/
++			i2c7_pj_pins: i2c7-pj-pins {
++				pins = "PJ22", "PJ23";
++				allwinner,pinmux = <6>;
++				function = "i2c7";
++			};
++
+ 			/omit-if-no-ref/
+ 			i2s0_pb_pins: i2s0-pb-pins {
+ 				pins = "PB4", "PB5", "PB6", "PB7", "PB8";
+@@ -688,6 +702,32 @@ i2c0: i2c@2510000 {
+ 			#size-cells = <0>;
+ 		};
+ 
++		i2c2: i2c@2512000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x02512000 0x400>;
++			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_I2C2>;
++			resets = <&ccu RST_BUS_I2C2>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
++		i2c7: i2c@2517000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun8i-v536-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x02517000 0x400>;
++			interrupts = <GIC_SPI 18 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_I2C7>;
++			resets = <&ccu RST_BUS_I2C7>;
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
+ 		gpadc: adc@2521000 {
+ 			compatible = "allwinner,sun60i-a733-gpadc",
+ 				     "allwinner,sun20i-d1-gpadc";

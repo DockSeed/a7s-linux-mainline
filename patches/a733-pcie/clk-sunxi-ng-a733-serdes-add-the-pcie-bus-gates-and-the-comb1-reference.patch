@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 20:22:26 +0200
+Subject: [PATCH] clk: sunxi-ng: a733-serdes: Add the PCIe bus gates and the
+ COMB1 reference
+
+Without its bus gates the PCIe controller of the A733 cannot be
+accessed, and without the reference clock gate the PLL of the second
+combo PHY (COMB1), which carries PCIe, has no input. All four gates
+sit in the SERDES CCU and default to off.
+
+Add them: SUBSYS_PCIE_BGR bit 16 (AHB), bit 17 (AXI master) and bit 18
+(AXI slave), and SUBSYS_DBG_CTRL bit 29, the COMB1 reference clock gate
+(A733 user manual V1.00, 18.2.6.1 and 18.2.6.3). The bus gates hang
+off the SERDES bus matrix gates like the USB3 gates; the reference gate
+hangs off the oscillator gate for COMB1 in the RTC, the new optional
+input of the binding.
+
+None of the gates carries CLK_IGNORE_UNUSED: the PCIe controller and
+the COMB1 PHY claim their gates themselves.
+
+Not covered: the controller's own PERST# output in SUBSYS_PCIE_BGR
+bit 1.
+
+Tested on Radxa Cubie A7S: booted on one board; the PCIe bus gates and the
+COMB1 reference clock were enabled by the PCIe driver and the COMB1 PHY
+came up on that reference.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/Kconfig                  |  5 +--
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c | 35 ++++++++++++++++++-
+ 2 files changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/Kconfig b/drivers/clk/sunxi-ng/Kconfig
+index 4361bf67c1e9..b67201708ad2 100644
+--- a/drivers/clk/sunxi-ng/Kconfig
++++ b/drivers/clk/sunxi-ng/Kconfig
+@@ -93,8 +93,9 @@ config SUN60I_A733_SERDES_CCU
+ 	depends on ARM64 || COMPILE_TEST
+ 	help
+ 	  Support for the clock and reset unit of the SERDES block on the
+-	  Allwinner A733. It provides the bus clocks of the USB3 controller,
+-	  the select of its PIPE clock and the reset of its USB 2.0 PHY,
++	  Allwinner A733. It provides the bus clocks of the USB3 and PCIe
++	  controllers, the select of the PIPE clock of the USB3 controller,
++	  the PCIe PHY reference clock and the reset of the USB 2.0 PHY,
+ 	  and keeps the SERDES bus matrix gates of the main clock unit
+ 	  running while it is bound.
+ 
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+index 933913c4d949..d0f2ee0c4252 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+@@ -17,7 +17,9 @@
+ 
+ #include "ccu_gate.h"
+ 
++#define SUBSYS_PCIE_BGR_REG	0x004
+ #define SUBSYS_USB3P1_BGR_REG	0x008
++#define SUBSYS_DBG_CTRL_REG	0x0f0
+ 
+ static const struct clk_parent_data ahb_parent[] = {
+ 	{ .fw_name = "ahb" },
+@@ -31,6 +33,10 @@ static const struct clk_parent_data usb2_u2_pipe_parent[] = {
+ 	{ .fw_name = "usb2-u2-pipe" },
+ };
+ 
++static const struct clk_parent_data hosc_serdes1_parent[] = {
++	{ .fw_name = "hosc-serdes1" },
++};
++
+ static SUNXI_CCU_GATE_DATA(bus_usb3_hclk, "bus-usb3-hclk", ahb_parent,
+ 			   SUBSYS_USB3P1_BGR_REG, BIT(16), 0);
+ static SUNXI_CCU_GATE_DATA(bus_usb3_aclk, "bus-usb3-aclk", mbus_parent,
+@@ -46,18 +52,45 @@ static SUNXI_CCU_GATE_DATA(bus_usb3_aclk, "bus-usb3-aclk", mbus_parent,
+ static SUNXI_CCU_GATE_DATA(usb3_pipe_ccu, "usb3-pipe-ccu", usb2_u2_pipe_parent,
+ 			   SUBSYS_USB3P1_BGR_REG, BIT(20), 0);
+ 
++/*
++ * The PCIe controller is a slave the CPU writes into and a master that
++ * reads memory, so it has two AXI gates beside its AHB gate.
++ */
++static SUNXI_CCU_GATE_DATA(bus_pcie_hclk, "bus-pcie-hclk", ahb_parent,
++			   SUBSYS_PCIE_BGR_REG, BIT(16), 0);
++static SUNXI_CCU_GATE_DATA(bus_pcie_mst_aclk, "bus-pcie-mst-aclk", mbus_parent,
++			   SUBSYS_PCIE_BGR_REG, BIT(17), 0);
++static SUNXI_CCU_GATE_DATA(bus_pcie_slv_aclk, "bus-pcie-slv-aclk", mbus_parent,
++			   SUBSYS_PCIE_BGR_REG, BIT(18), 0);
++
++/*
++ * COMB1_PHY_REFCLK_GATE: the reference clock of the PLL in the second
++ * combo PHY. The manual files it under debug control, but it is a clock
++ * gate, fed by the oscillator gate for COMB1 in the RTC.
++ */
++static SUNXI_CCU_GATE_DATA(comb1_ref, "comb1-ref", hosc_serdes1_parent,
++			   SUBSYS_DBG_CTRL_REG, BIT(29), 0);
++
+ static struct ccu_common *sun60i_a733_serdes_ccu_clks[] = {
+ 	&bus_usb3_hclk.common,
+ 	&bus_usb3_aclk.common,
+ 	&usb3_pipe_ccu.common,
++	&bus_pcie_hclk.common,
++	&bus_pcie_mst_aclk.common,
++	&bus_pcie_slv_aclk.common,
++	&comb1_ref.common,
+ };
+ 
+ static struct clk_hw_onecell_data sun60i_a733_serdes_hw_clks = {
+-	.num	= CLK_USB3_PIPE_CCU + 1,
++	.num	= CLK_COMB1_REF + 1,
+ 	.hws	= {
+ 		[CLK_BUS_USB3_HCLK]	= &bus_usb3_hclk.common.hw,
+ 		[CLK_BUS_USB3_ACLK]	= &bus_usb3_aclk.common.hw,
+ 		[CLK_USB3_PIPE_CCU]	= &usb3_pipe_ccu.common.hw,
++		[CLK_BUS_PCIE_HCLK]	= &bus_pcie_hclk.common.hw,
++		[CLK_BUS_PCIE_MST_ACLK]	= &bus_pcie_mst_aclk.common.hw,
++		[CLK_BUS_PCIE_SLV_ACLK]	= &bus_pcie_slv_aclk.common.hw,
++		[CLK_COMB1_REF]		= &comb1_ref.common.hw,
+ 	},
+ };
+ 

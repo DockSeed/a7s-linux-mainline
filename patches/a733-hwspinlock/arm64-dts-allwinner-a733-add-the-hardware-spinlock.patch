@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 13:14:33 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the hardware spinlock
+
+The A733 has a hardware spinlock unit with 32 locks at 0x03005000,
+shared between the Arm cores and the E902 companion core (A733
+manual, 6.2.1, 6.2.5). Its bus gate and reset are in SPINLOCK_BGR_REG
+(4.1.6.87). Add the node. The unit has an interrupt (SPI 105), which
+the binding does not describe and the driver does not use.
+
+Tested on Radxa Cubie A7S: the driver binds and reports 32 locks; lock 0
+is taken by a read of 0 and freed by a write of 0.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index d520847695b2..b0473c959c7f 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1046,6 +1046,15 @@ spi1: spi@2541000 {
+ 			#size-cells = <0>;
+ 		};
+ 
++		hwlock: hwlock@3005000 {
++			compatible = "allwinner,sun60i-a733-hwspinlock",
++				     "allwinner,sun6i-a31-hwspinlock";
++			reg = <0x03005000 0x1000>;
++			clocks = <&ccu CLK_BUS_SPINLOCK>;
++			resets = <&ccu RST_BUS_SPINLOCK>;
++			#hwlock-cells = <1>;
++		};
++
+ 		sid: efuse@3006000 {
+ 			compatible = "allwinner,sun60i-a733-sid",
+ 				     "allwinner,sun50i-a64-sid";

@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 13:53:15 +0200
+Subject: [PATCH] drm/sun4i: sun60i_de_top: Map blender port 1 to VI channel 1
+
+The top block of the A733 display engine holds, per display, a map from
+the blender input ports to the channels, 4 bits per port, VI channel n
+as n and UI channel n as n + 8. Its reset value 0 feeds VI channel 0
+into every port. The mixer routes the layer with index n to blender
+port n, so a second layer on VI channel 1 needs port 1 mapped to it.
+Without this, a layer on VI channel 1 that is programmed, enabled and
+routed to pipe 1 does not show, because port 1 still carries VI
+channel 0.
+
+Write the map of display 0 at probe: port 0 to VI channel 0, port 1 to
+VI channel 1, as the H616 DE33 clock driver writes an undocumented word
+in the same encoding at probe.
+
+The register is not in the manual: user manual V1.00 section 14.3
+(pages 641 and 642) describes the display engine without a register
+table. Offset, name and field layout are the vendor's. Seen on the
+Radxa Cubie A7S by register writes alone: with the map at its reset
+value 0 the frame CRC reported by the sink does not change when pipe 1
+is enabled with VI channel 1 behind it; with port 1 mapped to VI
+channel 1 it toggles between two stable values with the pipe enable
+and follows the layer coordinates.
+
+Tested on Radxa Cubie A7S: the map reads back as written after the
+first mixer bind and after a mixer unbind and bind, and a layer on VI
+channel 1 shows over the primary plane.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun60i_de_top.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun60i_de_top.c b/drivers/gpu/drm/sun4i/sun60i_de_top.c
+index c9401005c13c..eb9c226e443f 100644
+--- a/drivers/gpu/drm/sun4i/sun60i_de_top.c
++++ b/drivers/gpu/drm/sun4i/sun60i_de_top.c
+@@ -7,7 +7,8 @@
+  * display engine's MBUS port and the mux that connects each display to
+  * a TCON. It is a reset and clock provider for the mixers and sets the
+  * DE-to-TCON route for the TCON driver, as the TCON TOP does on the R40
+- * and H6.
++ * and H6. It also holds the map from the blender input ports of each
++ * display to the channels, which is set once at probe.
+  *
+  * The user manual does not document these registers. Their names, bit
+  * positions and the 0xf "not connected" code of the mux are the
+@@ -48,6 +49,13 @@
+ #define DE_TOP_DE2TCON_NONE		0xf
+ #define DE_TOP_DISP_NUM			4
+ 
++/*
++ * vendor name: PORT2CHN_MUX, one register per display, 4 bits per
++ * blender input port: VI channel n is n, UI channel n is n + 8
++ */
++#define DE_TOP_PORT2CHN_MUX_REG(disp)	(0x30 + (disp) * 4)
++#define DE_TOP_PORT2CHN(port, chn)	((chn) << ((port) * 4))
++
+ #define DE_TOP_CLK_NUM			(CLK_DE_TOP_MBUS + 1)
+ #define DE_TOP_RESET_NUM		(RST_DE_TOP_MBUS + 1)
+ 
+@@ -374,6 +382,14 @@ static int sun60i_de_top_probe(struct platform_device *pdev)
+ 				  DE_TOP_RESET_CLK_BIT16,
+ 				  DE_TOP_RESET_CLK_BIT16);
+ 
++	/*
++	 * Its reset value 0 feeds VI channel 0 into every blender port of
++	 * display 0. The mixer routes the layer with index n to port n and
++	 * gives index 1 to VI channel 1, so port 1 is VI channel 1.
++	 */
++	writel(DE_TOP_PORT2CHN(0, 0) | DE_TOP_PORT2CHN(1, 1),
++	       top->regs + DE_TOP_PORT2CHN_MUX_REG(0));
++
+ 	ret = sun60i_de_top_register_gates(dev, top);
+ 	if (ret)
+ 		return ret;

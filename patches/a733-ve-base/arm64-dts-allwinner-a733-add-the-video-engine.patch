@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 10:10:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the video engine
+
+The A733 has a video decoder and a video encoder, separate blocks.
+Add their nodes, disabled.
+
+They stay disabled until a driver binds them: an enabled node that no
+driver binds keeps the PCK-600 from ever calling its sync_state(),
+since fw_devlink waits for the consumer, so no power domain that nobody
+holds would be switched off.
+
+Not covered: the parent and rate of the module clocks.
+
+Tested on Radxa Cubie A7S: with the nodes enabled for a test, the
+decoder and encoder power up with their clocks and their registers read
+back, and both power domains switch off once sync_state has run.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 28 +++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 0351369ef174..39ebca8687b9 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -438,6 +438,34 @@ gpu: gpu@1800000 {
+ 			status = "disabled";
+ 		};
+ 
++		ve_dec: video-codec@1c0e000 {
++			compatible = "allwinner,sun60i-a733-video-decoder";
++			reg = <0x01c0e000 0x2000>;
++			interrupts = <GIC_SPI 49 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_VE_DEC0>, <&ccu CLK_AHB_VE_DEC>,
++				 <&ccu CLK_MBUS_VE_DEC0_GATE>,
++				 <&ccu CLK_MBUS_VE_DEC0>, <&ccu CLK_VE_DEC0>;
++			clock-names = "bus", "ahb", "mbus", "mclk", "mod";
++			resets = <&ccu RST_BUS_VE_DEC0>;
++			power-domains = <&pck600 PD_VE_DEC>;
++			iommus = <&iommu1 0>, <&iommu1 1>;
++			status = "disabled";
++		};
++
++		ve_enc: video-codec@1c10000 {
++			compatible = "allwinner,sun60i-a733-video-encoder";
++			reg = <0x01c10000 0x1000>;
++			interrupts = <GIC_SPI 48 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_VE_ENC0>, <&ccu CLK_AHB_VE_ENC>,
++				 <&ccu CLK_MBUS_VE_ENC0_GATE>,
++				 <&ccu CLK_MBUS_VE_ENC0>, <&ccu CLK_VE_ENC0>;
++			clock-names = "bus", "ahb", "mbus", "mclk", "mod";
++			resets = <&ccu RST_BUS_VE_ENC0>;
++			power-domains = <&pck600 PD_VE_ENC>;
++			iommus = <&iommu0 3>;
++			status = "disabled";
++		};
++
+ 		pio: pinctrl@2000000 {
+ 			compatible = "allwinner,sun60i-a733-pinctrl";
+ 			reg = <0x02000000 0x600>;

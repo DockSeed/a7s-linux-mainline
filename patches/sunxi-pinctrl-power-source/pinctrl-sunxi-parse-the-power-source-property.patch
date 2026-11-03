@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:54:48 +0200
+Subject: [PATCH] pinctrl: sunxi: Parse the power-source property
+
+The sunxi pin controllers build their pin configurations from the DT by
+hand and know only the drive strength and the bias. A power-source
+property in a pin group is accepted by the binding and then dropped.
+
+Parse it as well and pass it on as PIN_CONFIG_POWER_SOURCE, with the
+value as written, in microvolts. A pin controller without support for
+it returns -ENOTSUPP as for any other unknown parameter, and no sunxi
+DT uses the property yet.
+
+Tested on Radxa Cubie A7S: booted on two boards; the power-source
+property of the SD card pin groups reaches the pin controller (bank PF
+switches between 3.3 V and 1.8 V as the card is initialised).
+
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sunxi.c | 28 +++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.c b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+index 3ee5012463da..6fcf957e008a 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+@@ -275,6 +275,21 @@ static bool sunxi_pctrl_has_drive_prop(struct device_node *node)
+ 		of_property_present(node, "allwinner,drive");
+ }
+ 
++static bool sunxi_pctrl_has_power_source_prop(struct device_node *node)
++{
++	return of_property_present(node, "power-source");
++}
++
++static int sunxi_pctrl_parse_power_source_prop(struct device_node *node)
++{
++	u32 val;
++
++	if (of_property_read_u32(node, "power-source", &val))
++		return -EINVAL;
++
++	return val;
++}
++
+ static int sunxi_pctrl_parse_bias_prop(struct device_node *node)
+ {
+ 	u32 val;
+@@ -381,6 +396,8 @@ static unsigned long *sunxi_pctrl_build_pin_config(struct device_node *node,
+ 		configlen++;
+ 	if (sunxi_pctrl_has_bias_prop(node))
+ 		configlen++;
++	if (sunxi_pctrl_has_power_source_prop(node))
++		configlen++;
+ 
+ 	/*
+ 	 * If we don't have any configuration, bail out
+@@ -417,6 +434,17 @@ static unsigned long *sunxi_pctrl_build_pin_config(struct device_node *node,
+ 		pinconfig[idx++] = pinconf_to_config_packed(pull, arg);
+ 	}
+ 
++	if (sunxi_pctrl_has_power_source_prop(node)) {
++		int uV = sunxi_pctrl_parse_power_source_prop(node);
++
++		if (uV < 0) {
++			ret = uV;
++			goto err_free;
++		}
++
++		pinconfig[idx++] =
++			pinconf_to_config_packed(PIN_CONFIG_POWER_SOURCE, uV);
++	}
+ 
+ 	*len = configlen;
+ 	return pinconfig;

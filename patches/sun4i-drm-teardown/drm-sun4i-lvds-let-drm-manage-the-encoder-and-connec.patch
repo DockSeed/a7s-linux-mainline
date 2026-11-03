@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 15:25:11 +0200
+Subject: [PATCH] drm/sun4i: lvds: Let DRM manage the encoder and connector
+
+sun4i_drv no longer calls drm_mode_config_cleanup() itself (drm/sun4i:
+drv: Do not call drm_mode_config_cleanup()). The managed release of
+drm_mode_config_init() destroys the mode objects at the last
+drm_dev_put() instead, after component_unbind_all(), and, while
+userspace still holds the device open, after the display engine device
+has released its devres.
+
+The LVDS output lives in devm memory of the display engine device, and
+its encoder and connector are destroyed through their .destroy hooks, so
+they are cleaned up on freed memory in that case.
+
+Allocate the output with drmm_kzalloc() and initialise the encoder and
+the connector with drmm_encoder_init() and drmm_connector_init(). The
+managed actions clean them up before the memory is freed. The managed
+variants want NULL .destroy hooks, so drop them. The error paths no
+longer clean up by hand, the managed actions do.
+
+Not covered: the RGB output, converted separately.
+
+Tested on Radxa Cubie A7S: not tested; the board has no controller of
+this kind, the code is compiled only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_lvds.c | 35 +++++++++---------------------
+ 1 file changed, 10 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_lvds.c b/drivers/gpu/drm/sun4i/sun4i_lvds.c
+index 6b98d20a8890..ce209aa649e6 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_lvds.c
++++ b/drivers/gpu/drm/sun4i/sun4i_lvds.c
+@@ -9,6 +9,7 @@
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_bridge.h>
+ #include <drm/drm_encoder.h>
++#include <drm/drm_managed.h>
+ #include <drm/drm_of.h>
+ #include <drm/drm_panel.h>
+ #include <drm/drm_print.h>
+@@ -56,15 +57,8 @@ static const struct drm_connector_helper_funcs sun4i_lvds_con_helper_funcs = {
+ 	.get_modes	= sun4i_lvds_get_modes,
+ };
+ 
+-static void
+-sun4i_lvds_connector_destroy(struct drm_connector *connector)
+-{
+-	drm_connector_cleanup(connector);
+-}
+-
+ static const struct drm_connector_funcs sun4i_lvds_con_funcs = {
+ 	.fill_modes		= drm_helper_probe_single_connector_modes,
+-	.destroy		= sun4i_lvds_connector_destroy,
+ 	.reset			= drm_atomic_helper_connector_reset,
+ 	.atomic_duplicate_state	= drm_atomic_helper_connector_duplicate_state,
+ 	.atomic_destroy_state	= drm_atomic_helper_connector_destroy_state,
+@@ -94,10 +88,6 @@ static void sun4i_lvds_encoder_disable(struct drm_encoder *encoder)
+ 	}
+ }
+ 
+-static const struct drm_encoder_funcs sun4i_lvds_enc_funcs = {
+-	.destroy = drm_encoder_cleanup,
+-};
+-
+ static const struct drm_encoder_helper_funcs sun4i_lvds_enc_helper_funcs = {
+ 	.disable	= sun4i_lvds_encoder_disable,
+ 	.enable		= sun4i_lvds_encoder_enable,
+@@ -110,7 +100,7 @@ int sun4i_lvds_init(struct drm_device *drm, struct sun4i_tcon *tcon)
+ 	struct sun4i_lvds *lvds;
+ 	int ret;
+ 
+-	lvds = devm_kzalloc(drm->dev, sizeof(*lvds), GFP_KERNEL);
++	lvds = drmm_kzalloc(drm, sizeof(*lvds), GFP_KERNEL);
+ 	if (!lvds)
+ 		return -ENOMEM;
+ 	encoder = &lvds->encoder;
+@@ -132,11 +122,11 @@ int sun4i_lvds_init(struct drm_device *drm, struct sun4i_tcon *tcon)
+ 
+ 	drm_encoder_helper_add(&lvds->encoder,
+ 			       &sun4i_lvds_enc_helper_funcs);
+-	ret = drm_encoder_init(drm, &lvds->encoder, &sun4i_lvds_enc_funcs,
+-			       DRM_MODE_ENCODER_LVDS, NULL);
++	ret = drmm_encoder_init(drm, &lvds->encoder, NULL,
++				DRM_MODE_ENCODER_LVDS, NULL);
+ 	if (ret) {
+ 		dev_err(drm->dev, "Couldn't initialise the lvds encoder\n");
+-		goto err_out;
++		return ret;
+ 	}
+ 
+ 	/* The LVDS encoder can only work with the TCON channel 0 */
+@@ -145,12 +135,12 @@ int sun4i_lvds_init(struct drm_device *drm, struct sun4i_tcon *tcon)
+ 	if (lvds->panel) {
+ 		drm_connector_helper_add(&lvds->connector,
+ 					 &sun4i_lvds_con_helper_funcs);
+-		ret = drm_connector_init(drm, &lvds->connector,
+-					 &sun4i_lvds_con_funcs,
+-					 DRM_MODE_CONNECTOR_LVDS);
++		ret = drmm_connector_init(drm, &lvds->connector,
++					  &sun4i_lvds_con_funcs,
++					  DRM_MODE_CONNECTOR_LVDS, NULL);
+ 		if (ret) {
+ 			dev_err(drm->dev, "Couldn't initialise the lvds connector\n");
+-			goto err_cleanup_connector;
++			return ret;
+ 		}
+ 
+ 		drm_connector_attach_encoder(&lvds->connector,
+@@ -160,14 +150,9 @@ int sun4i_lvds_init(struct drm_device *drm, struct sun4i_tcon *tcon)
+ 	if (bridge) {
+ 		ret = drm_bridge_attach(encoder, bridge, NULL, 0);
+ 		if (ret)
+-			goto err_cleanup_connector;
++			return ret;
+ 	}
+ 
+ 	return 0;
+-
+-err_cleanup_connector:
+-	drm_encoder_cleanup(&lvds->encoder);
+-err_out:
+-	return ret;
+ }
+ EXPORT_SYMBOL(sun4i_lvds_init);

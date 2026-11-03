@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:58:05 +0200
+Subject: [PATCH] arm64: defconfig: Enable the Allwinner A733 USB3 combo PHY
+
+The USB3 controller of the Allwinner A733 reaches its Type-C connector
+through the first combo PHY of the SERDES block. Enable its driver as a
+module.
+
+Tested on Radxa Cubie A7S: booted on two boards; the kernel builds the
+driver as a module, and modprobe phy-sun60i-a733-combophy succeeds.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 45b1186374a9..8547244e2a97 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -1761,6 +1761,7 @@ CONFIG_PHY_SNPS_EUSB2=m
+ CONFIG_PHY_XGENE=y
+ CONFIG_PHY_SUN4I_USB=y
+ CONFIG_PHY_SUN60I_A733_USB2=m
++CONFIG_PHY_SUN60I_A733_COMBO=m
+ CONFIG_PHY_CADENCE_TORRENT=m
+ CONFIG_PHY_CADENCE_DPHY=m
+ CONFIG_PHY_CADENCE_DPHY_RX=m

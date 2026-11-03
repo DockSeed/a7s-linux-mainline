@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 16 Oct 2026 10:00:31 +0200
+Subject: [PATCH] clk: sunxi-ng: a733-vo1: Restore the registers after system
+ suspend
+
+The video output 1 clock unit of the A733 sits in the VO1 power domain.
+In system suspend genpd powers the domain off once all of its devices
+have suspended, and the unit comes back with both registers at their
+reset value 0 (user manual sections 15.2.9.1 and 15.2.9.2): each TCON TV
+takes its clock from the HDMI side again and the TCON gates are closed.
+Without this, TCON TV1 runs from the wrong clock source after resume,
+because the clock framework keeps its cached state and neither selects
+the parent again nor opens a gate it holds enabled. Seen on the Radxa
+Cubie A7S: after s2idle the source select of TCON TV1 reads the HDMI
+side instead of eDP, and the DisplayPort sink shows no picture.
+
+Save both registers in the noirq suspend phase and write them back in
+the noirq resume phase, as the i.MX8MP audiomix clock driver saves and
+restores its register list around the power-off of its domain. genpd
+runs these callbacks while the domain is on, after the consumers have
+suspended and before they resume. The source select is written before
+the gates (user manual section 4.1.4.4). The saved values are the state
+the clock framework has cached, so the restore changes no clock a
+consumer has set.
+
+Not covered: runtime power management. The unit has none, so genpd keeps
+the domain on while the unit is bound, outside system suspend.
+
+Tested on Radxa Cubie A7S: after an s2idle cycle that powered the VO1
+domain off, both registers read as before and the DisplayPort sink saw
+the same picture again.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c | 65 ++++++++++++++++++++--
+ 1 file changed, 60 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c
+index b8a76f6d5f75..c5fe8a3edff8 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-vo1.c
+@@ -5,9 +5,14 @@
+  * It selects whether each TCON TV takes its clock from the HDMI or the eDP
+  * side, and gates the clocks of both TCONs and the clock from TCON TV0 to
+  * HDMI (user manual sections 15.2.9.1 and 15.2.9.2).
++ *
++ * The block sits in the VO1 power domain and loses its registers when the
++ * domain goes off in system suspend, so it saves and restores them around
++ * it.
+  */
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
++#include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ #include <linux/reset.h>
+@@ -21,6 +26,17 @@
+ #define VO1_TV_CLK_SRC_REG	0x000
+ #define VO1_MODULE_GATING_REG	0x020
+ 
++/* The clock sources are set before the gates (user manual 4.1.4.4) */
++static const u16 sun60i_a733_vo1_ccu_regs[] = {
++	VO1_TV_CLK_SRC_REG,
++	VO1_MODULE_GATING_REG,
++};
++
++struct sun60i_a733_vo1_ccu {
++	void __iomem	*base;
++	u32		saved[ARRAY_SIZE(sun60i_a733_vo1_ccu_regs)];
++};
++
+ /* Select value 0 is the HDMI side, 1 the eDP side */
+ static const struct clk_parent_data tv_parents[] = {
+ 	{ .fw_name = "hdmi" },
+@@ -81,13 +97,19 @@ static const struct sunxi_ccu_desc sun60i_a733_vo1_ccu_desc = {
+ static int sun60i_a733_vo1_ccu_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
++	struct sun60i_a733_vo1_ccu *vo1;
+ 	struct reset_control *rstc;
+-	void __iomem *reg;
+ 	struct clk *clk;
+ 
+-	reg = devm_platform_ioremap_resource(pdev, 0);
+-	if (IS_ERR(reg))
+-		return PTR_ERR(reg);
++	vo1 = devm_kzalloc(dev, sizeof(*vo1), GFP_KERNEL);
++	if (!vo1)
++		return -ENOMEM;
++
++	vo1->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(vo1->base))
++		return PTR_ERR(vo1->base);
++
++	platform_set_drvdata(pdev, vo1);
+ 
+ 	clk = devm_clk_get_enabled(dev, "ahb");
+ 	if (IS_ERR(clk))
+@@ -102,9 +124,41 @@ static int sun60i_a733_vo1_ccu_probe(struct platform_device *pdev)
+ 	if (IS_ERR(clk))
+ 		return dev_err_probe(dev, PTR_ERR(clk), "Failed to enable bus\n");
+ 
+-	return devm_sunxi_ccu_probe(dev, reg, &sun60i_a733_vo1_ccu_desc);
++	return devm_sunxi_ccu_probe(dev, vo1->base, &sun60i_a733_vo1_ccu_desc);
++}
++
++/*
++ * The consumers keep their clocks across system suspend and the clock
++ * framework keeps its cached state, so the registers have to come back
++ * as they were. The noirq phase runs after the consumers have suspended
++ * and before they resume, with the bus clock still enabled.
++ */
++static int sun60i_a733_vo1_ccu_suspend_noirq(struct device *dev)
++{
++	struct sun60i_a733_vo1_ccu *vo1 = dev_get_drvdata(dev);
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(sun60i_a733_vo1_ccu_regs); i++)
++		vo1->saved[i] = readl(vo1->base + sun60i_a733_vo1_ccu_regs[i]);
++
++	return 0;
++}
++
++static int sun60i_a733_vo1_ccu_resume_noirq(struct device *dev)
++{
++	struct sun60i_a733_vo1_ccu *vo1 = dev_get_drvdata(dev);
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(sun60i_a733_vo1_ccu_regs); i++)
++		writel(vo1->saved[i], vo1->base + sun60i_a733_vo1_ccu_regs[i]);
++
++	return 0;
+ }
+ 
++static DEFINE_NOIRQ_DEV_PM_OPS(sun60i_a733_vo1_ccu_pm_ops,
++			       sun60i_a733_vo1_ccu_suspend_noirq,
++			       sun60i_a733_vo1_ccu_resume_noirq);
++
+ static const struct of_device_id sun60i_a733_vo1_ccu_ids[] = {
+ 	{ .compatible = "allwinner,sun60i-a733-vo1-ccu" },
+ 	{ /* sentinel */ }
+@@ -117,6 +171,7 @@ static struct platform_driver sun60i_a733_vo1_ccu_driver = {
+ 		.name			= "sun60i-a733-vo1-ccu",
+ 		.suppress_bind_attrs	= true,
+ 		.of_match_table		= sun60i_a733_vo1_ccu_ids,
++		.pm			= pm_sleep_ptr(&sun60i_a733_vo1_ccu_pm_ops),
+ 	},
+ };
+ module_platform_driver(sun60i_a733_vo1_ccu_driver);

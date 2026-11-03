@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 08:18:28 +0200
+Subject: [PATCH] net: stmmac: retry a failed RX refill from a timer
+
+stmmac_rx_refill() allocates with GFP_ATOMIC and stops at the first page
+it cannot get. Only the next RX poll tries again, and that poll comes from
+the RX interrupt. Once the DMA owns no descriptor it raises none, so the
+queue stays stalled after memory is back; only a down/up refills it. With
+hardware flow control the full MTL RX queue keeps sending PAUSE frames for
+as long as the stall lasts. Seen on the Radxa Cubie A7S under memory
+pressure: RX dead for good, RBU set, the current descriptor equal to the
+tail, the link partner paused.
+
+When the poll completes with STMMAC_RX_FILL_BATCH or more buffers
+missing, arm a per-channel timer that schedules the RX NAPI again after
+50 ms. The RX interrupt stays enabled; whichever comes first runs the
+poll. stmmac_rx() refills the ring before it returns, so a ring is short
+only after a failed allocation and the timer is not armed otherwise.
+Disabling the queues deletes the timers, and enabling them arms the
+timer of a ring still short of buffers, as the tc block callback does
+not rebuild the rings. 50 ms is the period forcedeth uses to retry a
+failed RX refill from a timer (OOM_REFILL); a shorter one only polls
+more often while the allocation keeps failing.
+
+This is the delayed retry asked for in the review of "net: stmmac:
+Prevent indefinite RX stall on buffer exhaustion", instead of returning
+the budget and polling in a loop. The zero-copy path is not changed: on a
+failed refill it already returns the budget or sets need_wakeup.
+
+Tested on Radxa Cubie A7S: RX recovers without a link restart after
+injected refill failures and does not stall under memory pressure.
+
+Link: https://lore.kernel.org/r/20260331195927.3353cc6d@kernel.org
+Link: https://lore.kernel.org/r/20260402174049.0ac088cc@kernel.org
+Assisted-by: LLM
+---
+ drivers/net/ethernet/stmicro/stmmac/stmmac.h  |  1 +
+ .../net/ethernet/stmicro/stmmac/stmmac_main.c | 30 ++++++++++++++++++-
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac.h b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
+index d2d387f45c10..8926abb8c837 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac.h
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
+@@ -145,6 +145,7 @@ struct stmmac_channel {
+ 	struct stmmac_priv *priv_data;
+ 	spinlock_t lock;
+ 	u32 index;
++	struct timer_list rx_refill_timer;
+ };
+ 
+ struct stmmac_fpe_cfg {
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index b837e8e27a35..108a2069a7d2 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -85,6 +85,7 @@ MODULE_PARM_DESC(phyaddr, "Physical device address");
+ #define STMMAC_XSK_TX_BUDGET_MAX	256
+ #define STMMAC_TX_XSK_AVAIL		16
+ #define STMMAC_RX_FILL_BATCH		16
++#define STMMAC_RX_REFILL_RETRY_MS	50
+ 
+ #define STMMAC_XDP_PASS		0
+ #define STMMAC_XDP_CONSUMED	BIT(0)
+@@ -153,6 +154,7 @@ static irqreturn_t stmmac_msi_intr_rx(int irq, void *data);
+ static void stmmac_reset_rx_queue(struct stmmac_priv *priv, u32 queue);
+ static void stmmac_reset_tx_queue(struct stmmac_priv *priv, u32 queue);
+ static void stmmac_reset_queues_param(struct stmmac_priv *priv);
++static inline u32 stmmac_rx_dirty(struct stmmac_priv *priv, u32 queue);
+ static void stmmac_tx_timer_arm(struct stmmac_priv *priv, u32 queue);
+ static void stmmac_flush_tx_descriptors(struct stmmac_priv *priv, int queue);
+ static void stmmac_set_dma_operation_mode(struct stmmac_priv *priv, u32 txmode,
+@@ -283,6 +285,9 @@ static void __stmmac_disable_all_queues(struct stmmac_priv *priv)
+ 		if (queue < tx_queues_cnt)
+ 			napi_disable(&ch->tx_napi);
+ 	}
++
++	for (queue = 0; queue < rx_queues_cnt; queue++)
++		timer_delete_sync(&priv->channel[queue].rx_refill_timer);
+ }
+ 
+ /**
+@@ -327,8 +332,13 @@ static void stmmac_enable_all_queues(struct stmmac_priv *priv)
+ 			continue;
+ 		}
+ 
+-		if (queue < rx_queues_cnt)
++		if (queue < rx_queues_cnt) {
+ 			napi_enable(&ch->rx_napi);
++			/* A ring left without buffers raises no RX interrupt */
++			if (stmmac_rx_dirty(priv, queue) >=
++			    STMMAC_RX_FILL_BATCH)
++				mod_timer(&ch->rx_refill_timer, jiffies);
++		}
+ 		if (queue < tx_queues_cnt)
+ 			napi_enable(&ch->tx_napi);
+ 	}
+@@ -5994,6 +6004,13 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
+ 	return count;
+ }
+ 
++static void stmmac_rx_refill_timer(struct timer_list *t)
++{
++	struct stmmac_channel *ch = timer_container_of(ch, t, rx_refill_timer);
++
++	napi_schedule(&ch->rx_napi);
++}
++
+ static int stmmac_napi_poll_rx(struct napi_struct *napi, int budget)
+ {
+ 	struct stmmac_channel *ch =
+@@ -6009,6 +6026,15 @@ static int stmmac_napi_poll_rx(struct napi_struct *napi, int budget)
+ 	u64_stats_update_end(&rxq_stats->napi_syncp);
+ 
+ 	work_done = stmmac_rx(priv, budget, chan);
++
++	/* The refill ran out of memory. Once the DMA owns no descriptor, no
++	 * RX interrupt comes to retry it, so poll again after a delay.
++	 */
++	if (work_done < budget &&
++	    stmmac_rx_dirty(priv, chan) >= STMMAC_RX_FILL_BATCH)
++		mod_timer(&ch->rx_refill_timer, jiffies +
++			  msecs_to_jiffies(STMMAC_RX_REFILL_RETRY_MS));
++
+ 	if (work_done < budget && napi_complete_done(napi, work_done)) {
+ 		unsigned long flags;
+ 
+@@ -7594,6 +7620,8 @@ static void stmmac_napi_add(struct net_device *dev)
+ 
+ 		if (queue < priv->plat->rx_queues_to_use) {
+ 			netif_napi_add(dev, &ch->rx_napi, stmmac_napi_poll_rx);
++			timer_setup(&ch->rx_refill_timer,
++				    stmmac_rx_refill_timer, 0);
+ 		}
+ 		if (queue < priv->plat->tx_queues_to_use) {
+ 			netif_napi_add_tx(dev, &ch->tx_napi,

@@ -1,0 +1,199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:34:11 +0200
+Subject: [PATCH] phy: allwinner: a733-combophy: Add DisplayPort at 1.62 and
+ 5.4 Gb/s
+
+The DisplayPort transmitter of the A733 runs its lanes at up to
+5.4 Gb/s, and the combo PHY covers the DisplayPort rates RBR, HBR and
+HBR2 (user manual sections 15.4.1 and 18.2.1). The PHY so far sets up
+HBR only.
+
+Add the PMA set-up and the swing and pre-emphasis settings of RBR and
+HBR2. They differ from HBR in the PLL and clock settings, in the swing
+and pre-emphasis tables, and at RBR in four more writes, one per lane.
+HBR3 is not offered, as the PHY does not reach it.
+
+The settings are vendor values, not measured on our boards. HBR2 needs
+a sink that supports it, and training pattern 3, which the transmitter
+chooses.
+
+Tested on Radxa Cubie A7S: not tested; the link to the test monitor
+trained at the middle rate, so neither rate added here was used.
+
+Assisted-by: LLM
+---
+ .../phy/allwinner/phy-sun60i-a733-combophy.c  | 136 +++++++++++++++++-
+ 1 file changed, 134 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+index 9f379815e9f0..aa9ee75cd079 100644
+--- a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
++++ b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+@@ -570,6 +570,56 @@ static const struct a733_pma_write a733_pma_dp_common[] = {
+ 	{ 0x010b, 0x007f },
+ };
+ 
++/* 1.62 and 5.4 Gb/s: vendor values, not measured on our boards */
++static const struct a733_pma_write a733_pma_dp_1620[] = {
++	{ 0x4140, 0x0801 },
++	{ 0x4340, 0x0801 },
++	{ 0x4540, 0x0801 },
++	{ 0x4740, 0x0801 },
++	{ 0x00d8, 0x0002 },
++	{ 0x00d9, 0x04c4 },
++	{ 0x00da, 0x006a },
++	{ 0x00db, 0x0004 },
++	{ 0x0098, 0x0001 },
++	{ 0x00d9, 0x044a },
++	{ 0x009a, 0x006b },
++	{ 0x009b, 0x0004 },
++	{ 0x00d4, 0x0004 },
++	{ 0x01c4, 0x0509 },
++	{ 0x01c5, 0x0f00 },
++	{ 0x01c6, 0x0f08 },
++	{ 0x00d0, 0x0175 },
++	{ 0x00d1, 0xd89e },
++	{ 0x00d2, 0x0002 },
++	{ 0x00d3, 0x00fa },
++	{ 0x01c0, 0x0002 },
++	{ 0x01c1, 0x0f01 },
++	{ 0x004b, 0x0000 },
++	{ 0x40e6, 0x0001 },
++	{ 0x42e6, 0x0001 },
++	{ 0x44e6, 0x0001 },
++	{ 0x46e6, 0x0001 },
++	{ 0x40e7, 0x0002 },
++	{ 0x42e7, 0x0002 },
++	{ 0x44e7, 0x0002 },
++	{ 0x46e7, 0x0002 },
++	{ 0x40e5, 0x0019 },
++	{ 0x42e5, 0x0019 },
++	{ 0x44e5, 0x0019 },
++	{ 0x46e5, 0x0019 },
++	{ 0xe006, 0x2224 },
++	{ 0x01a1, 0x8600 },
++	{ 0x0094, 0x0004 },
++	{ 0x01a4, 0x0509 },
++	{ 0x01a5, 0x0f00 },
++	{ 0x01a6, 0x0f08 },
++	{ 0x0090, 0x0180 },
++	{ 0x0091, 0x9dba },
++	{ 0x0092, 0x0002 },
++	{ 0x0093, 0x0102 },
++	{ 0x01a0, 0x0002 },
++};
++
+ static const struct a733_pma_write a733_pma_dp_2700[] = {
+ 	{ 0x00d8, 0x0002 },
+ 	{ 0x00d9, 0x04c4 },
+@@ -615,12 +665,71 @@ static const struct a733_pma_write a733_pma_dp_2700[] = {
+ 	{ 0x01a0, 0x0002 },
+ };
+ 
++static const struct a733_pma_write a733_pma_dp_5400[] = {
++	{ 0x00d8, 0x0002 },
++	{ 0x00d9, 0x04c4 },
++	{ 0x00da, 0x006a },
++	{ 0x00db, 0x0004 },
++	{ 0x0098, 0x0001 },
++	{ 0x00d9, 0x045f },
++	{ 0x009a, 0x006b },
++	{ 0x009b, 0x0004 },
++	{ 0x00d4, 0x0004 },
++	{ 0x01c4, 0x0509 },
++	{ 0x01c5, 0x0f00 },
++	{ 0x01c6, 0x0f08 },
++	{ 0x00d0, 0x019f },
++	{ 0x00d1, 0x6276 },
++	{ 0x00d2, 0x0002 },
++	{ 0x00d3, 0x0116 },
++	{ 0x01c0, 0x0002 },
++	{ 0x01c1, 0x0601 },
++	{ 0x004b, 0x0000 },
++	{ 0x40e6, 0x0001 },
++	{ 0x42e6, 0x0001 },
++	{ 0x44e6, 0x0001 },
++	{ 0x46e6, 0x0001 },
++	{ 0x40e7, 0x0000 },
++	{ 0x42e7, 0x0000 },
++	{ 0x44e7, 0x0000 },
++	{ 0x46e7, 0x0000 },
++	{ 0x40e5, 0x0019 },
++	{ 0x42e5, 0x0019 },
++	{ 0x44e5, 0x0019 },
++	{ 0x46e5, 0x0019 },
++	{ 0xe006, 0x2224 },
++	{ 0x01a1, 0x8600 },
++	{ 0x0094, 0x0004 },
++	{ 0x01a4, 0x0509 },
++	{ 0x01a5, 0x0f00 },
++	{ 0x01a6, 0x0f08 },
++	{ 0x0090, 0x0180 },
++	{ 0x0091, 0x9dba },
++	{ 0x0092, 0x0002 },
++	{ 0x0093, 0x0102 },
++	{ 0x01a0, 0x0002 },
++};
++
+ /*
+  * Swing and pre-emphasis settings per link rate, from the vendor tables,
+  * indexed by the two levels. At 2.7 Gb/s, (0, 0) and (1, 0) are measured on
+- * our boards and (2, 0) is what the vendor kernel runs; the other settings
+- * are vendor values, not measured on our boards.
++ * our boards and (2, 0) is what the vendor kernel runs; the other settings,
++ * and all of 1.62 and 5.4 Gb/s, are vendor values, not measured on our
++ * boards.
+  */
++static const struct a733_dp_swing a733_dp_swing_1620[A733_DP_LEVELS][A733_DP_LEVELS] = {
++	[0][0] = { 0x0003, 0x0000, { 0x0027, 0x0027, 0x0027, 0x0027 } },
++	[0][1] = { 0x00a2, 0x000a, { 0x0023, 0x0023, 0x0023, 0x0023 } },
++	[0][2] = { 0x0092, 0x0016, { 0x001a, 0x001a, 0x001a, 0x001a } },
++	[0][3] = { 0x00b2, 0x0020, { 0x000e, 0x000e, 0x000e, 0x000e } },
++	[1][0] = { 0x0003, 0x0000, { 0x0020, 0x0020, 0x0020, 0x0020 } },
++	[1][1] = { 0x00a2, 0x000c, { 0x0019, 0x0018, 0x0018, 0x0019 } },
++	[1][2] = { 0x00b2, 0x0017, { 0x000d, 0x000c, 0x000c, 0x000d } },
++	[2][0] = { 0x0003, 0x0000, { 0x0010, 0x000f, 0x000f, 0x0010 } },
++	[2][1] = { 0x00b2, 0x0010, { 0x0004, 0x0003, 0x0003, 0x0004 } },
++	[3][0] = { 0x0003, 0x0000, { 0x0000, 0x0000, 0x0000, 0x0000 } },
++};
++
+ static const struct a733_dp_swing a733_dp_swing_2700[A733_DP_LEVELS][A733_DP_LEVELS] = {
+ 	[0][0] = { 0x0003, 0x0000, { 0x0028, 0x0026, 0x0026, 0x0028 } },
+ 	[0][1] = { 0x00b2, 0x0008, { 0x0024, 0x0023, 0x0023, 0x0024 } },
+@@ -634,12 +743,35 @@ static const struct a733_dp_swing a733_dp_swing_2700[A733_DP_LEVELS][A733_DP_LEV
+ 	[3][0] = { 0x0003, 0x0000, { 0x0000, 0x0000, 0x0000, 0x0000 } },
+ };
+ 
++static const struct a733_dp_swing a733_dp_swing_5400[A733_DP_LEVELS][A733_DP_LEVELS] = {
++	[0][0] = { 0x0003, 0x0000, { 0x0025, 0x0024, 0x0024, 0x0025 } },
++	[0][1] = { 0x00a3, 0x000a, { 0x001e, 0x001d, 0x001d, 0x001e } },
++	[0][2] = { 0x00b2, 0x001c, { 0x0011, 0x0010, 0x0010, 0x0011 } },
++	[0][3] = { 0x00b2, 0x0027, { 0x0001, 0x0000, 0x0000, 0x0001 } },
++	[1][0] = { 0x0002, 0x0000, { 0x001d, 0x001c, 0x001c, 0x001d } },
++	[1][1] = { 0x00b2, 0x000a, { 0x0012, 0x0011, 0x0011, 0x0012 } },
++	[1][2] = { 0x00b2, 0x001e, { 0x0001, 0x0000, 0x0000, 0x0001 } },
++	[2][0] = { 0x0002, 0x0000, { 0x0010, 0x000f, 0x000f, 0x0010 } },
++	[2][1] = { 0x00b2, 0x000f, { 0x0000, 0x0000, 0x0000, 0x0000 } },
++	[3][0] = { 0x00b2, 0x0000, { 0x0000, 0x0000, 0x0000, 0x0000 } },
++};
++
+ static const struct a733_dp_rate a733_dp_rates[] = {
+ 	{
++		.link_rate	= 1620,
++		.pll		= a733_pma_dp_1620,
++		.pll_len	= ARRAY_SIZE(a733_pma_dp_1620),
++		.swing		= a733_dp_swing_1620,
++	}, {
+ 		.link_rate	= 2700,
+ 		.pll		= a733_pma_dp_2700,
+ 		.pll_len	= ARRAY_SIZE(a733_pma_dp_2700),
+ 		.swing		= a733_dp_swing_2700,
++	}, {
++		.link_rate	= 5400,
++		.pll		= a733_pma_dp_5400,
++		.pll_len	= ARRAY_SIZE(a733_pma_dp_5400),
++		.swing		= a733_dp_swing_5400,
+ 	},
+ };
+ 

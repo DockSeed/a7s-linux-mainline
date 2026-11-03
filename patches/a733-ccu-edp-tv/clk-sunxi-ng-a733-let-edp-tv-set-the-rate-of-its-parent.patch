@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 17:02:43 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Let edp-tv set the rate of its parent
+
+edp-tv divides one of the video PLLs, or pll-periph0-2x, by M. Its
+flags do not pass a rate request on to the parent, so the eDP/DP side
+gets the video PLL only at the rate the boot chain left it, divided by 1
+to 32. Seen on the Radxa Cubie A7S: with pll-video0-4x at 1188 MHz,
+1024x768 at 65 MHz cannot be made (1188 MHz / 18 = 66 MHz, 1.5 % off),
+and the display driver rejects a mode the monitor offers.
+
+Add CLK_SET_RATE_PARENT, as the TCON TV clocks of the A523 and H6 have.
+The outputs of the video PLLs already pass a rate request on to their
+PLL. A video PLL that a consumer has prepared keeps its rate, as
+CLK_SET_RATE_GATE protects it, and the mux then takes another parent.
+
+Not covered: a video PLL that only the boot chain runs, with no consumer
+in the kernel, is not protected and may be changed. The other display
+clocks on these PLLs (tcon-lcd, hdmi-tv) keep their flags.
+
+Tested on Radxa Cubie A7S: booted on one board with a monitor on the
+DisplayPort; a mode whose pixel clock is no divisor of the video PLL as
+the boot chain left it was accepted, and edp-tv ran at the rate of the
+mode.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 8895da5350e0..16527f7747d7 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -1529,7 +1529,7 @@ static SUNXI_CCU_M_HW_WITH_MUX_GATE(edp_tv_clk, "edp-tv", edp_tv_parents, 0x1640
+ 				    0, 5,	/* M */
+ 				    24, 3,	/* mux */
+ 				    BIT(31),	/* gate */
+-				    0);
++				    CLK_SET_RATE_PARENT);
+ static SUNXI_CCU_GATE_HWS(bus_edp_tv_clk, "bus-edp-tv", ahb_hws, 0x164c, BIT(0), 0);
+ 
+ static SUNXI_CCU_GATE_HWS_WITH_PREDIV(hdmi_cec_32k_clk, "hdmi-cec-32k", pll_periph0_2x_hws, 0x1680,

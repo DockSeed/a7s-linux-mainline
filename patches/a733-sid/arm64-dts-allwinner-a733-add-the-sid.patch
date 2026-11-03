@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:02:16 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the SID
+
+The SID (eFuse) holds per-die data such as the thermal sensor
+calibration, but the A733 device tree does not describe it. Add the
+node. The block answers without a clock or reset being enabled.
+
+Not covered: nvmem cells. They come with the devices that use them.
+
+Tested on Radxa Cubie A7S: booted on two boards; sunxi-sid0 appears, and
+its words at 0x44 match the fuse registers read directly.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 31d98b95d319..aaf9ebbcbc2d 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -447,6 +447,14 @@ uart4: serial@2504000 {
+ 			status = "disabled";
+ 		};
+ 
++		sid: efuse@3006000 {
++			compatible = "allwinner,sun60i-a733-sid",
++				     "allwinner,sun50i-a64-sid";
++			reg = <0x03006000 0x1000>;
++			#address-cells = <1>;
++			#size-cells = <1>;
++		};
++
+ 		gic: interrupt-controller@3400000 {
+ 			compatible = "arm,gic-v3";
+ 			#interrupt-cells = <3>;

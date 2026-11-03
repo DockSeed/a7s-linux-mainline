@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 05:45:13 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the CPU dynamic power
+ coefficients
+
+With dynamic-power-coefficient on the CPUs, cpufreq-dt registers an
+Energy Model for both clusters from their operating points, and the
+scheduler can place tasks by energy: the capacities are asymmetric
+(capacity-dmips-mhz 454 and 1024) and both clusters have cpufreq.
+
+Set 170 on the six Cortex-A55 and 512 on the two Cortex-A76 cores.
+They come from a fit of wall power against frequency on one board and
+are not calibrated; the loss of the power supply is in both values and
+cancels in their ratio, which is what the scheduler compares. The
+vendor BSP uses 162 and 598.
+
+Not covered: whether the values suit this board. The patch makes no
+claim of its own about performance or energy and can be dropped alone.
+
+Tested on Radxa Cubie A7S: booted on two boards; the Energy Model is
+created for both clusters with the coefficients as set, 170 on the A55
+cores and 512 on the A76 cores, and the power of every state agrees with
+its coefficient and the voltage of the board's bin.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 2035741da74b..4b9746f011ee 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -64,6 +64,7 @@ cpu0: cpu@0 {
+ 			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
++			dynamic-power-coefficient = <170>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+ 			#cooling-cells = <2>;
+ 			i-cache-size = <32768>;
+@@ -82,6 +83,7 @@ cpu1: cpu@100 {
+ 			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
++			dynamic-power-coefficient = <170>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+@@ -99,6 +101,7 @@ cpu2: cpu@200 {
+ 			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
++			dynamic-power-coefficient = <170>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+@@ -116,6 +119,7 @@ cpu3: cpu@300 {
+ 			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
++			dynamic-power-coefficient = <170>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+@@ -133,6 +137,7 @@ cpu4: cpu@400 {
+ 			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
++			dynamic-power-coefficient = <170>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+@@ -150,6 +155,7 @@ cpu5: cpu@500 {
+ 			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
++			dynamic-power-coefficient = <170>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+ 			i-cache-size = <32768>;
+ 			i-cache-line-size = <64>;
+@@ -167,6 +173,7 @@ cpu6: cpu@600 {
+ 			clocks = <&cpu_ccu CLK_CPU_B>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			dynamic-power-coefficient = <512>;
+ 			cpu-idle-states = <&cpu_sleep_a76>;
+ 			#cooling-cells = <2>;
+ 			i-cache-size = <65536>;
+@@ -185,6 +192,7 @@ cpu7: cpu@700 {
+ 			clocks = <&cpu_ccu CLK_CPU_B>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
++			dynamic-power-coefficient = <512>;
+ 			cpu-idle-states = <&cpu_sleep_a76>;
+ 			i-cache-size = <65536>;
+ 			i-cache-line-size = <64>;

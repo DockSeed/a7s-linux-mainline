@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 14:49:50 +0200
+Subject: [PATCH] pinctrl: sunxi: Add a two-bit POW_MOD_SEL withstand voltage
+ variant
+
+Newer Allwinner SoCs such as the A733 have two bits per bank in
+PIO_POW_MOD_SEL instead of one, with the field of bank n at bits
+2n+1:2n: 10 selects the 3.3V withstand mode, 11 the 1.8V mode and 01
+an adaptive mode that follows the SoC's own detector of the bank
+supply. Not every bank has a field, and a bank may have its mode set
+elsewhere.
+
+Add a variant that writes 11 for a bank supply of 1.8V or less and 10
+otherwise, like the one-bit variants write a fixed mode from the
+supply voltage. It only touches the banks the SoC lists in the new
+io_bias_banks mask.
+
+Tested on Radxa Cubie A7S: with the A733 using the variant, each bank
+with a requested pin was in the mode of its supply after boot.
+
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sunxi.c | 14 ++++++++++++++
+ drivers/pinctrl/sunxi/pinctrl-sunxi.h |  7 +++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.c b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+index 01dd93a3a5b3..45308bbe2e66 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+@@ -922,6 +922,20 @@ static int sunxi_pinctrl_set_io_bias_cfg(struct sunxi_pinctrl *pctl,
+ 		       pctl->membase + pctl->pow_mod_sel_offset);
+ 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
+ 		return 0;
++	case BIAS_VOLTAGE_PIO_POW_MODE_SEL_2BIT:
++		if (!(pctl->desc->io_bias_banks & BIT(bank)))
++			return 0;
++
++		/* 0b11: 1.8V, 0b10: 3.3V */
++		val = uV <= 1800000 ? 3 : 2;
++
++		raw_spin_lock_irqsave(&pctl->lock, flags);
++		reg = readl(pctl->membase + pctl->pow_mod_sel_offset);
++		reg &= ~(3 << (2 * bank));
++		writel(reg | val << (2 * bank),
++		       pctl->membase + pctl->pow_mod_sel_offset);
++		raw_spin_unlock_irqrestore(&pctl->lock, flags);
++		return 0;
+ 	default:
+ 		return -EINVAL;
+ 	}
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.h b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+index fa9e30147fe2..d226cb86577e 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.h
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+@@ -136,6 +136,12 @@ enum sunxi_desc_bias_voltage {
+ 	 */
+ 	BIAS_VOLTAGE_PIO_POW_MODE_CTL,
+ 	BIAS_VOLTAGE_PIO_POW_MODE_CTL_INV,
++	/*
++	 * Bias voltage is set through two bits per bank in
++	 * PIO_POW_MOD_SEL_REG, for the banks in io_bias_banks,
++	 * as seen on A733 SoC.
++	 */
++	BIAS_VOLTAGE_PIO_POW_MODE_SEL_2BIT,
+ };
+ 
+ struct sunxi_desc_function {
+@@ -162,6 +168,7 @@ struct sunxi_pinctrl_desc {
+ 	bool				disable_strict_mode;
+ 	bool				pf_power_source;
+ 	enum sunxi_desc_bias_voltage	io_bias_cfg_variant;
++	u32				io_bias_banks;
+ };
+ 
+ struct sunxi_pinctrl_function {

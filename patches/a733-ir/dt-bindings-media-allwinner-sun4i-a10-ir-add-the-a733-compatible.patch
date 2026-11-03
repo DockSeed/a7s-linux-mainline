@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 13:16:14 +0200
+Subject: [PATCH] dt-bindings: media: allwinner,sun4i-a10-ir: Add the A733
+ compatible
+
+The A733 CIR receiver in the CPUS domain (S_IR_RX) has the register
+layout of the A31 receiver at every offset the sunxi-cir driver uses:
+CIR_CTL, CIR_RXCTL, CIR_RXFIFO, CIR_RXINT, CIR_RXSTA and CIR_CONFIG
+with the same fields, a 64 byte FIFO and the same threshold units
+(A733 manual, 18.16.7, 18.16.8). It has a bus gate, a reset and a
+module clock (4.2.5.20, 4.2.5.21). Add "allwinner,sun60i-a733-ir" with
+"allwinner,sun6i-a31-ir" as the fallback.
+
+Not covered: the sample clock select bit SCS2 (CIR_CONFIG bit 24),
+which the driver does not set and which reads 0 at reset.
+
+Tested on Radxa Cubie A7S: the driver binds through the fallback and
+receives the level changes on PL6.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/media/allwinner,sun4i-a10-ir.yaml        | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-ir.yaml b/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-ir.yaml
+index 18b28feacf83..a93c54ea8a63 100644
+--- a/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-ir.yaml
++++ b/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-ir.yaml
+@@ -29,6 +29,7 @@ properties:
+               - allwinner,sun50i-h6-ir
+               - allwinner,sun50i-h616-ir
+               - allwinner,sun55i-a523-ir
++              - allwinner,sun60i-a733-ir
+           - const: allwinner,sun6i-a31-ir
+ 
+   reg:

@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 3 Oct 2026 16:34:04 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Describe the oscillator at its
+ board rate
+
+The Cubie A7S runs from a 26 MHz crystal, but the dtsi describes a fixed 24
+MHz "osc24M". Describe the crystal as "hosc" without a rate in the dtsi and
+set 26 MHz in the board file.
+
+The pin controller's debounce clock is SYS_24M, which the CCU derives from
+the crystal, so it takes that clock.
+
+Tested on Radxa Cubie A7S: booted on two boards; clk_summary shows hosc at
+26000000 Hz and pll-ref at 24000000 Hz.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts |  4 ++++
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi         | 10 +++++-----
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 453761a96323..c5ad3faab5db 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -34,6 +34,10 @@ &mmc0 {
+ 	status = "okay";
+ };
+ 
++&osc {
++	clock-frequency = <26000000>;
++};
++
+ &pio {
+ 	uart0_pb9_pb10_pins: uart0-pb9-pb10-pins {
+ 		pins = "PB9", "PB10";
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 4937ff109db2..4286bc9f80ba 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -78,11 +78,11 @@ cpu7: cpu@700 {
+ 		};
+ 	};
+ 
+-	osc24M: osc24M-clk {
++	/* 19.2, 24 or 26 MHz, set by the board */
++	osc: osc-clk {
+ 		#clock-cells = <0>;
+ 		compatible = "fixed-clock";
+-		clock-frequency = <24000000>;
+-		clock-output-names = "osc24M";
++		clock-output-names = "hosc";
+ 	};
+ 
+ 	osc32k: osc32k-clk {
+@@ -134,7 +134,7 @@ pio: pinctrl@2000000 {
+ 				     <GIC_SPI 83 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <GIC_SPI 85 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <GIC_SPI 87 IRQ_TYPE_LEVEL_HIGH>;
+-			clocks = <&ccu CLK_APB1>, <&osc24M>, <&osc32k>;
++			clocks = <&ccu CLK_APB1>, <&ccu CLK_SYS_24M>, <&osc32k>;
+ 			clock-names = "apb", "hosc", "losc";
+ 			gpio-controller;
+ 			#gpio-cells = <3>;
+@@ -153,7 +153,7 @@ mmc0_pins: mmc0-pins {
+ 		ccu: clock-controller@2002000 {
+ 			compatible = "allwinner,sun60i-a733-ccu";
+ 			reg = <0x02002000 0x2000>;
+-			clocks = <&osc24M>, <&osc32k>, <&iosc>;
++			clocks = <&osc>, <&osc32k>, <&iosc>;
+ 			clock-names = "hosc", "losc", "iosc";
+ 			#clock-cells = <1>;
+ 			#reset-cells = <1>;

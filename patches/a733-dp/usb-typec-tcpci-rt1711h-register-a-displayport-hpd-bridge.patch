@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:37:09 +0200
+Subject: [PATCH] usb: typec: tcpci_rt1711h: Register a DisplayPort HPD bridge
+
+In DisplayPort alternate mode the hot plug state of the sink comes over
+the CC line, and the DisplayPort alternate mode driver reports it to
+the connector node of the port. DRM receives it only if a bridge on
+that node ends the display pipeline of the DisplayPort transmitter.
+
+Register an HPD bridge on the connector node, as fusb302 does. On a
+board without DisplayPort on the port the bridge has no user.
+
+Tested on Radxa Cubie A7S: booted on one board with a monitor on the
+USB-C port; the hot-plug event of the alternate mode reached the
+DisplayPort connector, which reported the monitor as connected.
+
+Assisted-by: LLM
+---
+ drivers/usb/typec/tcpm/Kconfig         |  2 ++
+ drivers/usb/typec/tcpm/tcpci_rt1711h.c | 28 ++++++++++++++++++++++++++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/Kconfig b/drivers/usb/typec/tcpm/Kconfig
+index 00baa7503d45..292d84d3eed4 100644
+--- a/drivers/usb/typec/tcpm/Kconfig
++++ b/drivers/usb/typec/tcpm/Kconfig
+@@ -22,6 +22,8 @@ if TYPEC_TCPCI
+ 
+ config TYPEC_RT1711H
+ 	tristate "Richtek RT1711H Type-C chip driver"
++	depends on DRM || DRM=n
++	select DRM_AUX_HPD_BRIDGE if DRM_BRIDGE && OF
+ 	help
+ 	  Richtek RT1711H Type-C chip driver that works with
+ 	  Type-C Port Controller Manager to provide USB PD and USB
+diff --git a/drivers/usb/typec/tcpm/tcpci_rt1711h.c b/drivers/usb/typec/tcpm/tcpci_rt1711h.c
+index af8356df6b98..4ace526296ed 100644
+--- a/drivers/usb/typec/tcpm/tcpci_rt1711h.c
++++ b/drivers/usb/typec/tcpm/tcpci_rt1711h.c
+@@ -12,10 +12,13 @@
+ #include <linux/i2c.h>
+ #include <linux/interrupt.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/of.h>
++#include <linux/property.h>
+ #include <linux/usb/tcpci.h>
+ #include <linux/usb/tcpm.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
++#include <drm/bridge/aux-bridge.h>
+ 
+ #define RT1711H_PHYCTRL1	0x80
+ #define RT1711H_PHYCTRL2	0x81
+@@ -296,6 +299,26 @@ static int rt1711h_sw_reset(struct rt1711h_chip *chip)
+ 
+ static void rt1711h_unregister_tcpci_port(void *tcpci);
+ 
++/*
++ * DisplayPort alternate mode reports the hot plug state of the sink to the
++ * connector node. A bridge on that node ends the display pipeline there and
++ * hands the state on to DRM.
++ */
++static int rt1711h_register_hpd_bridge(struct rt1711h_chip *chip)
++{
++	struct fwnode_handle *connector;
++	struct device *bridge;
++
++	connector = device_get_named_child_node(chip->dev, "connector");
++	if (!connector)
++		return 0;
++
++	bridge = drm_dp_hpd_bridge_register(chip->dev, to_of_node(connector));
++	fwnode_handle_put(connector);
++
++	return PTR_ERR_OR_ZERO(bridge);
++}
++
+ static int rt1711h_probe(struct i2c_client *client)
+ {
+ 	int ret;
+@@ -345,6 +368,11 @@ static int rt1711h_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = rt1711h_register_hpd_bridge(chip);
++	if (ret)
++		return dev_err_probe(chip->dev, ret,
++				     "failed to register the HPD bridge\n");
++
+ 	ret = devm_request_threaded_irq(chip->dev, client->irq, NULL,
+ 					rt1711h_irq,
+ 					IRQF_ONESHOT | IRQF_TRIGGER_LOW,

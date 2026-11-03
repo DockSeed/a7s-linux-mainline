@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:56:43 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Add the SD card
+ detect GPIO
+
+The SD slot has a card detect switch, but the board file does not
+describe it. The MMC core then only looks for a card once at probe, so a
+card inserted or swapped later is not seen.
+
+The switch is wired to PF6 and reads high with a card in the slot. The
+board has no pull resistor on it, so request it as active high with the
+pull-down of the pin.
+
+Not covered: a card detect interrupt.
+
+Tested on Radxa Cubie A7S: booted on two boards; sunxi-mmc gets the
+card-detect GPIO, which reads high with a card inserted.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 55e1dabb6c1f..d812f45e1751 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -77,6 +77,7 @@ reg_vcc3v3: vcc3v3 {
+ 
+ &mmc0 {
+ 	vmmc-supply = <&reg_vcc3v3>;
++	cd-gpios = <&pio 5 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; /* PF6 */
+ 	bus-width = <4>;
+ 	no-mmc;
+ 	no-sdio;

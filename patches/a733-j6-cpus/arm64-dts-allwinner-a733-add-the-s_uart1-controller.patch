@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 20:50:26 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the S_UART1 controller
+
+The SoC dtsi describes only the first UART of the CPUS domain. A board
+that brings S_UART1 out on a pin header cannot use it.
+
+Add S_UART1 at 0x07081000 (A733 manual, memory map), interrupt SPI 202
+(12.2.3.1). It shares the register list of all UARTs of the SoC
+(18.10.8), so the node is a DesignWare APB UART like S_UART0, with its
+bus gate and reset in the PRCM (4.2.5.15) and the baud rate from the
+bus clock (18.10.3).
+
+Add the pin group for RX/TX on PM3/PM4, function 5 (18.14.3.1, table
+18-39), which the Radxa Cubie A7S routes to pins 2 and 3 of its second
+pin header, J6. The pins carry other functions as well, so a board uses
+one function on them. The node is disabled; a board enables it.
+
+Not covered: DMA requests, flow control, and the PL pin groups of
+S_UART1, which no board uses.
+
+Tested on Radxa Cubie A7S: S_UART1 on PM3/PM4 loops data back with
+pins 2 and 3 of J6 bridged.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 17afe7687106..d384bb753c36 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1849,6 +1849,13 @@ r_uart0_pm3_pins: r-uart0-pm3-pins {
+ 				function = "s_uart0";
+ 			};
+ 
++			/omit-if-no-ref/
++			r_uart1_pm3_pins: r-uart1-pm3-pins {
++				pins = "PM3", "PM4";
++				allwinner,pinmux = <5>;
++				function = "s_uart1";
++			};
++
+ 			/omit-if-no-ref/
+ 			r_spi0_pl5_pins: r-spi0-pl5-pins {
+ 				pins = "PL5", "PL6", "PL7";
+@@ -1886,6 +1893,17 @@ r_uart0: serial@7080000 {
+ 			status = "disabled";
+ 		};
+ 
++		r_uart1: serial@7081000 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x07081000 0x400>;
++			interrupts = <GIC_SPI 202 IRQ_TYPE_LEVEL_HIGH 0>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++			clocks = <&r_ccu CLK_BUS_R_UART1>;
++			resets = <&r_ccu RST_BUS_R_UART1>;
++			status = "disabled";
++		};
++
+ 		r_i2c0: i2c@7083000 {
+ 			compatible = "allwinner,sun60i-a733-i2c",
+ 				     "allwinner,sun8i-v536-i2c",

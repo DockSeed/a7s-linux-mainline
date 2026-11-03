@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 12:00:00 +0200
+Subject: [PATCH] pinctrl: sunxi: a733: Count port K among the interrupt banks
+
+The A733 binding lists eleven interrupts, a placeholder for the absent
+port A and one each for ports B to K, and the interrupt banks are
+numbered by port, so port K is bank 10. With ten banks, port K gets no
+parent interrupt and the probe writes its irq_array entries past the
+end of the array. Declare eleven banks; the port K interrupt registers
+at 0x5c0 follow the regular bank stride.
+
+Tested on Radxa Cubie A7S: booted on two boards; edge detection on PK0
+through the GPIO character device works, where it failed with ENXIO before,
+and PB0 still works.
+
+Fixes: 0535bfbfa97b ("pinctrl: sunxi: add support for the Allwinner A733")
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+index ca82f08a3a65..bc483d983bbc 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+@@ -22,7 +22,7 @@ static const u8 a733_irq_bank_muxes[SUNXI_PINCTRL_MAX_BANKS] =
+ 	{  0, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14};
+ 
+ static struct sunxi_pinctrl_desc a733_pinctrl_data = {
+-	.irq_banks = 10,
++	.irq_banks = 11,
+ 	.irq_read_needs_mux = true,
+ 	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_SEL,
+ };

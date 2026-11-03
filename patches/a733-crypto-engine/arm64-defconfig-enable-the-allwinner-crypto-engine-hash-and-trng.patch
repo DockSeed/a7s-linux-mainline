@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 20:00:00 +0200
+Subject: [PATCH] arm64: defconfig: Enable the Allwinner crypto engine hash and
+ TRNG
+
+The sun8i-ce module provides the hash algorithms and the TRNG of the
+Allwinner crypto engine only with these options. Switch them on, as part
+of the module, so that the A733 hash unit, which computes both, is used.
+This switches them on for every SoC with this engine; they were tested
+on the A733 only.
+
+Tested on Radxa Cubie A7S: with both options the hash algorithms and the
+TRNG of the engine are registered and used.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index e7bb7e6a0e25..8f8a6de93e84 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -1960,6 +1960,8 @@ CONFIG_CRYPTO_AES_ARM64_CE_BLK=y
+ CONFIG_CRYPTO_AES_ARM64_BS=m
+ CONFIG_CRYPTO_AES_ARM64_CE_CCM=y
+ CONFIG_CRYPTO_DEV_SUN8I_CE=m
++CONFIG_CRYPTO_DEV_SUN8I_CE_HASH=y
++CONFIG_CRYPTO_DEV_SUN8I_CE_TRNG=y
+ CONFIG_CRYPTO_DEV_FSL_CAAM=m
+ CONFIG_CRYPTO_DEV_FSL_DPAA2_CAAM=m
+ CONFIG_CRYPTO_DEV_TEGRA=m

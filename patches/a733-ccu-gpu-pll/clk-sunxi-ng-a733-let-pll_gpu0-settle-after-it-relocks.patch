@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:31:29 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Let PLL_GPU0 settle after it relocks
+
+The manual's sequence for a factor change waits 20 us after the lock
+before the PLL output is used. The relock notifier of PLL_GPU0 returns
+as soon as the lock bit is set, and with CLK_SET_RATE_GATE the next
+consumer may open the output right after the rate change.
+
+Wait 20 us after the lock in the notifier.
+
+Tested on Radxa Cubie A7S: on two boards the GPU firmware booted after
+the rate change, with the output opened by the GPU right after the
+relock.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 7002df3a8e23..33ccf88ad8f5 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -2395,13 +2395,15 @@ static const struct sunxi_ccu_desc sun60i_a733_ccu_desc = {
+ };
+ 
+ /*
+- * After a factor change the manual restarts the lock detector of the PLL
+- * and waits for the lock again (4.1.4.1).
++ * After a factor change the manual restarts the lock detector of the PLL,
++ * waits for the lock again and then 20 us before the output is used
++ * (4.1.4.1).
+  */
+ static struct ccu_pll_nb sun60i_a733_pll_gpu0_nb = {
+ 	.common		= &pll_gpu0_clk.common,
+ 	.enable		= BIT(29),	/* LOCK_ENABLE */
+ 	.lock		= BIT(28),
++	.delay_us	= 20,
+ };
+ 
+ static const u32 pll_regs[] = {

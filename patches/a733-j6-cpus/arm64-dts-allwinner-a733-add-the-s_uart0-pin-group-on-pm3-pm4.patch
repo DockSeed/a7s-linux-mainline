@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 20:50:03 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the S_UART0 pin group on
+ PM3/PM4
+
+The Radxa Cubie A7S routes PM3 and PM4 to pins 2 and 3 of its second
+pin header, J6. S_UART0 can use them, but the SoC dtsi has only its
+PL6/PL7 pin group.
+
+Add the pin group for RX/TX on PM3/PM4. The two pins select S_UART0 with
+different values: PM3 is S-UART0-RX with function 4, PM4 is S-UART0-TX
+with function 2 (A733 manual, 18.14.3.1, table 18-39), so the group
+gives one value per pin. The pins carry other functions as well, so a
+board uses one function on them.
+
+Tested on Radxa Cubie A7S: S_UART0 on PM3/PM4 loops data back with
+pins 2 and 3 of J6 bridged.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index f4069930b9db..17afe7687106 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1842,6 +1842,13 @@ r_uart0_pl6_pins: r-uart0-pl6-pins {
+ 				function = "s_uart0";
+ 			};
+ 
++			/omit-if-no-ref/
++			r_uart0_pm3_pins: r-uart0-pm3-pins {
++				pins = "PM3", "PM4";
++				allwinner,pinmux = <4>, <2>;
++				function = "s_uart0";
++			};
++
+ 			/omit-if-no-ref/
+ 			r_spi0_pl5_pins: r-spi0-pl5-pins {
+ 				pins = "PL5", "PL6", "PL7";

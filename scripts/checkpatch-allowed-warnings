@@ -1,0 +1,8 @@
+# checkpatch WARNING types that do not fail the patch check.
+#
+# One type per line, then the reason it is accepted for our patches:
+#   TYPE  reason
+# Every entry is a decision against the kernel's own style rules and needs a
+# reason that holds for every patch, not just the one that raised it.
+# ERRORs cannot be allowed here; CHECKs never fail.
+UNKNOWN_COMMIT_ID  the check tree is the kernel.org tarball plus the series, with no git history, so checkpatch can resolve no commit id; a Fixes: tag naming the upstream commit it fixes is what upstream asks for

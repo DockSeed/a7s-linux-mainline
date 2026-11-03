@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:05:16 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the DSU PMU
+
+The DynamIQ Shared Unit of the A733 has its own performance monitors
+for the L3 cache, the snoop filter and the bus, which perf cannot use
+without a node.
+
+Add it for all eight cores of the one DSU cluster. The overflow
+interrupt is nCLUSTERPMUIRQ, INTID 274 (SPI 242) in the user manual's
+interrupt table. On the A733 the counters work and the interrupt fires
+once per counter overflow.
+
+The kernel runs at EL2, where the DSU PMU registers are only accessible
+when the firmware has set ACTLR_EL3 bit 12 on every core. With firmware
+that does not, the driver's first register access is an undefined
+instruction, and the kernel cannot read the bit. Add the node disabled;
+a board enables it together with firmware that sets the bit.
+
+Tested on Radxa Cubie A7S: booted on two boards with the node enabled by
+the board; arm_dsu_pmu probes arm_dsu_0 for cpus 0-7 on INTID 274
+without an undefined instruction. No events were counted in this test.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 9cc778a2c00d..19d26bafbb32 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -293,6 +293,15 @@ l3_cache: l3-cache {
+ 		};
+ 	};
+ 
++	/* needs ACTLR_EL3 bit 12 from the boot firmware */
++	dsu_pmu: dsu-pmu {
++		compatible = "arm,dsu-pmu";
++		interrupts = <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH 0>;
++		cpus = <&cpu0>, <&cpu1>, <&cpu2>, <&cpu3>,
++		       <&cpu4>, <&cpu5>, <&cpu6>, <&cpu7>;
++		status = "disabled";
++	};
++
+ 	/* 19.2, 24 or 26 MHz, set by the board */
+ 	osc: osc-clk {
+ 		#clock-cells = <0>;

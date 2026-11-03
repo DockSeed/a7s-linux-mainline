@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 10:09:06 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the 2D graphics accelerator
+
+The A733 has a 2D graphics accelerator, the G2D, in the display engine
+system beside the display engine. Add its node, disabled.
+
+The window is the 256 KiB the manual maps (chapter 2), the interrupt is
+CPUX source 83, GIC SPI 51 (manual section 12.2.3.1), and the master is
+master 4 of the second IOMMU (manual chapter 10). The node holds the
+DE_SYS power domain like the display engine, and the AHB clock enable
+of the display engine system, which clk_disable_unused() otherwise
+closes when no display engine driver holds it. The reset of DE_SYS
+itself is not taken: it is de-asserted by default (manual section
+4.1.6.113).
+
+It stays disabled until a driver binds it: an enabled node that no
+driver binds keeps the PCK-600 from ever calling its sync_state(),
+since fw_devlink waits for the consumer, so no power domain that nobody
+holds would be switched off.
+
+Not covered: the parent and rate of the module clock, and a driver:
+mainline has none for an Allwinner G2D.
+
+Tested on Radxa Cubie A7S: with the node enabled for a test, the bus,
+module and AHB clocks and the reset of the block follow runtime PM, the
+DE_SYS power domain is on while it is resumed, and the version register
+of the block reads back without any gate set by hand.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 8ee1ba658c5e..6e0be8f71103 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1406,6 +1406,19 @@ mixer0_out_de_top: endpoint {
+ 			};
+ 		};
+ 
++		g2d: graphics@5440000 {
++			compatible = "allwinner,sun60i-a733-g2d";
++			reg = <0x05440000 0x40000>;
++			interrupts = <GIC_SPI 51 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_G2D>, <&ccu CLK_G2D>,
++				 <&ccu CLK_MBUS_DESYS>, <&ccu CLK_AHB_DE>;
++			clock-names = "bus", "mod", "mbus", "ahb";
++			resets = <&ccu RST_BUS_G2D>;
++			power-domains = <&pck600 PD_DE_SYS>;
++			iommus = <&iommu1 4>;
++			status = "disabled";
++		};
++
+ 		vo1_ccu: clock-controller@5510000 {
+ 			compatible = "allwinner,sun60i-a733-vo1-ccu";
+ 			reg = <0x05510000 0x1000>;

@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:24:57 +0200
+Subject: [PATCH] dt-bindings: phy: allwinner,sun60i-a733-usb3-combophy: Add
+ DisplayPort
+
+The first combo PHY of the A733 SERDES block carries either USB3 or the
+four main link lanes of the DisplayPort transmitter to the Type-C
+connector (user manual section 18.2.1). Describe the second function.
+
+The PHY becomes a provider with one cell, the PHY type from
+dt-bindings/phy/phy.h, as on the Rockchip USBDP and Qualcomm QMP combo
+PHYs: PHY_TYPE_USB3 for the USB3 controller, PHY_TYPE_DP for the
+DisplayPort transmitter. It can be the mode switch of the connector,
+and the board describes the polarity of its lanes per function with
+the generic tx-polarity properties.
+
+With all four lanes on DisplayPort the USB3 controller has no SuperSpeed
+lanes and still needs a PIPE clock to leave its core soft reset. Add an
+optional third clock, the PIPE clock select of the SERDES CCU (user
+manual 18.2.6.2), which the PHY enables while it holds the lanes for
+DisplayPort.
+
+This changes the device tree ABI: #phy-cells goes from 0 to 1. A kernel
+that predates the cell still gets the USB3 function, as its driver
+ignores the cell, but no DisplayPort. Without the clock the PHY works as
+before, but a USB3 controller that probes while the lanes belong to
+DisplayPort fails to start.
+
+Tested on Radxa Cubie A7S: booted on one board with a device tree that
+uses this binding, including the PIPE clock; the combo PHY probes and
+enters DisplayPort mode, and dtbs_check reports nothing.
+
+Assisted-by: LLM
+---
+ .../allwinner,sun60i-a733-usb3-combophy.yaml  | 58 +++++++++++++++----
+ 1 file changed, 46 insertions(+), 12 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/phy/allwinner,sun60i-a733-usb3-combophy.yaml b/Documentation/devicetree/bindings/phy/allwinner,sun60i-a733-usb3-combophy.yaml
+index e49e478a133c..2deb0454b0b4 100644
+--- a/Documentation/devicetree/bindings/phy/allwinner,sun60i-a733-usb3-combophy.yaml
++++ b/Documentation/devicetree/bindings/phy/allwinner,sun60i-a733-usb3-combophy.yaml
+@@ -4,16 +4,22 @@
+ $id: http://devicetree.org/schemas/phy/allwinner,sun60i-a733-usb3-combophy.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Allwinner A733 USB3 combo PHY
++title: Allwinner A733 USB3 and DisplayPort combo PHY
+ 
+ maintainers:
+   - Norman Herms <dockseed@proton.me>
+ 
+ description:
+-  The first combo PHY in the SERDES block of the A733 carries the SuperSpeed
+-  lanes of the USB3 DRD controller to a USB Type-C connector. The lane swap
+-  for a flipped plug is done inside the PHY, so it can act as the orientation
+-  switch of the connector.
++  The first combo PHY in the SERDES block of the A733 carries either the
++  SuperSpeed lanes of the USB3 DRD controller or the four main link lanes of
++  the DisplayPort transmitter to a USB Type-C connector. The lane swap for a
++  flipped plug is done inside the PHY, so it can act as the orientation
++  switch of the connector, and the hand-over of the lanes to DisplayPort is
++  done inside the PHY as well, so it can act as the mode switch for
++  DisplayPort alternate mode. While the four lanes are DisplayPort's, the
++  USB3 controller has no SuperSpeed lanes, and the PHY takes the PIPE clock
++  of the controller from the CCU, which the controller needs to leave its
++  core soft reset.
+ 
+ properties:
+   compatible:
+@@ -33,24 +39,45 @@ properties:
+     $ref: /schemas/types.yaml#/definitions/phandle
+     description:
+       Phandle to the SERDES top registers, a system controller shared with
+-      the second combo PHY. It holds the USB3 PIPE clock and RX data muxes
+-      and the DisplayPort lane width conversion of this PHY.
++      the second combo PHY. It holds the USB3 PIPE clock and RX data muxes,
++      the DisplayPort lane width conversion and the transmit data lane map
++      of this PHY.
+ 
+   clocks:
++    minItems: 2
+     items:
+       - description: SERDES PHY clock
+       - description: oscillator clock gate of the SERDES
++      - description:
++          PIPE clock select of the SERDES CCU, which takes the PIPE clock of
++          the USB3 controller from the CCU while the lanes carry DisplayPort
+ 
+   clock-names:
++    minItems: 2
+     items:
+       - const: serdes
+       - const: hosc
++      - const: usb3-pipe
+ 
+   resets:
+     maxItems: 1
+ 
+   "#phy-cells":
+-    const: 0
++    const: 1
++    description:
++      The PHY type, PHY_TYPE_USB3 or PHY_TYPE_DP from
++      dt-bindings/phy/phy.h, selects the function.
++
++  tx-polarity:
++    description:
++      Transmitter polarity of the lanes for each function, as wired on the
++      board.
++    maxItems: 2
++
++  tx-polarity-names:
++    items:
++      - const: dp
++      - const: usb-ss
+ 
+ required:
+   - compatible
+@@ -63,6 +90,7 @@ required:
+   - "#phy-cells"
+ 
+ allOf:
++  - $ref: /schemas/phy/phy-common-props.yaml#
+   - $ref: /schemas/usb/usb-switch.yaml#
+   - $ref: /schemas/usb/usb-switch-ports.yaml#
+ 
+@@ -71,20 +99,26 @@ unevaluatedProperties: false
+ examples:
+   - |
+     #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
++    #include <dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h>
+     #include <dt-bindings/clock/sun6i-rtc.h>
++    #include <dt-bindings/phy/phy.h>
+     #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
+ 
+     phy@6c01000 {
+         compatible = "allwinner,sun60i-a733-usb3-combophy";
+-        reg = <0x06c01000 0x1000>,
++        reg = <0x06c01000 0xe00>,
+               <0x06c80000 0x20000>;
+         reg-names = "link", "pma";
+         allwinner,serdes-top = <&serdes_top>;
+-        clocks = <&ccu CLK_SERDES_PHY>, <&rtc CLK_HOSC_SERDES0>;
+-        clock-names = "serdes", "hosc";
++        clocks = <&ccu CLK_SERDES_PHY>, <&rtc CLK_HOSC_SERDES0>,
++                 <&serdes_ccu CLK_USB3_PIPE_CCU>;
++        clock-names = "serdes", "hosc", "usb3-pipe";
+         resets = <&ccu RST_BUS_SERDES>;
+-        #phy-cells = <0>;
++        #phy-cells = <1>;
+         orientation-switch;
++        mode-switch;
++        tx-polarity = <PHY_POL_INVERT>, <PHY_POL_NORMAL>;
++        tx-polarity-names = "dp", "usb-ss";
+ 
+         port {
+             endpoint {

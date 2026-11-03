@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 10:00:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable USB0 as a USB
+ gadget
+
+The Type-C port J16 is the 5 V input of the board and the only port of
+USB0. It has no VBUS supply and no ID or VBUS detect line to the SoC,
+so it can only be a peripheral; without a detect line the PHY driver
+reports VBUS as present.
+
+Enable the OTG controller in peripheral mode. The EHCI and OHCI of USB0
+stay disabled.
+
+Not covered: the USB-C port J4, which is a USB 3 host.
+
+Tested on Radxa Cubie A7S: booted; with J16 on a host, a composite
+gadget (ACM, NCM, mass storage) enumerates at high speed after a cold
+start, also with the plug turned over.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 761ca15eab41..61ecb941a82a 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -525,6 +525,16 @@ &usb3_u2phy {
+ 	status = "okay";
+ };
+ 
++&usb_otg {
++	/*
++	 * The Type-C port J16 is the board's 5 V input: it has no VBUS
++	 * supply of its own and no ID or VBUS detect line to the SoC.
++	 * Use the controller as a peripheral only.
++	 */
++	dr_mode = "peripheral";
++	status = "okay";
++};
++
+ &usbphy {
+ 	usb1_vbus-supply = <&reg_usb1_vbus>;
+ 	status = "okay";

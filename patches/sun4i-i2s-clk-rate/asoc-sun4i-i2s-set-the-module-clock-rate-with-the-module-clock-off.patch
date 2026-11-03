@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 19 Oct 2026 17:27:42 +0200
+Subject: [PATCH] ASoC: sun4i-i2s: Set the module clock rate with the module
+ clock off
+
+Without this, a change of rate family on an open PCM fails where the
+parent PLL may change its rate only while unprepared
+(CLK_SET_RATE_GATE), because the module clock, enabled since runtime
+resume, holds the PLL at its rate, and hw_params then finds no exact
+module clock. On the Allwinner A733, PLL_AUDIO0 is such a PLL and
+serves both the 44.1 kHz family and 32 kHz and 192 kHz at 256 fs: 32 kHz
+after 44.1 kHz gets no MCLK divider, 44.1 kHz after 32 kHz no BCLK
+divider.
+
+When no other stream of the DAI is active, disable the module clock
+while its rate is chosen and set, and enable it again afterwards. The
+registers run on the bus clock. With a stream of the other direction
+active, the clock stays on: that stream runs from it, and the rates are
+symmetric. A flag tracks the enable, so runtime suspend stays balanced
+when enabling fails here.
+
+Not covered: a PLL held by another controller keeps its rate.
+
+Tested on Radxa Cubie A7S: one open I2S0 playback changes from
+44.1 kHz to 32 kHz and back, and PLL_AUDIO0 and the module clock
+follow each change.
+
+Assisted-by: LLM
+---
+ sound/soc/sunxi/sun4i-i2s.c | 50 +++++++++++++++++++++++++++++++++----
+ 1 file changed, 45 insertions(+), 5 deletions(-)
+
+diff --git a/sound/soc/sunxi/sun4i-i2s.c b/sound/soc/sunxi/sun4i-i2s.c
+index a1f35b41d5a3..09a7cedd0154 100644
+--- a/sound/soc/sunxi/sun4i-i2s.c
++++ b/sound/soc/sunxi/sun4i-i2s.c
+@@ -214,6 +214,7 @@ struct sun4i_i2s_quirks {
+ struct sun4i_i2s {
+ 	struct clk	*bus_clk;
+ 	struct clk	*mod_clk;
++	bool		mod_clk_enabled;
+ 	struct regmap	*regmap;
+ 	struct reset_control *rst;
+ 
+@@ -397,6 +398,43 @@ static unsigned long sun4i_i2s_choose_clk_rate(struct sun4i_i2s *i2s,
+ 	return base_rate;
+ }
+ 
++/*
++ * The module clock is on from runtime resume, so a parent PLL that only
++ * changes its rate while it is off (CLK_SET_RATE_GATE) is held at its
++ * rate by this controller itself. When no other stream of this DAI runs,
++ * switch the module clock off while its rate is chosen and set.
++ */
++static int sun4i_i2s_set_mod_clk_rate(struct snd_soc_dai *dai,
++				      unsigned long base_rate,
++				      unsigned int rate,
++				      unsigned int slots,
++				      unsigned int slot_width,
++				      unsigned long *clk_rate)
++{
++	struct sun4i_i2s *i2s = snd_soc_dai_get_drvdata(dai);
++	int ret, err;
++
++	if (i2s->mod_clk_enabled && snd_soc_dai_active(dai) == 1) {
++		clk_disable_unprepare(i2s->mod_clk);
++		i2s->mod_clk_enabled = false;
++	}
++
++	*clk_rate = sun4i_i2s_choose_clk_rate(i2s, base_rate, rate, slots,
++					      slot_width);
++	ret = clk_set_rate(i2s->mod_clk, *clk_rate);
++
++	if (!i2s->mod_clk_enabled) {
++		err = clk_prepare_enable(i2s->mod_clk);
++		if (err) {
++			dev_err(dai->dev, "Failed to enable module clock\n");
++			return err;
++		}
++		i2s->mod_clk_enabled = true;
++	}
++
++	return ret;
++}
++
+ static int sun4i_i2s_oversample_rates[] = { 128, 192, 256, 384, 512, 768 };
+ static bool sun4i_i2s_oversample_is_valid(unsigned int oversample)
+ {
+@@ -447,10 +485,8 @@ static int sun4i_i2s_set_clk_rate(struct snd_soc_dai *dai,
+ 		return -EINVAL;
+ 	}
+ 
+-	clk_rate = sun4i_i2s_choose_clk_rate(i2s, clk_rate, rate, slots,
+-					     slot_width);
+-
+-	ret = clk_set_rate(i2s->mod_clk, clk_rate);
++	ret = sun4i_i2s_set_mod_clk_rate(dai, clk_rate, rate, slots,
++					 slot_width, &clk_rate);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1412,6 +1448,7 @@ static int sun4i_i2s_runtime_resume(struct device *dev)
+ 		dev_err(dev, "Failed to enable module clock\n");
+ 		goto err_disable_clk;
+ 	}
++	i2s->mod_clk_enabled = true;
+ 
+ 	return 0;
+ 
+@@ -1424,7 +1461,10 @@ static int sun4i_i2s_runtime_suspend(struct device *dev)
+ {
+ 	struct sun4i_i2s *i2s = dev_get_drvdata(dev);
+ 
+-	clk_disable_unprepare(i2s->mod_clk);
++	if (i2s->mod_clk_enabled) {
++		clk_disable_unprepare(i2s->mod_clk);
++		i2s->mod_clk_enabled = false;
++	}
+ 
+ 	/* Disable our output lines */
+ 	regmap_update_bits(i2s->regmap, SUN4I_I2S_CTRL_REG,

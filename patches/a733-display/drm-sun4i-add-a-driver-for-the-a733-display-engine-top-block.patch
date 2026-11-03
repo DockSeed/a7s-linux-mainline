@@ -1,0 +1,519 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:19 +0200
+Subject: [PATCH] drm/sun4i: Add a driver for the A733 display engine top block
+
+On the A733 the mixer registers read as zero until the reset of their
+display is released in the top block of the display engine, and the
+route from a display to a TCON is set in that block's DE-to-TCON mux.
+sun4i-drm has no driver for it.
+
+Add one in the form of the TCON TOP driver. At probe it enables the
+DE bus matrix gate, pulses the DE reset, enables the bus, module and
+MBUS clocks, sets bit 16 of the reset and clock registers, registers
+the display and MBUS gates as clocks and their resets as a reset
+controller, and brings up the MBUS port, which all displays share. It
+exports sun60i_de_top_route() for the TCON driver. The providers are
+registered at probe time because the mixers take them when they bind,
+before this component binds. Routing a display to a TCON disconnects
+any other display from that TCON (code 0xf).
+
+Register names, bit positions, bit 16 and the "not connected" code
+are vendor values; the vendor sets bit 16 without documenting it. Only
+the reset of display 0 is known to be needed on our boards. The DE
+reset is pulsed so that no state from the boot chain survives; the
+other registers of the page are not written.
+
+Not covered: the DE_SYS bus reset (RST_BUS_DE_SYS), which the vendor
+driver also takes. Its reset value is de-asserted, so its state is the
+one the boot chain leaves.
+
+Tested on Radxa Cubie A7S: booted on one board; the top block released
+the clock, reset and MBUS of display 0, routed it to TCON TV1, and the
+monitor showed the picture.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/Kconfig         |   7 +
+ drivers/gpu/drm/sun4i/Makefile        |   1 +
+ drivers/gpu/drm/sun4i/sun60i_de_top.c | 422 ++++++++++++++++++++++++++
+ drivers/gpu/drm/sun4i/sun60i_de_top.h |  16 +
+ 4 files changed, 446 insertions(+)
+ create mode 100644 drivers/gpu/drm/sun4i/sun60i_de_top.c
+ create mode 100644 drivers/gpu/drm/sun4i/sun60i_de_top.h
+
+diff --git a/drivers/gpu/drm/sun4i/Kconfig b/drivers/gpu/drm/sun4i/Kconfig
+index b56ba00aabca..4808e2e746c8 100644
+--- a/drivers/gpu/drm/sun4i/Kconfig
++++ b/drivers/gpu/drm/sun4i/Kconfig
+@@ -85,4 +85,11 @@ config DRM_SUN8I_TCON_TOP
+ 	  TCON TOP is responsible for configuring display pipeline for
+ 	  HDMI, TVE and LCD.
+ 
++config DRM_SUN60I_DE_TOP
++	tristate
++	default DRM_SUN4I if DRM_SUN8I_MIXER!=n
++	help
++	  The A733 display engine top block gates and resets the display
++	  datapaths and connects each display to a TCON.
++
+ endif
+diff --git a/drivers/gpu/drm/sun4i/Makefile b/drivers/gpu/drm/sun4i/Makefile
+index bad7497a0d11..fea64b1d0a74 100644
+--- a/drivers/gpu/drm/sun4i/Makefile
++++ b/drivers/gpu/drm/sun4i/Makefile
+@@ -38,3 +38,4 @@ obj-$(CONFIG_DRM_SUN6I_DSI)	+= sun6i_mipi_dsi.o
+ obj-$(CONFIG_DRM_SUN8I_DW_HDMI)	+= sun8i-drm-hdmi.o
+ obj-$(CONFIG_DRM_SUN8I_MIXER)	+= sun8i-mixer.o
+ obj-$(CONFIG_DRM_SUN8I_TCON_TOP) += sun8i_tcon_top.o
++obj-$(CONFIG_DRM_SUN60I_DE_TOP) += sun60i_de_top.o
+diff --git a/drivers/gpu/drm/sun4i/sun60i_de_top.c b/drivers/gpu/drm/sun4i/sun60i_de_top.c
+new file mode 100644
+index 000000000000..c9401005c13c
+--- /dev/null
++++ b/drivers/gpu/drm/sun4i/sun60i_de_top.c
+@@ -0,0 +1,422 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Allwinner A733 display engine top block
++ *
++ * The block at the start of the A733 display engine holds the reset
++ * and the clock gate of each display, the reset and clock gate of the
++ * display engine's MBUS port and the mux that connects each display to
++ * a TCON. It is a reset and clock provider for the mixers and sets the
++ * DE-to-TCON route for the TCON driver, as the TCON TOP does on the R40
++ * and H6.
++ *
++ * The user manual does not document these registers. Their names, bit
++ * positions and the 0xf "not connected" code of the mux are the
++ * vendor's; only the reset of display 0 is known to be needed on our
++ * boards (the mixer registers read as zero without it).
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/component.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/reset-controller.h>
++#include <linux/spinlock.h>
++
++#include <dt-bindings/clock/allwinner,sun60i-a733-de-top.h>
++#include <dt-bindings/reset/allwinner,sun60i-a733-de-top.h>
++
++#include "sun60i_de_top.h"
++
++/* vendor names: DE_RESET, DE_CLK, DE_MBUS_CLOCK */
++#define DE_TOP_RESET_REG		0x00
++#define DE_TOP_CLK_REG			0x04
++#define DE_TOP_MBUS_REG			0x08
++#define DE_TOP_DISP_BIT(disp)		((disp) * 4)
++#define DE_TOP_MBUS_CLK_BIT		0
++#define DE_TOP_MBUS_RESET_BIT		4
++
++/* The vendor sets bit 16 of DE_RESET and DE_CLK; its meaning is not documented */
++#define DE_TOP_RESET_CLK_BIT16		BIT(16)
++
++#define DE_TOP_DE2TCON_MUX_REG		0x10
++#define DE_TOP_DE2TCON_MUX_MSK(disp)	GENMASK((disp) * 4 + 3, (disp) * 4)
++#define DE_TOP_DE2TCON_NONE		0xf
++#define DE_TOP_DISP_NUM			4
++
++#define DE_TOP_CLK_NUM			(CLK_DE_TOP_MBUS + 1)
++#define DE_TOP_RESET_NUM		(RST_DE_TOP_MBUS + 1)
++
++struct sun60i_de_top_bit {
++	u16	reg;
++	u8	bit;
++};
++
++static const struct sun60i_de_top_bit sun60i_de_top_resets[DE_TOP_RESET_NUM] = {
++	[RST_DE_TOP_DISP0] = { DE_TOP_RESET_REG, DE_TOP_DISP_BIT(0) },
++	[RST_DE_TOP_DISP1] = { DE_TOP_RESET_REG, DE_TOP_DISP_BIT(1) },
++	[RST_DE_TOP_DISP2] = { DE_TOP_RESET_REG, DE_TOP_DISP_BIT(2) },
++	[RST_DE_TOP_DISP3] = { DE_TOP_RESET_REG, DE_TOP_DISP_BIT(3) },
++	[RST_DE_TOP_MBUS]  = { DE_TOP_MBUS_REG, DE_TOP_MBUS_RESET_BIT },
++};
++
++struct sun60i_de_top_gate {
++	const char		*name;
++	const char		*parent;
++	struct sun60i_de_top_bit pos;
++};
++
++static const struct sun60i_de_top_gate sun60i_de_top_gates[DE_TOP_CLK_NUM] = {
++	[CLK_DE_TOP_DISP0] = { "de-top-disp0", "mod",
++			       { DE_TOP_CLK_REG, DE_TOP_DISP_BIT(0) } },
++	[CLK_DE_TOP_DISP1] = { "de-top-disp1", "mod",
++			       { DE_TOP_CLK_REG, DE_TOP_DISP_BIT(1) } },
++	[CLK_DE_TOP_DISP2] = { "de-top-disp2", "mod",
++			       { DE_TOP_CLK_REG, DE_TOP_DISP_BIT(2) } },
++	[CLK_DE_TOP_DISP3] = { "de-top-disp3", "mod",
++			       { DE_TOP_CLK_REG, DE_TOP_DISP_BIT(3) } },
++	[CLK_DE_TOP_MBUS]  = { "de-top-mbus", "mbus",
++			       { DE_TOP_MBUS_REG, DE_TOP_MBUS_CLK_BIT } },
++};
++
++struct sun60i_de_top {
++	void __iomem			*regs;
++	struct clk_hw_onecell_data	*clk_data;
++	struct clk			*mbus_clk;
++	struct reset_controller_dev	rcdev;
++
++	/* the gates and resets share their registers */
++	spinlock_t			reg_lock;
++};
++
++static struct sun60i_de_top *rcdev_to_de_top(struct reset_controller_dev *rcdev)
++{
++	return container_of(rcdev, struct sun60i_de_top, rcdev);
++}
++
++static void sun60i_de_top_update_bits(struct sun60i_de_top *top, u32 reg,
++				      u32 mask, u32 val)
++{
++	unsigned long flags;
++	u32 tmp;
++
++	spin_lock_irqsave(&top->reg_lock, flags);
++	tmp = readl(top->regs + reg);
++	tmp = (tmp & ~mask) | (val & mask);
++	writel(tmp, top->regs + reg);
++	spin_unlock_irqrestore(&top->reg_lock, flags);
++}
++
++int sun60i_de_top_route(struct device *dev, unsigned int disp,
++			unsigned int tcon)
++{
++	struct sun60i_de_top *top = dev_get_drvdata(dev);
++	unsigned long flags;
++	unsigned int i;
++	u32 reg;
++
++	if (!of_match_node(sun60i_de_top_of_table, dev->of_node) || !top) {
++		dev_err(dev, "Device is not a DE top block\n");
++		return -EINVAL;
++	}
++
++	if (disp >= DE_TOP_DISP_NUM || tcon >= DE_TOP_DE2TCON_NONE) {
++		dev_err(dev, "Invalid route from display %u to TCON %u\n",
++			disp, tcon);
++		return -EINVAL;
++	}
++
++	spin_lock_irqsave(&top->reg_lock, flags);
++
++	reg = readl(top->regs + DE_TOP_DE2TCON_MUX_REG);
++
++	/* A TCON takes one display; disconnect any other that points at it */
++	for (i = 0; i < DE_TOP_DISP_NUM; i++) {
++		if (i == disp ||
++		    field_get(DE_TOP_DE2TCON_MUX_MSK(i), reg) != tcon)
++			continue;
++
++		reg &= ~DE_TOP_DE2TCON_MUX_MSK(i);
++		reg |= field_prep(DE_TOP_DE2TCON_MUX_MSK(i),
++				  DE_TOP_DE2TCON_NONE);
++	}
++
++	reg &= ~DE_TOP_DE2TCON_MUX_MSK(disp);
++	reg |= field_prep(DE_TOP_DE2TCON_MUX_MSK(disp), tcon);
++	writel(reg, top->regs + DE_TOP_DE2TCON_MUX_REG);
++
++	spin_unlock_irqrestore(&top->reg_lock, flags);
++
++	return 0;
++}
++EXPORT_SYMBOL(sun60i_de_top_route);
++
++/* A set bit releases the reset */
++static int sun60i_de_top_reset_update(struct sun60i_de_top *top,
++				      unsigned long id, bool deassert)
++{
++	const struct sun60i_de_top_bit *pos = &sun60i_de_top_resets[id];
++	u32 mask = BIT(pos->bit);
++
++	sun60i_de_top_update_bits(top, pos->reg, mask, deassert ? mask : 0);
++
++	return 0;
++}
++
++static int sun60i_de_top_reset_assert(struct reset_controller_dev *rcdev,
++				      unsigned long id)
++{
++	return sun60i_de_top_reset_update(rcdev_to_de_top(rcdev), id, false);
++}
++
++static int sun60i_de_top_reset_deassert(struct reset_controller_dev *rcdev,
++					unsigned long id)
++{
++	return sun60i_de_top_reset_update(rcdev_to_de_top(rcdev), id, true);
++}
++
++static int sun60i_de_top_reset_status(struct reset_controller_dev *rcdev,
++				      unsigned long id)
++{
++	struct sun60i_de_top *top = rcdev_to_de_top(rcdev);
++	const struct sun60i_de_top_bit *pos = &sun60i_de_top_resets[id];
++
++	return !(readl(top->regs + pos->reg) & BIT(pos->bit));
++}
++
++static const struct reset_control_ops sun60i_de_top_reset_ops = {
++	.assert		= sun60i_de_top_reset_assert,
++	.deassert	= sun60i_de_top_reset_deassert,
++	.status		= sun60i_de_top_reset_status,
++};
++
++static int sun60i_de_top_register_gates(struct device *dev,
++					struct sun60i_de_top *top)
++{
++	struct clk_hw_onecell_data *clk_data;
++	unsigned int i;
++
++	clk_data = devm_kzalloc(dev, struct_size(clk_data, hws,
++						 DE_TOP_CLK_NUM),
++				GFP_KERNEL);
++	if (!clk_data)
++		return -ENOMEM;
++
++	clk_data->num = DE_TOP_CLK_NUM;
++
++	for (i = 0; i < DE_TOP_CLK_NUM; i++) {
++		const struct sun60i_de_top_gate *gate = &sun60i_de_top_gates[i];
++		struct clk_parent_data parent = { .fw_name = gate->parent };
++		struct clk_hw *hw;
++
++		hw = devm_clk_hw_register_gate_parent_data(dev, gate->name,
++							   &parent, 0,
++							   top->regs + gate->pos.reg,
++							   gate->pos.bit, 0,
++							   &top->reg_lock);
++		if (IS_ERR(hw))
++			return dev_err_probe(dev, PTR_ERR(hw),
++					     "Couldn't register gate %s\n",
++					     gate->name);
++
++		clk_data->hws[i] = hw;
++	}
++
++	top->clk_data = clk_data;
++
++	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
++					   clk_data);
++}
++
++static int sun60i_de_top_register_resets(struct device *dev,
++					 struct sun60i_de_top *top)
++{
++	top->rcdev.owner = THIS_MODULE;
++	top->rcdev.nr_resets = DE_TOP_RESET_NUM;
++	top->rcdev.ops = &sun60i_de_top_reset_ops;
++	top->rcdev.of_node = dev->of_node;
++
++	return devm_reset_controller_register(dev, &top->rcdev);
++}
++
++static void sun60i_de_top_assert_reset(void *data)
++{
++	reset_control_assert(data);
++}
++
++/*
++ * The DE is reset with a pulse, so that nothing the boot chain left in
++ * it survives. The bus matrix gate goes first, then the reset is
++ * released, then the gates of the block (user manual section 4.1.4.4:
++ * reset before gate).
++ */
++static int sun60i_de_top_enable_block(struct device *dev)
++{
++	static const char * const clk_names[] = { "bus", "mod", "mbus" };
++	struct reset_control *rstc;
++	unsigned int i;
++	struct clk *clk;
++	int ret;
++
++	clk = devm_clk_get_enabled(dev, "ahb");
++	if (IS_ERR(clk))
++		return dev_err_probe(dev, PTR_ERR(clk),
++				     "Couldn't enable the ahb clock\n");
++
++	rstc = devm_reset_control_get_exclusive(dev, NULL);
++	if (IS_ERR(rstc))
++		return dev_err_probe(dev, PTR_ERR(rstc),
++				     "Couldn't get the reset\n");
++
++	ret = reset_control_assert(rstc);
++	if (!ret)
++		ret = reset_control_deassert(rstc);
++	if (ret)
++		return dev_err_probe(dev, ret, "Couldn't pulse the reset\n");
++
++	ret = devm_add_action_or_reset(dev, sun60i_de_top_assert_reset, rstc);
++	if (ret)
++		return ret;
++
++	for (i = 0; i < ARRAY_SIZE(clk_names); i++) {
++		clk = devm_clk_get_enabled(dev, clk_names[i]);
++		if (IS_ERR(clk))
++			return dev_err_probe(dev, PTR_ERR(clk),
++					     "Couldn't enable the %s clock\n",
++					     clk_names[i]);
++	}
++
++	return 0;
++}
++
++/*
++ * The MBUS port is shared by every display, so the block keeps it
++ * running itself: reset released first, then the gate. If the gate
++ * fails, the port goes back into reset.
++ */
++static int sun60i_de_top_enable_mbus(struct device *dev,
++				     struct sun60i_de_top *top)
++{
++	int ret;
++
++	top->mbus_clk = devm_clk_hw_get_clk(dev,
++					    top->clk_data->hws[CLK_DE_TOP_MBUS],
++					    "mbus");
++	if (IS_ERR(top->mbus_clk))
++		return PTR_ERR(top->mbus_clk);
++
++	sun60i_de_top_reset_update(top, RST_DE_TOP_MBUS, true);
++
++	ret = clk_prepare_enable(top->mbus_clk);
++	if (ret)
++		sun60i_de_top_reset_update(top, RST_DE_TOP_MBUS, false);
++
++	return ret;
++}
++
++static void sun60i_de_top_disable_mbus(void *data)
++{
++	struct sun60i_de_top *top = data;
++
++	clk_disable_unprepare(top->mbus_clk);
++	sun60i_de_top_reset_update(top, RST_DE_TOP_MBUS, false);
++}
++
++static int sun60i_de_top_bind(struct device *dev, struct device *master,
++			      void *data)
++{
++	return 0;
++}
++
++static void sun60i_de_top_unbind(struct device *dev, struct device *master,
++				 void *data)
++{
++}
++
++static const struct component_ops sun60i_de_top_ops = {
++	.bind	= sun60i_de_top_bind,
++	.unbind	= sun60i_de_top_unbind,
++};
++
++/*
++ * The mixers take their reset and clock from this block when they bind,
++ * which is before this component binds. The providers are therefore
++ * registered at probe time, not at bind time as on the TCON TOP.
++ */
++static int sun60i_de_top_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sun60i_de_top *top;
++	int ret;
++
++	top = devm_kzalloc(dev, sizeof(*top), GFP_KERNEL);
++	if (!top)
++		return -ENOMEM;
++
++	spin_lock_init(&top->reg_lock);
++
++	top->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(top->regs))
++		return PTR_ERR(top->regs);
++
++	ret = sun60i_de_top_enable_block(dev);
++	if (ret)
++		return ret;
++
++	sun60i_de_top_update_bits(top, DE_TOP_RESET_REG,
++				  DE_TOP_RESET_CLK_BIT16,
++				  DE_TOP_RESET_CLK_BIT16);
++	sun60i_de_top_update_bits(top, DE_TOP_CLK_REG,
++				  DE_TOP_RESET_CLK_BIT16,
++				  DE_TOP_RESET_CLK_BIT16);
++
++	ret = sun60i_de_top_register_gates(dev, top);
++	if (ret)
++		return ret;
++
++	ret = sun60i_de_top_register_resets(dev, top);
++	if (ret)
++		return ret;
++
++	ret = sun60i_de_top_enable_mbus(dev, top);
++	if (ret)
++		return dev_err_probe(dev, ret, "Couldn't enable the MBUS port\n");
++
++	ret = devm_add_action_or_reset(dev, sun60i_de_top_disable_mbus, top);
++	if (ret)
++		return ret;
++
++	platform_set_drvdata(pdev, top);
++
++	return component_add(dev, &sun60i_de_top_ops);
++}
++
++static void sun60i_de_top_remove(struct platform_device *pdev)
++{
++	component_del(&pdev->dev, &sun60i_de_top_ops);
++}
++
++/* sun4i_drv and sun4i_tcon use this list to find the DE top block */
++const struct of_device_id sun60i_de_top_of_table[] = {
++	{ .compatible = "allwinner,sun60i-a733-de-top" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sun60i_de_top_of_table);
++EXPORT_SYMBOL(sun60i_de_top_of_table);
++
++static struct platform_driver sun60i_de_top_platform_driver = {
++	.probe		= sun60i_de_top_probe,
++	.remove		= sun60i_de_top_remove,
++	.driver		= {
++		.name		= "sun60i-de-top",
++		.of_match_table	= sun60i_de_top_of_table,
++	},
++};
++module_platform_driver(sun60i_de_top_platform_driver);
++
++MODULE_DESCRIPTION("Allwinner A733 display engine top block driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/gpu/drm/sun4i/sun60i_de_top.h b/drivers/gpu/drm/sun4i/sun60i_de_top.h
+new file mode 100644
+index 000000000000..cd136f31d194
+--- /dev/null
++++ b/drivers/gpu/drm/sun4i/sun60i_de_top.h
+@@ -0,0 +1,16 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++
++#ifndef _SUN60I_DE_TOP_H_
++#define _SUN60I_DE_TOP_H_
++
++#include <linux/mod_devicetable.h>
++#include <linux/types.h>
++
++struct device;
++
++extern const struct of_device_id sun60i_de_top_of_table[];
++
++int sun60i_de_top_route(struct device *dev, unsigned int disp,
++			unsigned int tcon);
++
++#endif /* _SUN60I_DE_TOP_H_ */

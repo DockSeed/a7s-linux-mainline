@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 13:15:33 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Add a ramoops region
+
+Reserve 1 MiB of DRAM at 0x60000000 for pstore/ramoops, so the kernel
+log of a panic or an oops can be read after a warm reset.
+DRAM keeps its contents across the reset paths of the board (PSCI
+SYSTEM_RESET and the watchdog), the boot chain does not write the
+region, and it lies in the first GiB of DRAM (DRAM starts at
+0x40000000, A733 manual, 2 Memory Map), away from the SCP firmware region.
+
+A dump record is 128 KiB, the size of the default kernel log buffer
+(LOG_BUF_SHIFT 17). The region also holds a 256 KiB console record for
+kernels built with CONFIG_PSTORE_CONSOLE, so six dump records fit next
+to it. ECC (16 bytes per block) keeps a record with bit errors from
+being read back as a valid log.
+
+Tested on Radxa Cubie A7S: the record of a panic is read back after
+the warm reset.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 69c077594490..027cdedfab7f 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -59,6 +59,15 @@ scp@48100000 {
+ 			reg = <0x0 0x48100000 0x0 0x100000>;
+ 			no-map;
+ 		};
++
++		/* pstore records, kept in DRAM across a warm reset */
++		ramoops@60000000 {
++			compatible = "ramoops";
++			reg = <0x0 0x60000000 0x0 0x100000>;
++			console-size = <0x40000>;
++			record-size = <0x20000>;
++			ecc-size = <16>;
++		};
+ 	};
+ 
+ 	/*

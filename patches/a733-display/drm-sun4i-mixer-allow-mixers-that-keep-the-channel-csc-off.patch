@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:20 +0200
+Subject: [PATCH] drm/sun4i: mixer: Allow mixers that keep the channel CSC off
+
+The VI layers of the DE33 mixers advertise YUV formats and program the
+channel colour space converter through sun8i_csc_config(). For the
+DE33 the converter base is taken from the DE2 layout (CCSC00_OFFSET
+and CCSC01_OFFSET), which does not match every DE33 implementation:
+on the A733 the converter sits at 0x800 of each channel window, below
+the overlay block, with a coefficient layout the driver does not know.
+
+Add a CCSC layout for a converter inside the channel and an rgb_only
+layer flag. A mixer with the flag advertises only the RGB formats of
+its VI layer table and writes its converter off on every update, so
+its state does not depend on what ran before.
+
+Not covered: YUV support for such mixers.
+
+Tested on Radxa Cubie A7S: booted on one board with the converter of
+each channel kept off; white, red and blue written to the framebuffer
+reached the sink with the colour channels in the order written.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun8i_csc.c      |  8 +++++-
+ drivers/gpu/drm/sun4i/sun8i_csc.h      |  2 ++
+ drivers/gpu/drm/sun4i/sun8i_mixer.h    |  5 ++++
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.c | 36 ++++++++++++++++++++++++++
+ 4 files changed, 50 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_csc.c b/drivers/gpu/drm/sun4i/sun8i_csc.c
+index ce81c12f511d..e8ea112192f0 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_csc.c
++++ b/drivers/gpu/drm/sun4i/sun8i_csc.c
+@@ -233,6 +233,9 @@ void sun8i_csc_config(struct sun8i_layer *layer,
+ 	u32 mode = sun8i_csc_get_mode(state);
+ 	u32 base;
+ 
++	if (layer->cfg->rgb_only)
++		mode = SUN8I_CSC_MODE_OFF;
++
+ 	if (layer->cfg->de_type == SUN8I_MIXER_DE3) {
+ 		sun8i_de3_ccsc_setup(layer->regs, layer->channel,
+ 				     mode, state->color_encoding,
+@@ -240,7 +243,10 @@ void sun8i_csc_config(struct sun8i_layer *layer,
+ 		return;
+ 	}
+ 
+-	base = ccsc_base[layer->cfg->ccsc][layer->channel];
++	if (layer->cfg->ccsc == CCSC_DE33_CHANNEL_LAYOUT)
++		base = layer->channel * DE33_CH_SIZE + CCSC_DE33_CHANNEL_OFFSET;
++	else
++		base = ccsc_base[layer->cfg->ccsc][layer->channel];
+ 
+ 	sun8i_csc_setup(layer->regs, base,
+ 			mode, state->color_encoding,
+diff --git a/drivers/gpu/drm/sun4i/sun8i_csc.h b/drivers/gpu/drm/sun4i/sun8i_csc.h
+index 2a4b79599610..83e37e0f3f19 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_csc.h
++++ b/drivers/gpu/drm/sun4i/sun8i_csc.h
+@@ -17,6 +17,8 @@ struct sun8i_layer;
+ #define CCSC01_D1_OFFSET 0xFA000
+ #define CCSC10_OFFSET 0xA0000
+ #define CCSC11_OFFSET 0xF0000
++/* in the channel window, below its overlay block (DE33_CH_BASE) */
++#define CCSC_DE33_CHANNEL_OFFSET 0x800
+ 
+ #define SUN8I_CSC_CTRL(base)		((base) + 0x0)
+ #define SUN8I_CSC_COEFF(base, i)	((base) + 0x10 + 4 * (i))
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.h b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+index e2f83301aae8..b8aac975d9b5 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+@@ -155,6 +155,8 @@ enum {
+ 	CCSC_MIXER1_LAYOUT,
+ 	/* First mixer with the MMIO layout found in the D1 SoC. */
+ 	CCSC_D1_MIXER0_LAYOUT,
++	/* DE33 mixer with the converter inside each channel (A733). */
++	CCSC_DE33_CHANNEL_LAYOUT,
+ };
+ 
+ enum sun8i_mixer_type {
+@@ -175,6 +177,8 @@ enum sun8i_mixer_type {
+  * @scaline_yuv: size of a scanline for VI scaler for YUV formats.
+  * @de2_fcc_alpha: use FCC for missing DE2 VI alpha capability
+  *	Most DE2 cores has FCC. If number of VI planes is one, enable this.
++ * @rgb_only: the channel colour space converters are kept off, so VI
++ *	layers take RGB formats only.
+  */
+ struct sun8i_layer_cfg {
+ 	unsigned int	vi_scaler_num;
+@@ -183,6 +187,7 @@ struct sun8i_layer_cfg {
+ 	unsigned int	de_type;
+ 	unsigned int	scanline_yuv;
+ 	unsigned int	de2_fcc_alpha : 1;
++	unsigned int	rgb_only : 1;
+ };
+ 
+ /**
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+index 09f668c8af24..809d1d501322 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+@@ -3,11 +3,14 @@
+  * Copyright (C) Jernej Skrabec <jernej.skrabec@siol.net>
+  */
+ 
++#include <linux/slab.h>
++
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_blend.h>
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_fb_dma_helper.h>
++#include <drm/drm_fourcc.h>
+ #include <drm/drm_framebuffer.h>
+ #include <drm/drm_gem_atomic_helper.h>
+ #include <drm/drm_gem_dma_helper.h>
+@@ -385,6 +388,29 @@ static const uint64_t sun8i_layer_modifiers[] = {
+ 	DRM_FORMAT_MOD_INVALID
+ };
+ 
++/*
++ * The returned list is only needed until drm_universal_plane_init(),
++ * which keeps a copy; the caller frees it.
++ */
++static u32 *sun8i_vi_layer_rgb_formats(const u32 *formats,
++				       unsigned int *count)
++{
++	unsigned int i, rgb_count = 0;
++	u32 *rgb;
++
++	rgb = kcalloc(*count, sizeof(*rgb), GFP_KERNEL);
++	if (!rgb)
++		return NULL;
++
++	for (i = 0; i < *count; i++)
++		if (!drm_format_info(formats[i])->is_yuv)
++			rgb[rgb_count++] = formats[i];
++
++	*count = rgb_count;
++
++	return rgb;
++}
++
+ struct sun8i_layer *sun8i_vi_layer_init_one(struct drm_device *drm,
+ 					    enum drm_plane_type type,
+ 					    struct regmap *regs,
+@@ -395,6 +421,7 @@ struct sun8i_layer *sun8i_vi_layer_init_one(struct drm_device *drm,
+ 	u32 supported_encodings, supported_ranges;
+ 	unsigned int format_count;
+ 	struct sun8i_layer *layer;
++	u32 *rgb_formats = NULL;
+ 	const u32 *formats;
+ 	int ret;
+ 
+@@ -417,12 +444,21 @@ struct sun8i_layer *sun8i_vi_layer_init_one(struct drm_device *drm,
+ 		format_count = ARRAY_SIZE(sun8i_vi_layer_formats);
+ 	}
+ 
++	if (layer->cfg->rgb_only) {
++		rgb_formats = sun8i_vi_layer_rgb_formats(formats,
++							 &format_count);
++		if (!rgb_formats)
++			return ERR_PTR(-ENOMEM);
++		formats = rgb_formats;
++	}
++
+ 	/* possible crtcs are set later */
+ 	ret = drm_universal_plane_init(drm, &layer->plane, 0,
+ 				       &sun8i_vi_layer_funcs,
+ 				       formats, format_count,
+ 				       sun8i_layer_modifiers,
+ 				       type, NULL);
++	kfree(rgb_formats);
+ 	if (ret) {
+ 		dev_err(drm->dev, "Couldn't initialize layer\n");
+ 		return ERR_PTR(ret);

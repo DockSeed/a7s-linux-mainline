@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 10 Oct 2026 14:45:42 +0200
+Subject: [PATCH] ASoC: sun4i-i2s: sync only known registers of the H6 register
+ map
+
+The H6 register map reaches up to RX channel map 3 (0x74), but its
+defaults list only TX pin 0 and RX maps 0 and 1. On the first runtime
+resume regcache_sync() walks every writable, non-volatile register and
+reads the registers without a default from the flat cache, and the
+kernel warns "using zero-initialized flat cache". The sync then writes
+0 to the TX channel select and map registers of pins 1 to 3, to RX
+channel maps 2 and 3, and to the TX FIFO: the FIFO data register is not
+readable, so regmap_volatile() treats it as cached.
+
+Use REGCACHE_FLAT_S. In the sparse cache a register that has neither a
+default nor been written is not valid: the sync skips it and a read
+goes to the hardware. Registers the driver writes are cached and
+restored as before. The map is shared by the H6, R329 and A733
+variants; on all of them an unwritten register now keeps its reset
+value instead of being written with 0.
+
+Not covered: the defaults table and the volatile and readable callbacks
+stay as they are.
+
+Tested on Radxa Cubie A7S: two runtime resumes of two I2S blocks wrote
+only the control register, the flat cache warning was gone, and the
+I2S, OWA and DMIC loop checks passed.
+
+Assisted-by: LLM
+---
+ sound/soc/sunxi/sun4i-i2s.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/soc/sunxi/sun4i-i2s.c b/sound/soc/sunxi/sun4i-i2s.c
+index 8c2a5070f0b9..125509030658 100644
+--- a/sound/soc/sunxi/sun4i-i2s.c
++++ b/sound/soc/sunxi/sun4i-i2s.c
+@@ -1291,7 +1291,7 @@ static const struct regmap_config sun50i_h6_i2s_regmap_config = {
+ 	.reg_stride	= 4,
+ 	.val_bits	= 32,
+ 	.max_register	= SUN50I_R329_I2S_RX_CHAN_MAP3_REG,
+-	.cache_type	= REGCACHE_FLAT,
++	.cache_type	= REGCACHE_FLAT_S,
+ 	.reg_defaults	= sun50i_h6_i2s_reg_defaults,
+ 	.num_reg_defaults	= ARRAY_SIZE(sun50i_h6_i2s_reg_defaults),
+ 	.writeable_reg	= sun4i_i2s_wr_reg,

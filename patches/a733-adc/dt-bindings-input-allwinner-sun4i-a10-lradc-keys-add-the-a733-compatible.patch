@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 08:27:09 +0200
+Subject: [PATCH] dt-bindings: input: allwinner,sun4i-a10-lradc-keys: Add the
+ A733 compatible
+
+The A733 LRADC has a 6-bit conversion for inputs up to 1.35 V from a
+1.8 V supply, a bus gate and a reset, and the register layout of the
+R329 LRADC (A733 manual, 18.13.1, 18.13.8, 4.1.6.177). Add
+"allwinner,sun60i-a733-lradc" with "allwinner,sun50i-r329-lradc" as the
+fallback, so the existing driver binds without a change. The fallback
+selects the 3/4 divider of the supply voltage, which gives the 1.35 V
+reference of the manual, and its clock and reset are required by the
+schema, as the A733 has both.
+
+Not covered: the second ADC channel in the register model; the A733
+brings out only LRADC0-0.
+
+Tested on Radxa Cubie A7S: not tested; the board has no key on the
+LRADC input.
+
+Assisted-by: LLM
+---
+ .../bindings/input/allwinner,sun4i-a10-lradc-keys.yaml           | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/input/allwinner,sun4i-a10-lradc-keys.yaml b/Documentation/devicetree/bindings/input/allwinner,sun4i-a10-lradc-keys.yaml
+index 524c8b51f53f..6353bb538031 100644
+--- a/Documentation/devicetree/bindings/input/allwinner,sun4i-a10-lradc-keys.yaml
++++ b/Documentation/devicetree/bindings/input/allwinner,sun4i-a10-lradc-keys.yaml
+@@ -26,6 +26,7 @@ properties:
+               - allwinner,sun50i-a100-lradc
+               - allwinner,sun50i-h616-lradc
+               - allwinner,sun20i-d1-lradc
++              - allwinner,sun60i-a733-lradc
+           - const: allwinner,sun50i-r329-lradc
+ 
+   reg:

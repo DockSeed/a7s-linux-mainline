@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 16:01:00 +0200
+Subject: [PATCH] dt-bindings: media: Add Allwinner A733 camera sensor
+ interface controller
+
+The A733 has a camera sensor interface controller, the CSIC (manual
+section 16.1). Add its binding, in media with the other camera
+interfaces.
+
+No existing binding fits. The CSI of the older Allwinner SoCs is one
+flat register block, while the A733 window is split into a clock
+control, a top, a PHY with three ports, three parsers and six DMA
+channels at fixed offsets (manual section 16.1.7), and the MIPI D-PHY
+is part of it. The block sits in the video input system, is powered by
+the PCK-600 domain PD_VI (manual section 16.1.6.8), and has its bus
+masters behind the first IOMMU, master 1 (manual chapter 10).
+
+The five clocks are the bus gate, the AHB and MBUS clock enables of the
+video input system, the MBUS clock enable of the CSI and the module
+clock (manual sections 4.1.6.245, 4.1.6.82, 4.1.6.83, 4.1.6.84 and
+4.1.6.244). The reset is the bus reset of the same register, bit 16;
+the reset of the video input system itself is de-asserted by default
+and is not taken (manual section 4.1.6.247). The sixteen interrupts
+are the CSI_* sources of the manual, in the order of the list (manual
+section 12.2.3.1).
+
+Not covered: the camera function. No camera is attached to the board,
+so the sensor ports and endpoints are not described, and there is no
+driver.
+
+Tested on Radxa Cubie A7S: with the node enabled for a test, the camera
+sensor interface probes with the clocks, reset, power domain and IOMMU
+master this binding names, and its registers read their reset values
+while it is resumed; no camera is attached.
+
+Assisted-by: LLM
+---
+ .../media/allwinner,sun60i-a733-csic.yaml     | 121 ++++++++++++++++++
+ 1 file changed, 121 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/media/allwinner,sun60i-a733-csic.yaml
+
+diff --git a/Documentation/devicetree/bindings/media/allwinner,sun60i-a733-csic.yaml b/Documentation/devicetree/bindings/media/allwinner,sun60i-a733-csic.yaml
+new file mode 100644
+index 000000000000..3d142d097b60
+--- /dev/null
++++ b/Documentation/devicetree/bindings/media/allwinner,sun60i-a733-csic.yaml
+@@ -0,0 +1,121 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/media/allwinner,sun60i-a733-csic.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Allwinner A733 Camera Sensor Interface Controller
++
++maintainers:
++  - Norman Herms <dockseed@proton.me>
++
++description:
++  The CSIC of the A733 receives image and video data from camera sensors on
++  three MIPI D-PHY ports and parallel inputs, converts it with its parsers,
++  and writes it to memory through six DMA channels. It can also pass the
++  data to the ISP. The block sits in the video input system and is powered
++  through the PCK-600, and its bus masters are behind the first IOMMU.
++
++properties:
++  compatible:
++    const: allwinner,sun60i-a733-csic
++
++  reg:
++    maxItems: 1
++
++  interrupts:
++    items:
++      - description: DMA channel 0
++      - description: DMA channel 1
++      - description: DMA channel 2
++      - description: DMA channel 3
++      - description: DMA channel 4
++      - description: DMA channel 5
++      - description: Video input post-processor 0
++      - description: Video input post-processor 1
++      - description: Video input post-processor 2
++      - description: Video input post-processor 3
++      - description: Parser 0
++      - description: Parser 1
++      - description: Parser 2
++      - description: CSI_CMB
++      - description: CSI_TDM
++      - description: CSI_TOP_PKT
++
++  clocks:
++    items:
++      - description: Bus gate (CSI_BGR_REG)
++      - description: AHB clock enable of the video input system
++      - description: MBUS clock enable of the video input port
++      - description: MBUS clock enable of the CSI
++      - description: Module clock (CSI_CLK_REG)
++
++  clock-names:
++    items:
++      - const: bus
++      - const: ahb
++      - const: mbus
++      - const: mclk
++      - const: mod
++
++  resets:
++    maxItems: 1
++
++  power-domains:
++    maxItems: 1
++
++  iommus:
++    maxItems: 1
++
++required:
++  - compatible
++  - reg
++  - interrupts
++  - clocks
++  - clock-names
++  - resets
++  - power-domains
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
++    #include <dt-bindings/interrupt-controller/arm-gic.h>
++    #include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
++    #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
++
++    bus {
++        #address-cells = <1>;
++        #size-cells = <1>;
++
++        csic@5800000 {
++            compatible = "allwinner,sun60i-a733-csic";
++            reg = <0x05800000 0x100000>;
++            interrupts = <GIC_SPI 117 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 120 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 107 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 108 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 121 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 122 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 123 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 124 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 126 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 127 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 133 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 134 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 135 IRQ_TYPE_LEVEL_HIGH>;
++            clocks = <&ccu CLK_BUS_CSI>, <&ccu CLK_AHB_VID_IN>,
++                     <&ccu CLK_MBUS_VID_IN>, <&ccu CLK_MBUS_CSI>,
++                     <&ccu CLK_CSI>;
++            clock-names = "bus", "ahb", "mbus", "mclk", "mod";
++            resets = <&ccu RST_BUS_CSI>;
++            power-domains = <&pck600 PD_VI>;
++            iommus = <&iommu0 1>;
++        };
++    };
++
++...

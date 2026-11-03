@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 16:00:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the S_PWM controller
+
+The A733 has a third PWM controller in the CPUS domain, S_PWM, which the
+device tree does not describe. Add it as r_pwm, disabled, and one pin
+group for each pin that carries an S_PWM output on the Radxa Cubie A7S
+header or its LED. The values (page numbers are pages of the A733
+manual PDF):
+
+- Registers at 0x07023000, 4 KiB in the memory map (p.29). The manual
+  gives the registers as those of PWM0 (section 18.7.7, p.1332), whose
+  last register is at 0x364, so the size is 0x400 as for PWM0 and PWM1.
+  The channel distance is the A733 one the compatible selects.
+- Ten channels: S_PWM0_[9:0] (section 18.7.1, p.1322).
+- Interrupt 239, which is GIC_SPI 207 (section 12.2.3.1, p.620).
+- Clocks, all in the PRCM: the bus gate S_PWM_GATING and the reset
+  S_PWM_RST in S_PWM_BGR_REG (section 4.2.5.11, p.245) and the module
+  clock S_PWM_CLK in S_PWM_CLK_REG (section 4.2.5.10, p.244), with its
+  gate and a source of DCXO, RTC_32K, RC16M or SYS_CLK24M (sections
+  18.7.3 and 18.7.5.1, p.1323 to 1324). There is no other gate on the
+  register path, so the node holds all three. The module clock is the
+  hosc input of the driver and the APB0 clock of the CPUS domain its apb
+  input; the manual does not say which clock the second source of the
+  clock configuration register selects for S_PWM.
+- S-PWM0-n on function 6 of PL2 to PL11 and PM0 to PM5 (tables 18-38
+  and 18-39, p.1582 to 1583; PL_CFG0 p.1813, PM_CFG0 p.1821 to 1822).
+  PL5, PL6 and PL7 (S-PWM0-3, -4 and -5) are connected to the header
+  J11, PM3 and PM4 (S-PWM0-5 and -0) to the header J6 (schematic V1.10,
+  sheet 14), PM2 (S-PWM0-4) to the green LED (sheet 16).
+
+The node stays disabled and the pin groups are /omit-if-no-ref/,
+because nothing fitted on the board uses them. The green LED stays a
+GPIO LED.
+
+Not covered: enabling the controller on the board and the pins of the
+bank that are not on the header.
+
+Tested on Radxa Cubie A7S: with the node enabled for a test on PM2, the
+channel ran the period and duty cycle set through sysfs from the module
+clock, and its interrupt status raised the interrupt; the LED was not
+watched.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 55 +++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index a203e4af921f..36f730e32d63 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1697,6 +1697,19 @@ r_wdt: watchdog@7021000 {
+ 			clock-names = "hosc", "losc";
+ 		};
+ 
++		r_pwm: pwm@7023000 {
++			compatible = "allwinner,sun60i-a733-pwm";
++			reg = <0x07023000 0x400>;
++			interrupts = <GIC_SPI 207 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&r_ccu CLK_BUS_R_PWM>, <&r_ccu CLK_R_PWM>,
++				 <&r_ccu CLK_R_APB0>;
++			clock-names = "bus", "hosc", "apb";
++			resets = <&r_ccu RST_BUS_R_PWM>;
++			#pwm-cells = <3>;
++			allwinner,npwms = <10>;
++			status = "disabled";
++		};
++
+ 		r_pio: pinctrl@7025000 {
+ 			compatible = "allwinner,sun60i-a733-r-pinctrl";
+ 			reg = <0x07025000 0x410>;
+@@ -1731,6 +1744,48 @@ r_ir_rx_pl6_pin: r-ir-rx-pl6-pin {
+ 				allwinner,pinmux = <5>;
+ 				function = "s_cir_rx";
+ 			};
++
++			/omit-if-no-ref/
++			r_pwm_pl5_pin: r-pwm-pl5-pin {
++				pins = "PL5";
++				allwinner,pinmux = <6>;
++				function = "s_pwm0";
++			};
++
++			/omit-if-no-ref/
++			r_pwm_pl6_pin: r-pwm-pl6-pin {
++				pins = "PL6";
++				allwinner,pinmux = <6>;
++				function = "s_pwm0";
++			};
++
++			/omit-if-no-ref/
++			r_pwm_pl7_pin: r-pwm-pl7-pin {
++				pins = "PL7";
++				allwinner,pinmux = <6>;
++				function = "s_pwm0";
++			};
++
++			/omit-if-no-ref/
++			r_pwm_pm2_pin: r-pwm-pm2-pin {
++				pins = "PM2";
++				allwinner,pinmux = <6>;
++				function = "s_pwm0";
++			};
++
++			/omit-if-no-ref/
++			r_pwm_pm3_pin: r-pwm-pm3-pin {
++				pins = "PM3";
++				allwinner,pinmux = <6>;
++				function = "s_pwm0";
++			};
++
++			/omit-if-no-ref/
++			r_pwm_pm4_pin: r-pwm-pm4-pin {
++				pins = "PM4";
++				allwinner,pinmux = <6>;
++				function = "s_pwm0";
++			};
+ 		};
+ 
+ 		r_ir: ir@7040000 {

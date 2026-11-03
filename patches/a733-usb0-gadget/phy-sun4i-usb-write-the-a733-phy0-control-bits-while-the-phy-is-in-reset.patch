@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 14:32:23 +0200
+Subject: [PATCH] phy: sun4i-usb: Write the A733 PHY0 control bits while the
+ PHY is in reset
+
+Without this, USB0 of the A733 never works as a gadget: the MUSB
+reports no VBUS (DEVCTL VBUS bits 00) and the host sees no device.
+
+The PHY takes the control bits of PHYCTL, here VBUSVLDEXT and SIDDQ,
+only when its reset is released. The driver wrote them after the
+release, and the reset is already released when the kernel starts, so
+the PHY never saw them. Add an A733 match with the D1 configuration
+and a flag that asserts the PHY reset, writes the bits and releases the
+reset again. Other SoCs are unchanged.
+
+The manual gives no minimum time for the PHY reset; the 10 ms are not
+measured as one.
+
+Not covered: PHY1, which works with the existing order.
+
+Seen on the Radxa Cubie A7S: with the D1 compatible alone the gadget
+never enumerates on J16; pulsing the PHY reset after the driver has
+written PHYCTL makes DEVCTL report VBUS and the gadget enumerate.
+
+Tested on Radxa Cubie A7S: with the Type-C port J16 on a host, the USB0
+gadget enumerates at high speed after a cold start, also with the plug
+turned over, and the hub on USB1 still enumerates.
+
+Assisted-by: LLM
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 32 +++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index e2fbf8ccf99e..b265674644da 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -105,6 +105,7 @@ struct sun4i_usb_phy_cfg {
+ 	bool phy0_dual_route;
+ 	bool needs_phy2_siddq;
+ 	bool siddq_in_base;
++	bool phyctl_in_reset;
+ 	bool poll_vbusen;
+ 	int missing_phys;
+ };
+@@ -270,6 +271,26 @@ static int sun4i_usb_phy_init(struct phy *_phy)
+ 		return ret;
+ 	}
+ 
++	/*
++	 * The A733 PHY0 takes its control bits only when its reset is
++	 * released, so hold it in reset while they are written.
++	 */
++	if (data->cfg->phyctl_in_reset && phy->index == 0) {
++		ret = reset_control_assert(phy->reset);
++		if (ret) {
++			clk_disable_unprepare(phy->clk2);
++			clk_disable_unprepare(phy->clk);
++			return ret;
++		}
++
++		usleep_range(10000, 11000);
++
++		val = readl(data->base + data->cfg->phyctl_offset);
++		val |= PHY_CTL_VBUSVLDEXT;
++		val &= ~PHY_CTL_SIDDQ;
++		writel(val, data->base + data->cfg->phyctl_offset);
++	}
++
+ 	ret = reset_control_deassert(phy->reset);
+ 	if (ret) {
+ 		clk_disable_unprepare(phy->clk2);
+@@ -987,6 +1008,15 @@ static const struct sun4i_usb_phy_cfg sun20i_d1_cfg = {
+ 	.siddq_in_base = true,
+ };
+ 
++static const struct sun4i_usb_phy_cfg sun60i_a733_cfg = {
++	.phyctl_offset = REG_PHYCTL_A33,
++	.dedicated_clocks = true,
++	.hci_phy_ctl_clear = PHY_CTL_SIDDQ,
++	.phy0_dual_route = true,
++	.siddq_in_base = true,
++	.phyctl_in_reset = true,
++};
++
+ static const struct sun4i_usb_phy_cfg sun50i_a64_cfg = {
+ 	.disc_thresh = 3,
+ 	.phyctl_offset = REG_PHYCTL_A33,
+@@ -1029,6 +1059,8 @@ static const struct of_device_id sun4i_usb_phy_of_match[] = {
+ 	  .data = &sun50i_a64_cfg},
+ 	{ .compatible = "allwinner,sun50i-h6-usb-phy", .data = &sun50i_h6_cfg },
+ 	{ .compatible = "allwinner,sun50i-h616-usb-phy", .data = &sun50i_h616_cfg },
++	{ .compatible = "allwinner,sun60i-a733-usb-phy",
++	  .data = &sun60i_a733_cfg },
+ 	{ .compatible = "allwinner,suniv-f1c100s-usb-phy",
+ 	  .data = &suniv_f1c100s_cfg },
+ 	{ },

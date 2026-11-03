@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 07:39:26 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733-cubie-a7s: read the MAC address
+ from the EEPROM
+
+The Cubie A7S carries a factory EEPROM that holds the MAC address of the
+board. The kernel cannot read it, so the MAC address depends on what the
+boot firmware puts into the device tree.
+
+Enable TWI0 on PG8 and PG9 and describe U5 (BL24C16F, 16 kbit) at 0x50;
+the chip answers on 0x50 to 0x57 (eight 256-byte blocks). VCC is ALDO1.
+The write protect pin is held high by R58 and pulled low through Q2 while
+PC7 is high (schematic V1.10 p.16). An asserted wp-gpios means protected,
+so PC7 is GPIO_ACTIVE_LOW. The node is read-only: the contents are
+factory data and the driver must not write them.
+
+A fixed-layout nvmem layout names the cell of the six-byte MAC address at
+offset 0x9e, and the GMAC0 node takes it as "mac-address". The
+fixed-layout driver is built with NVMEM_LAYOUTS, which the arm64 defconfig
+has. of_get_mac_address() tries the "mac-address", "local-mac-address" and
+"address" properties first and the nvmem cell last, so a
+local-mac-address from the boot firmware still takes precedence. The
+EEPROM driver and the TWI driver are already enabled by the defconfig
+(EEPROM_AT24 as a module, I2C_MV64XXX).
+
+Not covered: writing the EEPROM, and the other fields of its contents.
+
+Tested on Radxa Cubie A7S: with no address from the boot loader, GMAC0
+takes the address in the EEPROM; without the cell it takes a random one.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 32 +++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index d7acd2fee254..2339be766504 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -247,6 +247,8 @@ wifi@1 {
+ &gmac0 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&rgmii0_ph_pins>;
++	nvmem-cells = <&eeprom_mac>;
++	nvmem-cell-names = "mac-address";
+ 	phy-handle = <&ext_rgmii_phy>;
+ 	/*
+ 	 * No delay lines on the board. The PHY adds no delay: it has no
+@@ -285,6 +287,36 @@ &gpu {
+ 	status = "okay";
+ };
+ 
++&i2c0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&i2c0_pg_pins>;
++	status = "okay";
++
++	/*
++	 * U5, 16 kbit, eight 256-byte blocks at 0x50..0x57. Holds the
++	 * factory data of the board. Read only: the driver does not write
++	 * it. WP is pulled high (protected) by R58; Q2 pulls it low while
++	 * PC7 is high.
++	 */
++	eeprom@50 {
++		compatible = "belling,bl24c16f", "atmel,24c16";
++		reg = <0x50>;
++		vcc-supply = <&reg_aldo1>;
++		wp-gpios = <&pio 2 7 GPIO_ACTIVE_LOW>; /* PC7 */
++		read-only;
++
++		nvmem-layout {
++			compatible = "fixed-layout";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			eeprom_mac: mac-address@9e {
++				reg = <0x9e 6>;
++			};
++		};
++	};
++};
++
+ &mixer0 {
+ 	status = "okay";
+ };

@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:55:59 +0200
+Subject: [PATCH] pinctrl: sunxi: a733: Switch the I/O voltage of bank PF
+
+The A733 feeds pin bank PF from a 3.3 V and a 1.8 V supply and selects
+one in GPIO_POW_VAL_SET_CTL, bit 0 (1: 3.3 V, 0: 1.8 V; reset 3.3 V).
+No other bank has the switch. An SD card on bank PF needs it to signal
+at 1.8 V.
+
+Handle PIN_CONFIG_POWER_SOURCE on bank PF of the A733 with 1800000 or
+3300000 microvolts; any other value is invalid. Other banks and other
+SoCs take the existing path and keep returning -ENOTSUPP. The driver
+core fails a probe only on -EINVAL from the pin state, so a device that
+asks for it outside bank PF still probes, as before.
+
+Not covered: the withstand voltage fields in GPIO_POW_MOD_SEL. The boot
+chain leaves bank PF in the adaptive mode, which follows the supply.
+
+Tested on Radxa Cubie A7S: booted on two boards; GPIO_POW_VAL_SET_CTL
+bit 0 follows the card, clear at SDR104 and set when the card runs in
+high-speed mode at 3.3 V, and no other bank is touched; on one board, a
+power source on a bank PB pin returns -ENOTSUPP and the fixed regulator
+that asks for it binds.
+
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c |  1 +
+ drivers/pinctrl/sunxi/pinctrl-sunxi.c       | 33 +++++++++++++++++++++
+ drivers/pinctrl/sunxi/pinctrl-sunxi.h       |  3 ++
+ 3 files changed, 37 insertions(+)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+index 0841c04278ca..6c0eed5ce933 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+@@ -23,6 +23,7 @@ static const u8 a733_irq_bank_muxes[SUNXI_PINCTRL_MAX_BANKS] =
+ 
+ static struct sunxi_pinctrl_desc a733_pinctrl_data = {
+ 	.irq_banks = 11,
++	.pf_power_source = true,
+ 	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_SEL,
+ };
+ 
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.c b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+index 6fcf957e008a..6c2ae87500b7 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+@@ -670,6 +670,30 @@ static int sunxi_pconf_group_get(struct pinctrl_dev *pctldev,
+ 	return sunxi_pconf_get(pctldev, g->pin, config);
+ }
+ 
++/*
++ * Some SoCs feed bank PF from two supplies, 3.3 V and 1.8 V, and select
++ * between them for the whole bank. The argument is in microvolts.
++ */
++static int sunxi_pconf_set_power_source(struct sunxi_pinctrl *pctl, u32 uV)
++{
++	unsigned long flags;
++	u32 reg;
++
++	if (uV != 1800000 && uV != 3300000)
++		return -EINVAL;
++
++	raw_spin_lock_irqsave(&pctl->lock, flags);
++	reg = readl(pctl->membase + PIO_NCAT3_POW_VAL_SET_REG);
++	if (uV == 1800000)
++		reg &= ~PIO_NCAT3_POW_VAL_SET_PF_3V3;
++	else
++		reg |= PIO_NCAT3_POW_VAL_SET_PF_3V3;
++	writel(reg, pctl->membase + PIO_NCAT3_POW_VAL_SET_REG);
++	raw_spin_unlock_irqrestore(&pctl->lock, flags);
++
++	return 0;
++}
++
+ static int sunxi_pconf_set(struct pinctrl_dev *pctldev, unsigned pin,
+ 			   unsigned long *configs, unsigned num_configs)
+ {
+@@ -687,6 +711,15 @@ static int sunxi_pconf_set(struct pinctrl_dev *pctldev, unsigned pin,
+ 		param = pinconf_to_config_param(configs[i]);
+ 		arg = pinconf_to_config_argument(configs[i]);
+ 
++		if (param == PIN_CONFIG_POWER_SOURCE &&
++		    pctl->desc->pf_power_source &&
++		    pin / PINS_PER_BANK == PF_BASE / PINS_PER_BANK) {
++			ret = sunxi_pconf_set_power_source(pctl, arg);
++			if (ret)
++				return ret;
++			continue;
++		}
++
+ 		ret = sunxi_pconf_reg(pctl, pin, param, &reg, &shift, &mask);
+ 		if (ret < 0)
+ 			return ret;
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.h b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+index 7c2f29e75519..0b5ab96ab0ed 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.h
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+@@ -107,6 +107,8 @@
+ #define PIO_POW_MOD_SEL_REG		0x340
+ #define PIO_11B_POW_MOD_SEL_REG		0x380
+ #define PIO_POW_MOD_CTL_OFS		0x004
++#define PIO_NCAT3_POW_VAL_SET_REG	0x070
++#define PIO_NCAT3_POW_VAL_SET_PF_3V3	BIT(0)
+ 
+ #define PIO_BANK_K_OFFSET		0x500
+ 
+@@ -154,6 +156,7 @@ struct sunxi_pinctrl_desc {
+ 	const unsigned int		*irq_bank_map;
+ 	bool				irq_read_needs_mux;
+ 	bool				disable_strict_mode;
++	bool				pf_power_source;
+ 	enum sunxi_desc_bias_voltage	io_bias_cfg_variant;
+ };
+ 

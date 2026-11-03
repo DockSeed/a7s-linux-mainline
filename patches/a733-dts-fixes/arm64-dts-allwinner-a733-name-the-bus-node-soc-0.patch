@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 3 Oct 2026 16:34:04 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Name the bus node soc@0
+
+With W=1, dtc reports unit_address_vs_reg for the "soc" node, which has a
+ranges property but no unit address. Name it soc@0: its ranges map child
+address 0 to parent address 0.
+
+Tested on Radxa Cubie A7S: booted on two boards; the bus node is soc@0 in
+/proc/device-tree, and the devices probe under /soc@0/.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 69cff0d10ffb..31c6e7e023c2 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -113,7 +113,7 @@ timer {
+ 			     <GIC_PPI 10 IRQ_TYPE_LEVEL_HIGH>;
+ 	};
+ 
+-	soc {
++	soc@0 {
+ 		compatible = "simple-bus";
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;

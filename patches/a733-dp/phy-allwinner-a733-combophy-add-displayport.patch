@@ -1,0 +1,1149 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:33:09 +0200
+Subject: [PATCH] phy: allwinner: a733-combophy: Add DisplayPort
+
+The first combo PHY of the A733 carries USB3 or the four main link lanes
+of the DisplayPort transmitter. The Type-C port controller asks for the
+lanes through the DisplayPort alternate mode, so the PHY is the mode
+switch of the connector.
+
+Register a Type-C mode switch and a DisplayPort PHY. Pin assignments C
+and E hand all four lanes to DisplayPort: USB3 is held in reset, the
+board's lane polarity and the lane map are set, and the link is released
+with the reset sequence of the vendor code (user manual sections
+18.2.6.6 to 18.2.6.10, 18.2.6.25 and 18.2.6.28). Any other state gives
+the lanes back to USB3. The transmitter sets lane count, rate, swing
+and pre-emphasis through phy_configure(), in the order and with the
+checks of the Cadence Torrent driver, whose PMA and swing sequence
+this is.
+
+The USB3 controller has no SuperSpeed lanes then, and it leaves its core
+soft reset only with a PIPE clock. Without one, a controller that probes
+after the lanes went to DisplayPort fails with -ETIMEDOUT, is not probed
+again and takes USB 2.0 of the port with it. Seen on the Radxa Cubie A7S
+with a DisplayPort monitor at the Type-C port at power-on: "DWC3
+controller soft reset failed", probe error -110. The manual lets the CCU
+feed the PIPE clock of the controller (18.2.6.2; USB2_U2_PIPE is its
+clock source in 18.4.3, register in 4.1.6.204), so the PHY enables the
+select of the SERDES CCU before it stops USB3 and releases it when the
+lanes go back to USB3, after USB3 was started again if the controller
+holds the PHY. The clock is optional and its rate is not set here: the
+device tree gives it.
+
+Differences from the vendor code: the plug direction is written while
+the PHY is in reset; the USB3 lane polarity is set at every USB3 start,
+and USB3 is started again when the lanes return; the PHY leaves IDDQ
+before the first PMA access also when DisplayPort comes back after an
+unplug, as a PMA access in IDDQ stalls the bus; swing and pre-emphasis
+are checked against DisplayPort's limits; the lane map is the identity
+in both plug directions.
+
+This patch sets up 2.7 Gb/s only. The reset steps, handshake timeouts
+and most swing settings are vendor values, not measured on our boards,
+and neither is the PIPE clock switch with a USB3 device in use.
+
+A rate change that fails to release the reset leaves no rate set, so no
+swing request is taken until the next one succeeds. An unbind in
+DisplayPort mode puts the link in reset and releases the clocks.
+
+Not covered: pin assignments D and F, spread spectrum clocking.
+
+Tested on Radxa Cubie A7S: booted three times on one board with a
+DisplayPort monitor plugged in before power-on; each time the combo PHY
+was in DisplayPort mode before the USB3 controller probed, the
+controller left its core soft reset and enumerated the billboard device
+of the adapter, and the sink computed the CRC of a white picture from
+before this change.
+
+Assisted-by: LLM
+---
+ drivers/phy/allwinner/Kconfig                 |  12 +-
+ .../phy/allwinner/phy-sun60i-a733-combophy.c  | 845 +++++++++++++++++-
+ 2 files changed, 826 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/phy/allwinner/Kconfig b/drivers/phy/allwinner/Kconfig
+index 4676270711c6..158d35cc0492 100644
+--- a/drivers/phy/allwinner/Kconfig
++++ b/drivers/phy/allwinner/Kconfig
+@@ -74,18 +74,20 @@ config PHY_SUN60I_A733_USB2
+ 	  If unsure and building for an A733, say M.
+ 
+ config PHY_SUN60I_A733_COMBO
+-	tristate "Allwinner A733 USB3 combo PHY driver"
++	tristate "Allwinner A733 USB3 and DisplayPort combo PHY driver"
+ 	depends on ARCH_SUNXI || COMPILE_TEST
+ 	depends on HAS_IOMEM && OF
+ 	depends on RESET_CONTROLLER
+ 	depends on TYPEC || TYPEC=n
+ 	select GENERIC_PHY
+ 	select MFD_SYSCON
++	select PHY_COMMON_PROPS
+ 	help
+-	  Enable this to support the USB3 SuperSpeed function of the first
+-	  combo PHY in the SERDES block of the Allwinner A733 SoC. The PHY
+-	  carries the SuperSpeed lanes to a Type-C connector and acts as
+-	  the orientation switch for it. DisplayPort is not supported.
++	  Enable this to support the first combo PHY in the SERDES block of
++	  the Allwinner A733 SoC. The PHY carries the USB3 SuperSpeed lanes
++	  or the DisplayPort main link lanes to a Type-C connector and acts
++	  as the orientation switch and the DisplayPort alternate mode switch
++	  for it.
+ 
+ 	  If unsure and building for an A733, say M.
+ 
+diff --git a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+index a9d394358dea..9f379815e9f0 100644
+--- a/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
++++ b/drivers/phy/allwinner/phy-sun60i-a733-combophy.c
+@@ -1,13 +1,20 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * Allwinner A733 USB3 combo PHY
++ * Allwinner A733 USB3 and DisplayPort combo PHY
+  *
+  * The first combo PHY (COMB0) in the SERDES block of the A733 is a Cadence
+- * PHY in an Allwinner wrapper. It carries USB3 or DisplayPort to a Type-C
+- * connector; only USB3 is supported here. A flipped plug is handled inside
+- * the PHY, so the driver is also the orientation switch of the connector.
++ * PHY in an Allwinner wrapper. It carries USB3 or the four main link lanes of
++ * the DisplayPort transmitter to a Type-C connector. A flipped plug and the
++ * hand-over of the lanes are both handled inside the PHY, so the driver is the
++ * orientation switch and the mode switch of the connector.
++ *
++ * The PMA is a Cadence Torrent: register indices and names, and the swing and
++ * pre-emphasis sequence, are those of phy-cadence-torrent.c. The wrapper
++ * replaces the Torrent DisplayPort link registers by its own link control
++ * and status registers.
+  */
+ 
++#include <linux/bitfield.h>
+ #include <linux/bits.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+@@ -18,10 +25,13 @@
+ #include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/phy/phy.h>
++#include <linux/phy/phy-common-props.h>
+ #include <linux/platform_device.h>
+ #include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
++#include <linux/usb/typec_altmode.h>
++#include <linux/usb/typec_dp.h>
+ #include <linux/usb/typec_mux.h>
+ 
+ #include <dt-bindings/phy/phy.h>
+@@ -35,28 +45,37 @@
+ #define  TOP_DP_CFG_LN_RSTN		GENMASK(11, 8)
+ #define  TOP_DP_CFG_LN_EN		GENMASK(7, 4)
+ #define  TOP_DP_CFG_DATA_EN		BIT(0)
++#define  TOP_DP_CFG_ALL			(TOP_DP_CFG_LN_RSTN | \
++					 TOP_DP_CFG_LN_EN | \
++					 TOP_DP_CFG_DATA_EN)
+ #define TOP_USB3_PIPE_CLK_MAP_CTRL	0x0100
+ #define TOP_USB3_PIPE_RXD_MAP_CTRL	0x0104
+ #define  TOP_USB3_PIPE_MAP		GENMASK(3, 0)
+ #define  TOP_USB3_PIPE_MAP_COMB0	0
++#define TOP_COMB0_RAWS_TXD_MAP_CTRL	0x0c24
++/* Lane n carries DisplayPort lane n; 0xf is the reset value, no lane */
++#define  TOP_COMB0_RAWS_TXD_MAP_DP	0x3210
++#define  TOP_COMB0_RAWS_TXD_MAP_NONE	0xffff
+ 
+ /* "link" region */
+ #define LINK_CTRL0			0x0000
+ #define  LINK_CTRL0_TYPEC_CONN_DIR	BIT(12)
+ #define  LINK_CTRL0_DP_LINK_RESET_N	BIT(8)
++#define  LINK_CTRL0_PIPE_RESET_N_MASK	BIT(5)
+ #define  LINK_CTRL0_PIPE_LINK_RESET_N	BIT(4)
+ #define  LINK_CTRL0_PHY_RESET_N		BIT(0)
+ #define LINK_CTRL1			0x0004
+ #define  LINK_CTRL1_PLL1_REFCLK_SEL	BIT(24)
+ #define  LINK_CTRL1_PLL0_REFCLK_SEL	BIT(20)
+ #define  LINK_CTRL1_REFCLK_DIG_SEL	BIT(0)
+-#define  LINK_CTRL1_USB3		(LINK_CTRL1_PLL1_REFCLK_SEL | \
++#define  LINK_CTRL1_REFCLK		(LINK_CTRL1_PLL1_REFCLK_SEL | \
+ 					 LINK_CTRL1_PLL0_REFCLK_SEL | \
+ 					 LINK_CTRL1_REFCLK_DIG_SEL)
+ #define LINK_CTRL2			0x0008
+ #define  LINK_CTRL2_IDDQ_EN_SEL		BIT(1)
+ #define  LINK_CTRL2_IDDQ_EN		BIT(0)
+ #define LINK_CTRL3			0x000c
++#define  LINK_CTRL3_POWER_STATE_REQ	GENMASK(9, 4)
+ #define  LINK_CTRL3_POWER_STATE_REQ_A0	BIT(4)
+ #define  LINK_CTRL3_PLLCLK_EN		BIT(0)
+ #define LINK_STUS0			0x0900
+@@ -70,15 +89,61 @@
+ #define  PMA_PLL_RESTART_MASK		GENMASK(11, 8)
+ /* Lane n of a flipped plug is lane 3 - n, the lane stride is 0x200 words */
+ #define PMA_LANE_MIRROR			0x0600
++/* Torrent TX lane registers */
++#define PMA_TX(lane, idx)		(0x4000 + (lane) * 0x200 + (idx))
++#define PMA_TX_TXCC_CTRL		0x0040
++#define  PMA_TX_TXCC_CTRL_DP		0x08a4
++#define PMA_TX_TXCC_CPOST_MULT_00	0x004c
++#define PMA_TX_TXCC_MGNFS_MULT_000	0x0050
++#define PMA_DRV_DIAG_TX_DRV		0x00c6
++#define PMA_TX_DIAG_ACYA		0x01e7
++#define  PMA_TX_DIAG_ACYA_HBDC		BIT(0)
++/* DisplayPort lanes on: bits 3:1 switch lanes 3 to 1 off (vendor) */
++#define PMA_DP_LANES			0x4011
++#define  PMA_DP_LANES_ON		0x0100
++/* Per-lane PMA control, bit 8 inverts the transmitter (vendor) */
++#define PMA_LANE_CTRL(lane)		(0xf000 + (lane) * 0x100)
++#define  PMA_LANE_CTRL_TX_INVERT	BIT(8)
+ 
+ #define SERDES_CLK_RATE			100000000
+ #define PMA_TIMEOUT_US			10000
+ 
++#define A733_DP_LANES			4
++#define A733_DP_LEVELS			4
++
++/*
++ * DisplayPort reset steps and handshake timeouts: vendor values, not
++ * measured on our boards.
++ */
++#define DP_RESET_STEP_US		1000
++#define DP_POLL_US			10
++#define DP_ACK_TIMEOUT_US		5000
++#define DP_POWER_STATE_TIMEOUT_US	500000
++
++enum a733_combophy_mode {
++	A733_COMBOPHY_USB,
++	A733_COMBOPHY_DP,
++};
++
+ struct a733_pma_write {
+ 	u16 idx;
+ 	u16 val;
+ };
+ 
++/* Driver settings of one swing and pre-emphasis level pair */
++struct a733_dp_swing {
++	u16 tx_drv;
++	u16 cpost;
++	u16 mgnfs[A733_DP_LANES];
++};
++
++struct a733_dp_rate {
++	unsigned int			link_rate;	/* Mb/s */
++	const struct a733_pma_write	*pll;
++	size_t				pll_len;
++	const struct a733_dp_swing	(*swing)[A733_DP_LEVELS];
++};
++
+ struct a733_combophy {
+ 	struct device		*dev;
+ 	void __iomem		*link;
+@@ -86,12 +151,23 @@ struct a733_combophy {
+ 	void __iomem		*pma;
+ 	struct clk		*serdes_clk;
+ 	struct clk		*hosc_clk;
++	/* PIPE clock of the USB3 controller from the CCU, optional */
++	struct clk		*pipe_clk;
+ 	struct reset_control	*reset;
+ 	struct phy		*usb_phy;
++	struct phy		*dp_phy;
+ 	struct typec_switch_dev	*sw;
+-	/* protects orientation and inited */
++	struct typec_mux_dev	*mux;
++	u32			usb_tx_pol;
++	u32			dp_tx_pol;
++	/* protects the state below */
+ 	struct mutex		lock;
+ 	enum typec_orientation	orientation;
++	enum a733_combophy_mode	mode;
++	const struct a733_dp_rate *dp_rate;
++	/* the USB3 controller holds the PHY */
++	bool			usb_requested;
++	/* USB3 runs on the lanes */
+ 	bool			inited;
+ };
+ 
+@@ -362,6 +438,211 @@ static const struct a733_pma_write a733_pma_c_post[] = {
+ 	{ 0x010b, 0x007f },
+ };
+ 
++/*
++ * PMA set-up for DisplayPort, as 16-bit writes by word index: the part all
++ * link rates share, then the PLL and clock settings of each rate, with spread
++ * spectrum clocking off. The vendor writes them in this order with the link
++ * held in reset. Three of its writes repeat or skip a register (TX_PSC_A2
++ * instead of TX_PSC_A3, the RX lane 0 PSC registers, CMN_PLL1_SS_CTRL2_M0);
++ * they are kept, as the 2.7 Gb/s set-up with them is measured on our boards.
++ */
++static const struct a733_pma_write a733_pma_dp_common[] = {
++	{ 0x0022, 0x001a },
++	{ 0x002a, 0x0034 },
++	{ 0x002c, 0x00da },
++	{ 0x0032, 0x0034 },
++	{ 0x0034, 0x00da },
++	{ 0x0064, 0x0082 },
++	{ 0x0065, 0x0082 },
++	{ 0x0074, 0x001a },
++	{ 0x0104, 0x0020 },
++	{ 0x0105, 0x0007 },
++	{ 0x010c, 0x0020 },
++	{ 0x010d, 0x0007 },
++	{ 0x0114, 0x030c },
++	{ 0x0115, 0x0007 },
++	{ 0x0124, 0x0007 },
++	{ 0x0125, 0x0003 },
++	{ 0x0126, 0x000f },
++	{ 0x0128, 0x0132 },
++	{ 0x8044, 0x001a },
++	{ 0x8244, 0x001a },
++	{ 0x8444, 0x001a },
++	{ 0x8644, 0x001a },
++	{ 0x8045, 0x0082 },
++	{ 0x8245, 0x0082 },
++	{ 0x8445, 0x0082 },
++	{ 0x8645, 0x0082 },
++	{ 0x804c, 0x001a },
++	{ 0x824c, 0x001a },
++	{ 0x844c, 0x001a },
++	{ 0x864c, 0x001a },
++	{ 0x804d, 0x0082 },
++	{ 0x824d, 0x0082 },
++	{ 0x844d, 0x0082 },
++	{ 0x864d, 0x0082 },
++	{ 0x4123, 0x0a28 },
++	{ 0x4323, 0x0a28 },
++	{ 0x4523, 0x0a28 },
++	{ 0x4723, 0x0a28 },
++	{ 0x00c4, 0x0104 },
++	{ 0x00c5, 0x0005 },
++	{ 0x00c6, 0x0337 },
++	{ 0x00c8, 0x0335 },
++	{ 0x00c2, 0x0003 },
++	{ 0x0084, 0x0104 },
++	{ 0x0085, 0x0005 },
++	{ 0x0086, 0x0337 },
++	{ 0x0088, 0x0335 },
++	{ 0x0082, 0x0003 },
++	{ 0x00dc, 0x00cf },
++	{ 0x00de, 0x00ce },
++	{ 0x00df, 0x0005 },
++	{ 0x009c, 0x00cf },
++	{ 0x009e, 0x00ce },
++	{ 0x009f, 0x0005 },
++	{ 0xc010, 0x51d9 },
++	{ 0xc011, 0x0100 },
++	{ 0xe003, 0x0003 },
++	{ 0xe005, 0x000b },
++	{ 0xe006, 0x2224 },
++	{ 0x4100, 0x00fb },
++	{ 0x4300, 0x00fb },
++	{ 0x4500, 0x00fb },
++	{ 0x4700, 0x00fb },
++	{ 0x4102, 0x04aa },
++	{ 0x4302, 0x04aa },
++	{ 0x4502, 0x04aa },
++	{ 0x4702, 0x04aa },
++	{ 0x4102, 0x04aa },
++	{ 0x4302, 0x04aa },
++	{ 0x4502, 0x04aa },
++	{ 0x4702, 0x04aa },
++	{ 0x8000, 0x0000 },
++	{ 0x8200, 0x0000 },
++	{ 0x8400, 0x0000 },
++	{ 0x8600, 0x0000 },
++	{ 0x8000, 0x0000 },
++	{ 0x8202, 0x0000 },
++	{ 0x8402, 0x0000 },
++	{ 0x8602, 0x0000 },
++	{ 0x8002, 0x0000 },
++	{ 0x8203, 0x0000 },
++	{ 0x8403, 0x0000 },
++	{ 0x8603, 0x0000 },
++	{ 0x8006, 0x0000 },
++	{ 0x8206, 0x0000 },
++	{ 0x8406, 0x0000 },
++	{ 0x8606, 0x0000 },
++	{ 0x8108, 0x0000 },
++	{ 0x8308, 0x0000 },
++	{ 0x8508, 0x0000 },
++	{ 0x8708, 0x0000 },
++	{ 0x8110, 0x0000 },
++	{ 0x8310, 0x0000 },
++	{ 0x8510, 0x0000 },
++	{ 0x8710, 0x0000 },
++	{ 0x8118, 0x0000 },
++	{ 0x8318, 0x0000 },
++	{ 0x8518, 0x0000 },
++	{ 0x8718, 0x0000 },
++	{ 0x40ea, 0x000f },
++	{ 0x42ea, 0x000f },
++	{ 0x44ea, 0x000f },
++	{ 0x46ea, 0x000f },
++	{ 0x4040, 0x08a4 },
++	{ 0x4240, 0x08a4 },
++	{ 0x4440, 0x08a4 },
++	{ 0x4640, 0x08a4 },
++	{ 0x40c6, 0x0003 },
++	{ 0x42c6, 0x0003 },
++	{ 0x44c6, 0x0003 },
++	{ 0x46c6, 0x0003 },
++	{ 0x4050, 0x002a },
++	{ 0x4250, 0x002a },
++	{ 0x4450, 0x002a },
++	{ 0x4650, 0x002a },
++	{ 0x404c, 0x0000 },
++	{ 0x424c, 0x0000 },
++	{ 0x444c, 0x0000 },
++	{ 0x464c, 0x0000 },
++	{ 0x0103, 0x007f },
++	{ 0x010b, 0x007f },
++};
++
++static const struct a733_pma_write a733_pma_dp_2700[] = {
++	{ 0x00d8, 0x0002 },
++	{ 0x00d9, 0x04c4 },
++	{ 0x00da, 0x006a },
++	{ 0x00db, 0x0004 },
++	{ 0x0098, 0x0001 },
++	{ 0x00d9, 0x045f },
++	{ 0x009a, 0x006b },
++	{ 0x009b, 0x0004 },
++	{ 0x00d4, 0x0004 },
++	{ 0x01c4, 0x0509 },
++	{ 0x01c5, 0x0f00 },
++	{ 0x01c6, 0x0f08 },
++	{ 0x00d0, 0x019f },
++	{ 0x00d1, 0x6276 },
++	{ 0x00d2, 0x0002 },
++	{ 0x00d3, 0x0116 },
++	{ 0x01c0, 0x0002 },
++	{ 0x01c1, 0x0701 },
++	{ 0x004b, 0x0000 },
++	{ 0x40e6, 0x0001 },
++	{ 0x42e6, 0x0001 },
++	{ 0x44e6, 0x0001 },
++	{ 0x46e6, 0x0001 },
++	{ 0x40e7, 0x0001 },
++	{ 0x42e7, 0x0001 },
++	{ 0x44e7, 0x0001 },
++	{ 0x46e7, 0x0001 },
++	{ 0x40e5, 0x0019 },
++	{ 0x42e5, 0x0019 },
++	{ 0x44e5, 0x0019 },
++	{ 0x46e5, 0x0019 },
++	{ 0xe006, 0x2224 },
++	{ 0x01a1, 0x8600 },
++	{ 0x0094, 0x0004 },
++	{ 0x01a4, 0x0509 },
++	{ 0x01a5, 0x0f00 },
++	{ 0x01a6, 0x0f08 },
++	{ 0x0090, 0x0180 },
++	{ 0x0091, 0x9dba },
++	{ 0x0092, 0x0002 },
++	{ 0x0093, 0x0102 },
++	{ 0x01a0, 0x0002 },
++};
++
++/*
++ * Swing and pre-emphasis settings per link rate, from the vendor tables,
++ * indexed by the two levels. At 2.7 Gb/s, (0, 0) and (1, 0) are measured on
++ * our boards and (2, 0) is what the vendor kernel runs; the other settings
++ * are vendor values, not measured on our boards.
++ */
++static const struct a733_dp_swing a733_dp_swing_2700[A733_DP_LEVELS][A733_DP_LEVELS] = {
++	[0][0] = { 0x0003, 0x0000, { 0x0028, 0x0026, 0x0026, 0x0028 } },
++	[0][1] = { 0x00b2, 0x0008, { 0x0024, 0x0023, 0x0023, 0x0024 } },
++	[0][2] = { 0x00b2, 0x0016, { 0x001c, 0x001b, 0x001b, 0x001c } },
++	[0][3] = { 0x00b2, 0x0023, { 0x000b, 0x000a, 0x000a, 0x000b } },
++	[1][0] = { 0x0003, 0x0000, { 0x001f, 0x001e, 0x001e, 0x001f } },
++	[1][1] = { 0x00b2, 0x000a, { 0x001a, 0x0019, 0x0019, 0x001a } },
++	[1][2] = { 0x00b2, 0x0019, { 0x000a, 0x0009, 0x0009, 0x000a } },
++	[2][0] = { 0x0003, 0x0000, { 0x0010, 0x000e, 0x000e, 0x0010 } },
++	[2][1] = { 0x0082, 0x0011, { 0x0000, 0x0000, 0x0000, 0x0000 } },
++	[3][0] = { 0x0003, 0x0000, { 0x0000, 0x0000, 0x0000, 0x0000 } },
++};
++
++static const struct a733_dp_rate a733_dp_rates[] = {
++	{
++		.link_rate	= 2700,
++		.pll		= a733_pma_dp_2700,
++		.pll_len	= ARRAY_SIZE(a733_pma_dp_2700),
++		.swing		= a733_dp_swing_2700,
++	},
++};
++
+ static void a733_rmw(void __iomem *reg, u32 clr, u32 set)
+ {
+ 	u32 val = readl(reg);
+@@ -408,7 +689,7 @@ static void a733_combophy_pma_config(struct a733_combophy *cp)
+ 	a733_pma_write_table(cp, a733_pma_fork1,
+ 			     ARRAY_SIZE(a733_pma_fork1), m);
+ 
+-	writel(LINK_CTRL1_USB3, cp->link + LINK_CTRL1);
++	writel(LINK_CTRL1_REFCLK, cp->link + LINK_CTRL1);
+ 
+ 	a733_pma_write_table(cp, a733_pma_b_pre,
+ 			     ARRAY_SIZE(a733_pma_b_pre), 0);
+@@ -498,9 +779,8 @@ static void a733_combophy_power_down(struct a733_combophy *cp)
+ 		 LINK_CTRL2_IDDQ_EN_SEL | LINK_CTRL2_IDDQ_EN);
+ }
+ 
+-static int a733_combophy_init(struct phy *phy)
++static int a733_combophy_clk_enable(struct a733_combophy *cp)
+ {
+-	struct a733_combophy *cp = phy_get_drvdata(phy);
+ 	int ret;
+ 
+ 	ret = clk_set_rate(cp->serdes_clk, SERDES_CLK_RATE);
+@@ -512,21 +792,56 @@ static int a733_combophy_init(struct phy *phy)
+ 		return ret;
+ 
+ 	ret = clk_prepare_enable(cp->hosc_clk);
+-	if (ret) {
++	if (ret)
+ 		clk_disable_unprepare(cp->serdes_clk);
+-		return ret;
++
++	return ret;
++}
++
++static void a733_combophy_clk_disable(struct a733_combophy *cp)
++{
++	clk_disable_unprepare(cp->hosc_clk);
++	clk_disable_unprepare(cp->serdes_clk);
++}
++
++/*
++ * The board data of the lanes: the transmitter polarity of the function that
++ * gets them, and the DisplayPort lane map. The map is the identity in both
++ * plug directions; the flip is done by TYPEC_CONN_DIR alone.
++ */
++static void a733_combophy_set_lanes(struct a733_combophy *cp, bool dp)
++{
++	u32 pol = dp ? cp->dp_tx_pol : cp->usb_tx_pol;
++	unsigned int lane;
++	u16 val;
++
++	for (lane = 0; lane < A733_DP_LANES; lane++) {
++		val = readw(cp->pma + PMA_REG(PMA_LANE_CTRL(lane)));
++		val &= ~PMA_LANE_CTRL_TX_INVERT;
++		if (pol == PHY_POL_INVERT)
++			val |= PMA_LANE_CTRL_TX_INVERT;
++		writew(val, cp->pma + PMA_REG(PMA_LANE_CTRL(lane)));
+ 	}
+ 
+-	mutex_lock(&cp->lock);
++	regmap_write(cp->top, TOP_COMB0_RAWS_TXD_MAP_CTRL,
++		     dp ? TOP_COMB0_RAWS_TXD_MAP_DP : TOP_COMB0_RAWS_TXD_MAP_NONE);
++}
++
++/* Bring USB3 up on the lanes. Must be called with cp->lock held */
++static int a733_combophy_usb_start(struct a733_combophy *cp)
++{
++	int ret;
+ 
+ 	a733_combophy_hold_reset(cp);
+ 
+-	/* Leave IDDQ */
++	/* Leave IDDQ before the first PMA access */
+ 	a733_rmw(cp->link + LINK_CTRL2, LINK_CTRL2_IDDQ_EN_SEL, 0);
+ 	a733_rmw(cp->link + LINK_CTRL2, LINK_CTRL2_IDDQ_EN, 0);
+ 
++	a733_combophy_set_lanes(cp, false);
++
+ 	/* Reference clocks of the PLLs, PIPE clock and data from COMB0 */
+-	a733_rmw(cp->link + LINK_CTRL1, 0, LINK_CTRL1_USB3);
++	a733_rmw(cp->link + LINK_CTRL1, 0, LINK_CTRL1_REFCLK);
+ 	regmap_update_bits(cp->top, TOP_USB3_PIPE_CLK_MAP_CTRL,
+ 			   TOP_USB3_PIPE_MAP, TOP_USB3_PIPE_MAP_COMB0);
+ 	regmap_update_bits(cp->top, TOP_USB3_PIPE_RXD_MAP_CTRL,
+@@ -537,16 +852,43 @@ static int a733_combophy_init(struct phy *phy)
+ 	if (ret) {
+ 		a733_combophy_hold_reset(cp);
+ 		a733_combophy_power_down(cp);
+-		mutex_unlock(&cp->lock);
+-		clk_disable_unprepare(cp->hosc_clk);
+-		clk_disable_unprepare(cp->serdes_clk);
+ 		return ret;
+ 	}
+ 	cp->inited = true;
+ 
++	return 0;
++}
++
++static int a733_combophy_init(struct phy *phy)
++{
++	struct a733_combophy *cp = phy_get_drvdata(phy);
++	int ret;
++
++	ret = a733_combophy_clk_enable(cp);
++	if (ret)
++		return ret;
++
++	mutex_lock(&cp->lock);
++
++	cp->usb_requested = true;
++
++	/*
++	 * USB3 starts when DisplayPort hands the lanes back. Until then the
++	 * CCU feeds the PIPE clock, which lets the controller leave its core
++	 * soft reset.
++	 */
++	ret = 0;
++	if (cp->mode == A733_COMBOPHY_USB)
++		ret = a733_combophy_usb_start(cp);
++	if (ret)
++		cp->usb_requested = false;
++
+ 	mutex_unlock(&cp->lock);
+ 
+-	return 0;
++	if (ret)
++		a733_combophy_clk_disable(cp);
++
++	return ret;
+ }
+ 
+ static int a733_combophy_exit(struct phy *phy)
+@@ -554,25 +896,334 @@ static int a733_combophy_exit(struct phy *phy)
+ 	struct a733_combophy *cp = phy_get_drvdata(phy);
+ 
+ 	mutex_lock(&cp->lock);
+-	a733_combophy_power_down(cp);
++	cp->usb_requested = false;
++	if (cp->mode == A733_COMBOPHY_USB)
++		a733_combophy_power_down(cp);
+ 	mutex_unlock(&cp->lock);
+ 
+-	clk_disable_unprepare(cp->hosc_clk);
+-	clk_disable_unprepare(cp->serdes_clk);
++	a733_combophy_clk_disable(cp);
+ 
+ 	return 0;
+ }
+ 
++static int a733_combophy_dp_wait(struct a733_combophy *cp, u32 mask,
++				 unsigned long timeout_us, const char *what)
++{
++	u32 val;
++	int ret;
++
++	ret = readl_poll_timeout(cp->link + LINK_STUS0, val, val & mask,
++				 DP_POLL_US, timeout_us);
++	if (ret)
++		dev_err(cp->dev, "DisplayPort: no %s, status %#x\n", what, val);
++
++	return ret;
++}
++
++/*
++ * Release the link from reset for DisplayPort (raw SerDes) with power state
++ * A0, the sequence of the vendor code. LINK_CTRL0 is written as absolute
++ * values, each releasing one more reset; the plug direction rides in all of
++ * them, so it is latched while PHY_RESET_N is low. The PIPE reset of the USB3
++ * controller is masked, so it cannot reset the lanes under DisplayPort.
++ */
++static int a733_combophy_dp_release_reset(struct a733_combophy *cp)
++{
++	static const u32 steps[] = {
++		LINK_CTRL0_PHY_RESET_N,
++		LINK_CTRL0_DP_LINK_RESET_N,
++		LINK_CTRL0_PIPE_LINK_RESET_N | LINK_CTRL0_PIPE_RESET_N_MASK,
++	};
++	u32 ctrl0 = 0;
++	unsigned int i;
++	int ret;
++
++	if (cp->orientation == TYPEC_ORIENTATION_REVERSE)
++		ctrl0 = LINK_CTRL0_TYPEC_CONN_DIR;
++	writel(ctrl0, cp->link + LINK_CTRL0);
++
++	for (i = 0; i < ARRAY_SIZE(steps); i++) {
++		ctrl0 |= steps[i];
++		writel(ctrl0, cp->link + LINK_CTRL0);
++		usleep_range(DP_RESET_STEP_US, 2 * DP_RESET_STEP_US);
++	}
++	usleep_range(DP_RESET_STEP_US, 2 * DP_RESET_STEP_US);
++
++	ret = a733_combophy_dp_wait(cp, LINK_STUS0_PMA_CMN_READY,
++				    DP_ACK_TIMEOUT_US, "PMA common ready");
++	if (ret)
++		return ret;
++
++	regmap_write(cp->top, TOP_DP_RAWS_TXDW_CONV_CTRL, TOP_DP_CFG_ALL);
++
++	a733_rmw(cp->link + LINK_CTRL3, 0, LINK_CTRL3_PLLCLK_EN);
++	ret = a733_combophy_dp_wait(cp, LINK_STUS0_CLK_EN_ACK,
++				    DP_ACK_TIMEOUT_US, "PLL clock acknowledge");
++	if (ret)
++		return ret;
++
++	usleep_range(DP_RESET_STEP_US, 2 * DP_RESET_STEP_US);
++
++	/* One-hot request: replace the field, never add to it */
++	a733_rmw(cp->link + LINK_CTRL3, LINK_CTRL3_POWER_STATE_REQ,
++		 LINK_CTRL3_POWER_STATE_REQ_A0);
++
++	return a733_combophy_dp_wait(cp, LINK_STUS0_POWER_STATE_ACK,
++				     DP_POWER_STATE_TIMEOUT_US,
++				     "power state acknowledge");
++}
++
++/*
++ * Give the lanes back to USB3. If the USB3 controller holds the PHY, USB3 is
++ * started again as at init, as the lanes stay in reset otherwise. The CCU lets
++ * go of the PIPE clock afterwards, also if no controller holds the PHY or USB3
++ * did not start. Must be called with cp->lock held.
++ */
++static int a733_combophy_dp_leave(struct a733_combophy *cp)
++{
++	int ret = 0;
++
++	a733_combophy_hold_reset(cp);
++	a733_combophy_set_lanes(cp, false);
++	cp->mode = A733_COMBOPHY_USB;
++	cp->dp_rate = NULL;
++	a733_combophy_power_down(cp);
++
++	if (cp->usb_requested) {
++		ret = a733_combophy_usb_start(cp);
++		if (ret)
++			dev_err(cp->dev,
++				"USB3 did not start after DisplayPort: %d\n",
++				ret);
++	}
++
++	clk_disable_unprepare(cp->pipe_clk);
++	a733_combophy_clk_disable(cp);
++
++	return ret;
++}
++
++/*
++ * Hand the lanes to DisplayPort. The link is released at once; the
++ * transmitter sets the link rate and lane count through phy_configure().
++ * If USB3 has not set the PMA up, it is set up here, as the vendor code
++ * does. The USB3 controller has no SuperSpeed lanes now, and it leaves its
++ * core soft reset only with a PIPE clock, so the CCU feeds it, before the
++ * PHY stops. The CCU clock keeps the rate the device tree gives it. Must be
++ * called with cp->lock held.
++ */
++static int a733_combophy_dp_enter(struct a733_combophy *cp)
++{
++	bool pma_ready = cp->inited;
++	int ret;
++
++	ret = a733_combophy_clk_enable(cp);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(cp->pipe_clk);
++	if (ret) {
++		a733_combophy_clk_disable(cp);
++		return ret;
++	}
++
++	a733_combophy_hold_reset(cp);
++	cp->inited = false;
++	cp->mode = A733_COMBOPHY_DP;
++
++	/*
++	 * Leaving DisplayPort puts the PHY in IDDQ; a PMA access in IDDQ
++	 * stalls the bus, so leave it before the PMA is touched.
++	 */
++	a733_rmw(cp->link + LINK_CTRL2,
++		 LINK_CTRL2_IDDQ_EN_SEL | LINK_CTRL2_IDDQ_EN, 0);
++
++	if (!pma_ready)
++		a733_combophy_pma_config(cp);
++
++	a733_combophy_set_lanes(cp, true);
++
++	ret = a733_combophy_dp_release_reset(cp);
++	if (ret)
++		a733_combophy_dp_leave(cp);
++
++	return ret;
++}
++
++static const struct a733_dp_rate *a733_combophy_dp_rate(unsigned int rate)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(a733_dp_rates); i++)
++		if (a733_dp_rates[i].link_rate == rate)
++			return &a733_dp_rates[i];
++
++	return NULL;
++}
++
++static int a733_combophy_dp_check(const struct phy_configure_opts_dp *dp)
++{
++	unsigned int lane;
++
++	if (dp->set_rate) {
++		if (!a733_combophy_dp_rate(dp->link_rate))
++			return -EINVAL;
++
++		/* Spread spectrum clocking is not measured on our boards */
++		if (dp->ssc)
++			return -EOPNOTSUPP;
++	}
++
++	if (dp->lanes != 1 && dp->lanes != 2 && dp->lanes != A733_DP_LANES)
++		return -EINVAL;
++
++	if (!dp->set_voltages)
++		return 0;
++
++	for (lane = 0; lane < dp->lanes; lane++)
++		if (dp->voltage[lane] + dp->pre[lane] >= A733_DP_LEVELS)
++			return -EINVAL;
++
++	return 0;
++}
++
++/*
++ * The lane count and the PMA set-up of a link rate change with the link held
++ * in reset. Must be called with cp->lock held.
++ */
++static int a733_combophy_dp_set_link(struct a733_combophy *cp,
++				     const struct phy_configure_opts_dp *dp)
++{
++	const struct a733_dp_rate *rate = NULL;
++	u16 lanes = PMA_DP_LANES_ON;
++	int ret;
++
++	if (dp->set_rate)
++		rate = a733_combophy_dp_rate(dp->link_rate);
++
++	a733_combophy_hold_reset(cp);
++
++	/* The swing tables of the old rate do not fit the PMA set-up below */
++	if (rate)
++		cp->dp_rate = NULL;
++
++	if (dp->set_lanes) {
++		if (dp->lanes < A733_DP_LANES)
++			lanes |= GENMASK(A733_DP_LANES - 1, dp->lanes);
++		writew(lanes, cp->pma + PMA_REG(PMA_DP_LANES));
++	}
++
++	if (rate) {
++		writel(LINK_CTRL1_REFCLK, cp->link + LINK_CTRL1);
++		a733_pma_write_table(cp, a733_pma_dp_common,
++				     ARRAY_SIZE(a733_pma_dp_common), 0);
++		a733_pma_write_table(cp, rate->pll, rate->pll_len, 0);
++	}
++
++	ret = a733_combophy_dp_release_reset(cp);
++	if (ret)
++		return ret;
++
++	if (rate)
++		cp->dp_rate = rate;
++
++	return 0;
++}
++
++/*
++ * Swing and pre-emphasis change on the running link, between training steps.
++ * TX_DIAG_ACYA holds the analog driver while its settings change, as on the
++ * Torrent. Must be called with cp->lock held.
++ */
++static void a733_combophy_dp_set_voltages(struct a733_combophy *cp,
++					  const struct phy_configure_opts_dp *dp)
++{
++	const struct a733_dp_swing *sw;
++	void __iomem *acya;
++	unsigned int lane;
++	u16 val;
++
++	for (lane = 0; lane < dp->lanes; lane++) {
++		sw = &cp->dp_rate->swing[dp->voltage[lane]][dp->pre[lane]];
++		acya = cp->pma + PMA_REG(PMA_TX(lane, PMA_TX_DIAG_ACYA));
++
++		val = readw(acya);
++		writew(val | PMA_TX_DIAG_ACYA_HBDC, acya);
++
++		writew(PMA_TX_TXCC_CTRL_DP,
++		       cp->pma + PMA_REG(PMA_TX(lane, PMA_TX_TXCC_CTRL)));
++		writew(sw->tx_drv,
++		       cp->pma + PMA_REG(PMA_TX(lane, PMA_DRV_DIAG_TX_DRV)));
++		writew(sw->mgnfs[lane],
++		       cp->pma + PMA_REG(PMA_TX(lane, PMA_TX_TXCC_MGNFS_MULT_000)));
++		writew(sw->cpost,
++		       cp->pma + PMA_REG(PMA_TX(lane, PMA_TX_TXCC_CPOST_MULT_00)));
++
++		val = readw(acya);
++		writew(val & ~PMA_TX_DIAG_ACYA_HBDC, acya);
++	}
++}
++
++static int a733_combophy_dp_configure(struct phy *phy,
++				      union phy_configure_opts *opts)
++{
++	struct a733_combophy *cp = phy_get_drvdata(phy);
++	struct phy_configure_opts_dp *dp = &opts->dp;
++	int ret;
++
++	ret = a733_combophy_dp_check(dp);
++	if (ret)
++		return ret;
++
++	guard(mutex)(&cp->lock);
++
++	/* The lanes are DisplayPort's only in alternate mode */
++	if (cp->mode != A733_COMBOPHY_DP)
++		return -EBUSY;
++
++	if (dp->set_rate || dp->set_lanes) {
++		ret = a733_combophy_dp_set_link(cp, dp);
++		if (ret)
++			return ret;
++	}
++
++	if (dp->set_voltages) {
++		if (!cp->dp_rate)
++			return -EINVAL;
++
++		a733_combophy_dp_set_voltages(cp, dp);
++	}
++
++	return 0;
++}
++
++static int a733_combophy_dp_validate(struct phy *phy, enum phy_mode mode,
++				     int submode,
++				     union phy_configure_opts *opts)
++{
++	if (mode != PHY_MODE_DP)
++		return -EINVAL;
++
++	return a733_combophy_dp_check(&opts->dp);
++}
++
+ static const struct phy_ops a733_combophy_ops = {
+ 	.init	= a733_combophy_init,
+ 	.exit	= a733_combophy_exit,
+ 	.owner	= THIS_MODULE,
+ };
+ 
++static const struct phy_ops a733_combophy_dp_ops = {
++	.configure	= a733_combophy_dp_configure,
++	.validate	= a733_combophy_dp_validate,
++	.owner		= THIS_MODULE,
++};
++
+ /*
+  * The plug direction is reported after the controller has initialised the
+  * PHY. A PHY in use is put back into reset, set up for the new direction and
+- * released again; otherwise the direction is used by the next init.
++ * released again; otherwise the direction is used by the next init. Under
++ * DisplayPort, the release latches the new direction.
+  */
+ static int a733_combophy_typec_switch_set(struct typec_switch_dev *sw,
+ 					  enum typec_orientation orientation)
+@@ -586,7 +1237,10 @@ static int a733_combophy_typec_switch_set(struct typec_switch_dev *sw,
+ 	mutex_lock(&cp->lock);
+ 	if (orientation != cp->orientation) {
+ 		cp->orientation = orientation;
+-		if (cp->inited) {
++		if (cp->mode == A733_COMBOPHY_DP) {
++			a733_combophy_hold_reset(cp);
++			ret = a733_combophy_dp_release_reset(cp);
++		} else if (cp->inited) {
+ 			a733_combophy_hold_reset(cp);
+ 			a733_combophy_pma_config(cp);
+ 			ret = a733_combophy_release_reset(cp);
+@@ -632,10 +1286,100 @@ static struct phy *a733_combophy_xlate(struct device *dev,
+ 	if (!args->args_count)
+ 		return cp->usb_phy;
+ 
+-	if (args->args_count == 1 && args->args[0] == PHY_TYPE_USB3)
++	if (args->args_count != 1)
++		return ERR_PTR(-EINVAL);
++
++	switch (args->args[0]) {
++	case PHY_TYPE_USB3:
+ 		return cp->usb_phy;
++	case PHY_TYPE_DP:
++		return cp->dp_phy;
++	default:
++		return ERR_PTR(-EINVAL);
++	}
++}
++
++/*
++ * Pin assignments C and E put DisplayPort on all four lanes. D and F, two
++ * lanes each for DisplayPort and USB3, are not supported. Any other state
++ * gives the lanes to USB3. A repeated state, as an Attention message from the
++ * partner brings, changes nothing.
++ */
++static int a733_combophy_typec_mux_set(struct typec_mux_dev *mux,
++				       struct typec_mux_state *state)
++{
++	struct a733_combophy *cp = typec_mux_get_drvdata(mux);
++	enum a733_combophy_mode mode = A733_COMBOPHY_USB;
++
++	if (state->alt && state->alt->svid == USB_TYPEC_DP_SID) {
++		switch (state->mode) {
++		case TYPEC_DP_STATE_C:
++		case TYPEC_DP_STATE_E:
++			mode = A733_COMBOPHY_DP;
++			break;
++		case TYPEC_DP_STATE_D:
++		case TYPEC_DP_STATE_F:
++			dev_err(cp->dev,
++				"DisplayPort with USB3 is not supported\n");
++			return -EOPNOTSUPP;
++		default:
++			break;
++		}
++	}
++
++	guard(mutex)(&cp->lock);
++
++	if (mode == cp->mode)
++		return 0;
++
++	if (mode == A733_COMBOPHY_DP)
++		return a733_combophy_dp_enter(cp);
++
++	return a733_combophy_dp_leave(cp);
++}
++
++static void a733_combophy_typec_mux_unregister(void *data)
++{
++	typec_mux_unregister(data);
++}
++
++static int a733_combophy_typec_mux_register(struct a733_combophy *cp)
++{
++	struct typec_mux_desc mux_desc = {
++		.drvdata = cp,
++		.fwnode = dev_fwnode(cp->dev),
++		.set = a733_combophy_typec_mux_set,
++	};
++
++	cp->mux = typec_mux_register(cp->dev, &mux_desc);
++	if (IS_ERR(cp->mux))
++		return dev_err_probe(cp->dev, PTR_ERR(cp->mux),
++				     "failed to register mode switch\n");
+ 
+-	return ERR_PTR(-EINVAL);
++	return devm_add_action_or_reset(cp->dev,
++					a733_combophy_typec_mux_unregister,
++					cp->mux);
++}
++
++static int a733_combophy_get_polarity(struct a733_combophy *cp)
++{
++	struct fwnode_handle *fwnode = dev_fwnode(cp->dev);
++	unsigned int supported = BIT(PHY_POL_NORMAL) | BIT(PHY_POL_INVERT);
++	int ret;
++
++	ret = phy_get_tx_polarity(fwnode, "usb-ss", supported, PHY_POL_NORMAL,
++				  &cp->usb_tx_pol);
++	if (ret)
++		return dev_err_probe(cp->dev, ret,
++				     "invalid USB3 lane polarity\n");
++
++	ret = phy_get_tx_polarity(fwnode, "dp", supported, PHY_POL_NORMAL,
++				  &cp->dp_tx_pol);
++	if (ret)
++		return dev_err_probe(cp->dev, ret,
++				     "invalid DisplayPort lane polarity\n");
++
++	return 0;
+ }
+ 
+ static void a733_combophy_assert_reset(void *data)
+@@ -643,6 +1387,29 @@ static void a733_combophy_assert_reset(void *data)
+ 	reset_control_assert(data);
+ }
+ 
++/*
++ * A module removal in DisplayPort mode leaves the clocks that
++ * a733_combophy_dp_enter() enabled. Runs after the Type-C switches are
++ * unregistered, so nothing can change the mode meanwhile; the USB3 controller
++ * is not restarted.
++ */
++static void a733_combophy_unbind_dp(void *data)
++{
++	struct a733_combophy *cp = data;
++
++	guard(mutex)(&cp->lock);
++
++	if (cp->mode != A733_COMBOPHY_DP)
++		return;
++
++	a733_combophy_hold_reset(cp);
++	cp->mode = A733_COMBOPHY_USB;
++	cp->dp_rate = NULL;
++	a733_combophy_power_down(cp);
++	clk_disable_unprepare(cp->pipe_clk);
++	a733_combophy_clk_disable(cp);
++}
++
+ static int a733_combophy_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -685,6 +1452,12 @@ static int a733_combophy_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, PTR_ERR(cp->hosc_clk),
+ 				     "failed to get hosc clock\n");
+ 
++	/* Only DisplayPort on all lanes needs it; an older device tree has none */
++	cp->pipe_clk = devm_clk_get_optional(dev, "usb3-pipe");
++	if (IS_ERR(cp->pipe_clk))
++		return dev_err_probe(dev, PTR_ERR(cp->pipe_clk),
++				     "failed to get usb3-pipe clock\n");
++
+ 	/* Shared with the SERDES CCU, which needs it deasserted as well */
+ 	cp->reset = devm_reset_control_get_shared(dev, NULL);
+ 	if (IS_ERR(cp->reset))
+@@ -700,19 +1473,39 @@ static int a733_combophy_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = devm_add_action_or_reset(dev, a733_combophy_unbind_dp, cp);
++	if (ret)
++		return ret;
++
+ 	cp->usb_phy = devm_phy_create(dev, NULL, &a733_combophy_ops);
+ 	if (IS_ERR(cp->usb_phy))
+ 		return PTR_ERR(cp->usb_phy);
+ 
+ 	phy_set_drvdata(cp->usb_phy, cp);
++
++	cp->dp_phy = devm_phy_create(dev, NULL, &a733_combophy_dp_ops);
++	if (IS_ERR(cp->dp_phy))
++		return PTR_ERR(cp->dp_phy);
++
++	phy_set_drvdata(cp->dp_phy, cp);
+ 	platform_set_drvdata(pdev, cp);
+ 
++	ret = a733_combophy_get_polarity(cp);
++	if (ret)
++		return ret;
++
+ 	if (device_property_read_bool(dev, "orientation-switch")) {
+ 		ret = a733_combophy_typec_switch_register(cp);
+ 		if (ret)
+ 			return ret;
+ 	}
+ 
++	if (device_property_read_bool(dev, "mode-switch")) {
++		ret = a733_combophy_typec_mux_register(cp);
++		if (ret)
++			return ret;
++	}
++
+ 	provider = devm_of_phy_provider_register(dev, a733_combophy_xlate);
+ 
+ 	return PTR_ERR_OR_ZERO(provider);
+@@ -741,5 +1534,5 @@ static struct platform_driver a733_combophy_driver = {
+ };
+ module_platform_driver(a733_combophy_driver);
+ 
+-MODULE_DESCRIPTION("Allwinner A733 USB3 combo PHY driver");
++MODULE_DESCRIPTION("Allwinner A733 USB3 and DisplayPort combo PHY driver");
+ MODULE_LICENSE("GPL");

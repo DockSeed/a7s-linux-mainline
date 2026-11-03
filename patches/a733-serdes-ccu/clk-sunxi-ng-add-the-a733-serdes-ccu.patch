@@ -1,0 +1,229 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:36:07 +0200
+Subject: [PATCH] clk: sunxi-ng: Add the A733 SERDES CCU
+
+The SERDES block of the A733 has a small clock and reset unit at its
+start, with the AHB and AXI bus gates of the USB3 controller, the
+select of its PIPE clock and the reset of the USB 2.0 PHY of that
+controller.
+
+Add a driver for it. Its registers read as zero and ignore writes while
+the SERDES reset is asserted, and the board hangs once the SERDES bus
+matrix gates in front of it are closed as unused. The driver therefore
+deasserts the reset, shared with the SERDES PHYs, and keeps the matrix
+gates enabled while it is bound.
+
+The PIPE clock select (SUBSYS_USB3P1_BGR bit 20, user manual 18.2.6.2)
+takes the PIPE clock of the controller from the CCU instead of the combo
+PHY. The CCU clock is usb2-u2-pipe, which the manual lists as a clock
+source of the USB3.1 controller (18.4.3). The PIPE clock of the PHY is
+no clock of the tree, so the select is a gate on usb2-u2-pipe and not a
+mux: while it is enabled, the controller runs on the CCU's PIPE clock. A
+PHY driver that takes the SuperSpeed lanes away from the controller
+enables it.
+
+Tested on Radxa Cubie A7S: booted on two boards with the driver built
+in; the board stays up after the unused clocks are closed, the USB3
+controller binds with the PIPE clock select held by the combo PHY, the
+PCIe link to an NVMe drive comes up, and the USB3 and PCIe gate and
+reset registers of the block read back as the driver sets them.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/Kconfig                  |  11 ++
+ drivers/clk/sunxi-ng/Makefile                 |   2 +
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c | 142 ++++++++++++++++++
+ 3 files changed, 155 insertions(+)
+ create mode 100644 drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+
+diff --git a/drivers/clk/sunxi-ng/Kconfig b/drivers/clk/sunxi-ng/Kconfig
+index cffa83056934..978c1459c599 100644
+--- a/drivers/clk/sunxi-ng/Kconfig
++++ b/drivers/clk/sunxi-ng/Kconfig
+@@ -77,6 +77,17 @@ config SUN60I_A733_R_CCU
+ 	default ARCH_SUNXI
+ 	depends on ARM64 || COMPILE_TEST
+ 
++config SUN60I_A733_SERDES_CCU
++	tristate "Support for the Allwinner A733 SERDES CCU"
++	default ARCH_SUNXI
++	depends on ARM64 || COMPILE_TEST
++	help
++	  Support for the clock and reset unit of the SERDES block on the
++	  Allwinner A733. It provides the bus clocks of the USB3 controller,
++	  the select of its PIPE clock and the reset of its USB 2.0 PHY,
++	  and keeps the SERDES bus matrix gates of the main clock unit
++	  running while it is bound.
++
+ config SUN4I_A10_CCU
+ 	tristate "Support for the Allwinner A10/A20 CCU"
+ 	default ARCH_SUNXI
+diff --git a/drivers/clk/sunxi-ng/Makefile b/drivers/clk/sunxi-ng/Makefile
+index 3a39eb9287da..7cab2eac35a9 100644
+--- a/drivers/clk/sunxi-ng/Makefile
++++ b/drivers/clk/sunxi-ng/Makefile
+@@ -38,6 +38,7 @@ obj-$(CONFIG_SUN55I_A523_MCU_CCU)	+= sun55i-a523-mcu-ccu.o
+ obj-$(CONFIG_SUN55I_A523_R_CCU)	+= sun55i-a523-r-ccu.o
+ obj-$(CONFIG_SUN60I_A733_CCU)	+= sun60i-a733-ccu.o
+ obj-$(CONFIG_SUN60I_A733_R_CCU)	+= sun60i-a733-r-ccu.o
++obj-$(CONFIG_SUN60I_A733_SERDES_CCU)	+= sun60i-a733-serdes-ccu.o
+ obj-$(CONFIG_SUN4I_A10_CCU)	+= sun4i-a10-ccu.o
+ obj-$(CONFIG_SUN5I_CCU)		+= sun5i-ccu.o
+ obj-$(CONFIG_SUN6I_A31_CCU)	+= sun6i-a31-ccu.o
+@@ -68,6 +69,7 @@ sun55i-a523-mcu-ccu-y		+= ccu-sun55i-a523-mcu.o
+ sun55i-a523-r-ccu-y		+= ccu-sun55i-a523-r.o
+ sun60i-a733-ccu-y		+= ccu-sun60i-a733.o
+ sun60i-a733-r-ccu-y		+= ccu-sun60i-a733-r.o
++sun60i-a733-serdes-ccu-y	+= ccu-sun60i-a733-serdes.o
+ sun4i-a10-ccu-y			+= ccu-sun4i-a10.o
+ sun5i-ccu-y			+= ccu-sun5i.o
+ sun6i-a31-ccu-y			+= ccu-sun6i-a31.o
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+new file mode 100644
+index 000000000000..933913c4d949
+--- /dev/null
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-serdes.c
+@@ -0,0 +1,142 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Clock and reset unit of the Allwinner A733 SERDES block
++ */
++
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++
++#include <dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h>
++#include <dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h>
++
++#include "ccu_common.h"
++#include "ccu_reset.h"
++
++#include "ccu_gate.h"
++
++#define SUBSYS_USB3P1_BGR_REG	0x008
++
++static const struct clk_parent_data ahb_parent[] = {
++	{ .fw_name = "ahb" },
++};
++
++static const struct clk_parent_data mbus_parent[] = {
++	{ .fw_name = "mbus" },
++};
++
++static const struct clk_parent_data usb2_u2_pipe_parent[] = {
++	{ .fw_name = "usb2-u2-pipe" },
++};
++
++static SUNXI_CCU_GATE_DATA(bus_usb3_hclk, "bus-usb3-hclk", ahb_parent,
++			   SUBSYS_USB3P1_BGR_REG, BIT(16), 0);
++static SUNXI_CCU_GATE_DATA(bus_usb3_aclk, "bus-usb3-aclk", mbus_parent,
++			   SUBSYS_USB3P1_BGR_REG, BIT(17), 0);
++
++/*
++ * USB3P1_ONLY_PIPE_CLK_SEL takes the PIPE clock of the controller from the
++ * CCU instead of the combo PHY, as the USB 2.0 part of the controller runs
++ * on without SuperSpeed lanes. It is a gate on usb2-u2-pipe: enabled, the
++ * CCU feeds the controller, and the clock framework starts usb2-u2-pipe
++ * before the select and stops it after the select is released.
++ */
++static SUNXI_CCU_GATE_DATA(usb3_pipe_ccu, "usb3-pipe-ccu", usb2_u2_pipe_parent,
++			   SUBSYS_USB3P1_BGR_REG, BIT(20), 0);
++
++static struct ccu_common *sun60i_a733_serdes_ccu_clks[] = {
++	&bus_usb3_hclk.common,
++	&bus_usb3_aclk.common,
++	&usb3_pipe_ccu.common,
++};
++
++static struct clk_hw_onecell_data sun60i_a733_serdes_hw_clks = {
++	.num	= CLK_USB3_PIPE_CCU + 1,
++	.hws	= {
++		[CLK_BUS_USB3_HCLK]	= &bus_usb3_hclk.common.hw,
++		[CLK_BUS_USB3_ACLK]	= &bus_usb3_aclk.common.hw,
++		[CLK_USB3_PIPE_CCU]	= &usb3_pipe_ccu.common.hw,
++	},
++};
++
++static const struct ccu_reset_map sun60i_a733_serdes_ccu_resets[] = {
++	[RST_USB3_USB2_PHY]	= { SUBSYS_USB3P1_BGR_REG, BIT(4) },
++};
++
++static const struct sunxi_ccu_desc sun60i_a733_serdes_ccu_desc = {
++	.ccu_clks	= sun60i_a733_serdes_ccu_clks,
++	.num_ccu_clks	= ARRAY_SIZE(sun60i_a733_serdes_ccu_clks),
++
++	.hw_clks	= &sun60i_a733_serdes_hw_clks,
++
++	.resets		= sun60i_a733_serdes_ccu_resets,
++	.num_resets	= ARRAY_SIZE(sun60i_a733_serdes_ccu_resets),
++};
++
++static void sun60i_a733_serdes_ccu_assert(void *data)
++{
++	reset_control_assert(data);
++}
++
++static int sun60i_a733_serdes_ccu_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct reset_control *rstc;
++	void __iomem *reg;
++	struct clk *clk;
++	int ret;
++
++	reg = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(reg))
++		return PTR_ERR(reg);
++
++	/*
++	 * The clock core reads the gate register of this unit, which sits
++	 * behind the SERDES bus matrix gates, and the board hangs once those
++	 * are closed as unused. Keep them open while the unit is bound.
++	 */
++	clk = devm_clk_get_enabled(dev, "ahb");
++	if (IS_ERR(clk))
++		return dev_err_probe(dev, PTR_ERR(clk), "Failed to enable ahb\n");
++
++	clk = devm_clk_get_enabled(dev, "mbus");
++	if (IS_ERR(clk))
++		return dev_err_probe(dev, PTR_ERR(clk), "Failed to enable mbus\n");
++
++	/* The SERDES PHYs need the same reset deasserted, so it is shared. */
++	rstc = devm_reset_control_get_shared(dev, NULL);
++	if (IS_ERR(rstc))
++		return dev_err_probe(dev, PTR_ERR(rstc), "Failed to get reset\n");
++
++	ret = reset_control_deassert(rstc);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to deassert reset\n");
++
++	ret = devm_add_action_or_reset(dev, sun60i_a733_serdes_ccu_assert, rstc);
++	if (ret)
++		return ret;
++
++	return devm_sunxi_ccu_probe(dev, reg, &sun60i_a733_serdes_ccu_desc);
++}
++
++static const struct of_device_id sun60i_a733_serdes_ccu_ids[] = {
++	{ .compatible = "allwinner,sun60i-a733-serdes-ccu" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sun60i_a733_serdes_ccu_ids);
++
++static struct platform_driver sun60i_a733_serdes_ccu_driver = {
++	.probe	= sun60i_a733_serdes_ccu_probe,
++	.driver	= {
++		.name			= "sun60i-a733-serdes-ccu",
++		.suppress_bind_attrs	= true,
++		.of_match_table		= sun60i_a733_serdes_ccu_ids,
++	},
++};
++module_platform_driver(sun60i_a733_serdes_ccu_driver);
++
++MODULE_IMPORT_NS("SUNXI_CCU");
++MODULE_DESCRIPTION("Support for the Allwinner A733 SERDES CCU");
++MODULE_LICENSE("GPL");

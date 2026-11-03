@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:28:50 +0200
+Subject: [PATCH] dt-bindings: phy: sun50i-a64-usb-phy: Add the A733 USB PHY
+
+The A733 has a two-port USB 2.0 PHY for its USB0 and USB1 controllers,
+which is programmed like the one of the D1. Add an A733 compatible with
+the D1 one as fallback.
+
+Tested on Radxa Cubie A7S: booted on two boards; the PHY node with this
+compatible and the D1 fallback binds to the existing driver, and the
+USB-A port enumerates its hub and a stick through it.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml    | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml b/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml
+index 580c3296a18d..da4ad6fb3531 100644
+--- a/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml
++++ b/Documentation/devicetree/bindings/phy/allwinner,sun50i-a64-usb-phy.yaml
+@@ -23,6 +23,7 @@ properties:
+           - enum:
+               - allwinner,sun50i-a100-usb-phy
+               - allwinner,sun55i-a523-usb-phy
++              - allwinner,sun60i-a733-usb-phy
+           - const: allwinner,sun20i-d1-usb-phy
+ 
+   reg:

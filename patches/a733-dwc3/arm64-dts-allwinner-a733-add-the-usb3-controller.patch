@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:59:16 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the USB3 controller
+
+Add the node of the DWC3 USB 3.1 controller. It takes its USB 2.0 PHY
+and the first combo PHY of the SERDES block, two bus gates of the
+SERDES CCU and the USB2 power domain. The suspend clock is moved off
+the 32 kHz oscillator to 24 MHz.
+
+Tested on Radxa Cubie A7S: booted on two boards; the controller starts
+as xhci-hcd at 0x06a00000, enumerates the stick as SuperSpeed Plus, and
+does so again after each of two unbind and bind cycles, in both plug
+orientations.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index f1830bc73230..7c902f1ef1e6 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -740,6 +740,30 @@ dma: dma-controller@4601000 {
+ 			#dma-cells = <1>;
+ 		};
+ 
++		usb3: usb@6a00000 {
++			compatible = "allwinner,sun60i-a733-dwc3";
++			reg = <0x06a00000 0x10000>;
++			interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_USB2_U2_REF>,
++				 <&ccu CLK_USB2_MF>,
++				 <&ccu CLK_USB2_SUSPEND>,
++				 <&serdes_ccu CLK_BUS_USB3_ACLK>,
++				 <&serdes_ccu CLK_BUS_USB3_HCLK>;
++			clock-names = "ref", "mf", "suspend", "axi", "ahb";
++			assigned-clocks = <&ccu CLK_USB2_SUSPEND>;
++			assigned-clock-rates = <24000000>;
++			resets = <&ccu RST_BUS_USB2>;
++			power-domains = <&pck600 PD_USB2>;
++			phys = <&usb3_u2phy>, <&combophy0>;
++			phy-names = "usb2-phy", "usb3-phy";
++			snps,dis_enblslpm_quirk;
++			snps,dis-u1-entry-quirk;
++			snps,dis-u2-entry-quirk;
++			snps,dis_u3_susphy_quirk;
++			snps,dis_u2_susphy_quirk;
++			status = "disabled";
++		};
++
+ 		usb3_u2phy: phy@6b00000 {
+ 			compatible = "allwinner,sun60i-a733-usb2-phy";
+ 			reg = <0x06b00000 0x800>;

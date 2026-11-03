@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 15:25:12 +0200
+Subject: [PATCH] drm/sun4i: sun8i_dw_hdmi: Let DRM manage the encoder
+
+sun4i_drv no longer calls drm_mode_config_cleanup() itself (drm/sun4i:
+drv: Do not call drm_mode_config_cleanup()). The managed release of
+drm_mode_config_init() destroys the mode objects at the last
+drm_dev_put() instead, after component_unbind_all(), and, while
+userspace still holds the device open, after the display engine device
+has released its devres.
+
+The HDMI encoder is embedded in struct sun8i_dw_hdmi and destroyed
+through its .destroy hook, so it is cleaned up on freed memory in that
+case.
+
+Allocate it with drmm_simple_encoder_alloc(), as dw_hdmi-imx does, in a
+small structure that points back to struct sun8i_dw_hdmi, which stays
+in the probe. The managed action calls drm_encoder_cleanup(), and with
+it detaches the bridge, before the memory is freed.
+
+Not covered: unbinding the master with the drm_device held open by
+userspace while the HDMI device is removed too; the connector, which
+dw-hdmi embeds in the bridge, then outlives the bridge memory.
+
+Tested on Radxa Cubie A7S: not tested; the board has no dw-hdmi
+controller, the code is compiled only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c | 37 +++++++++++++++------------
+ drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h |  7 -----
+ 2 files changed, 21 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c
+index 43aebfecc9d8..3b8c7fe3c7fa 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c
++++ b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c
+@@ -11,23 +11,28 @@
+ #include <drm/drm_bridge.h>
+ #include <drm/drm_modeset_helper_vtables.h>
+ #include <drm/drm_encoder.h>
++#include <drm/drm_managed.h>
+ #include <drm/drm_of.h>
++#include <drm/drm_simple_kms_helper.h>
+ 
+ #include "sun8i_dw_hdmi.h"
+ #include "sun8i_tcon_top.h"
+ 
++struct sun8i_dw_hdmi_encoder {
++	struct drm_encoder		encoder;
++	struct sun8i_dw_hdmi		*hdmi;
++};
++
+ static void sun8i_dw_hdmi_encoder_mode_set(struct drm_encoder *encoder,
+ 					   struct drm_display_mode *mode,
+ 					   struct drm_display_mode *adj_mode)
+ {
+-	struct sun8i_dw_hdmi *hdmi = encoder_to_sun8i_dw_hdmi(encoder);
++	struct sun8i_dw_hdmi_encoder *enc =
++		container_of(encoder, struct sun8i_dw_hdmi_encoder, encoder);
++	struct sun8i_dw_hdmi *hdmi = enc->hdmi;
+ 
+ 	clk_set_rate(hdmi->clk_tmds, mode->crtc_clock * 1000);
+ }
+-static const struct drm_encoder_funcs sun8i_dw_hdmi_encoder_funcs = {
+-	.destroy = drm_encoder_cleanup,
+-};
+-
+ static const struct drm_encoder_helper_funcs
+ sun8i_dw_hdmi_encoder_helper_funcs = {
+ 	.mode_set = sun8i_dw_hdmi_encoder_mode_set,
+@@ -103,9 +108,17 @@ static int sun8i_dw_hdmi_bind(struct device *dev, struct device *master,
+ 			      void *data)
+ {
+ 	struct sun8i_dw_hdmi *hdmi = dev_get_drvdata(dev);
++	struct sun8i_dw_hdmi_encoder *enc;
+ 	struct drm_device *drm = data;
+-	struct drm_encoder *encoder = &hdmi->encoder;
+-	int ret;
++	struct drm_encoder *encoder;
++
++	enc = drmm_simple_encoder_alloc(drm, struct sun8i_dw_hdmi_encoder,
++					encoder, DRM_MODE_ENCODER_TMDS);
++	if (IS_ERR(enc))
++		return PTR_ERR(enc);
++
++	enc->hdmi = hdmi;
++	encoder = &enc->encoder;
+ 
+ 	encoder->possible_crtcs =
+ 		sun8i_dw_hdmi_find_possible_crtcs(drm, dev->of_node);
+@@ -119,16 +132,8 @@ static int sun8i_dw_hdmi_bind(struct device *dev, struct device *master,
+ 		return -EPROBE_DEFER;
+ 
+ 	drm_encoder_helper_add(encoder, &sun8i_dw_hdmi_encoder_helper_funcs);
+-	ret = drm_encoder_init(drm, encoder, &sun8i_dw_hdmi_encoder_funcs,
+-			       DRM_MODE_ENCODER_TMDS, NULL);
+-	if (ret)
+-		return ret;
+ 
+-	ret = drm_bridge_attach(encoder, hdmi->bridge, NULL, 0);
+-	if (ret)
+-		drm_encoder_cleanup(encoder);
+-
+-	return ret;
++	return drm_bridge_attach(encoder, hdmi->bridge, NULL, 0);
+ }
+ 
+ static const struct component_ops sun8i_dw_hdmi_ops = {
+diff --git a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h
+index f6eb3f619b83..345b73c6a310 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h
++++ b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h
+@@ -182,7 +182,6 @@ struct sun8i_dw_hdmi {
+ 	struct device			*dev;
+ 	struct dw_hdmi			*hdmi;
+ 	struct drm_bridge		*bridge;
+-	struct drm_encoder		encoder;
+ 	struct sun8i_hdmi_phy		*phy;
+ 	struct dw_hdmi_plat_data	plat_data;
+ 	struct regulator		*regulator;
+@@ -192,12 +191,6 @@ struct sun8i_dw_hdmi {
+ 
+ extern struct platform_driver sun8i_hdmi_phy_driver;
+ 
+-static inline struct sun8i_dw_hdmi *
+-encoder_to_sun8i_dw_hdmi(struct drm_encoder *encoder)
+-{
+-	return container_of(encoder, struct sun8i_dw_hdmi, encoder);
+-}
+-
+ int sun8i_hdmi_phy_get(struct sun8i_dw_hdmi *hdmi, struct device_node *node);
+ 
+ int sun8i_hdmi_phy_init(struct sun8i_hdmi_phy *phy);

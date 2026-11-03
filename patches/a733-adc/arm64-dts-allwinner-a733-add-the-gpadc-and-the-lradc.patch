@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 08:27:40 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the GPADC and the LRADC
+
+Add the two low-speed ADCs of the A733, disabled.
+
+The GPADC (A733 manual, 18.12) is at 0x02521000, with interrupt 70 of
+the interrupt table (12.2.3.1, SPI 38), the bus gate and reset of
+GPADC0_BGR and the 24 MHz module clock GPADC0_24M. The thermal sensor
+uses the same module clock.
+
+The LRADC (18.13) is at 0x02524000, with interrupt 69 (SPI 37) and the
+bus gate and reset of LRADC_BGR. It has no module clock: the manual
+names the 32 kHz oscillator of the RTC as its clock source.
+
+The LRADC node has no vref-supply, which its binding requires: the
+supply is a property of the board, and a board that enables the node
+adds it.
+
+Tested on Radxa Cubie A7S: the GPADC node, enabled by the board, probes,
+and every conversion raises its interrupt; the LRADC node stays disabled
+on this board.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 9a74859f8b97..6a5e8a74d7b0 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -688,6 +688,20 @@ i2c0: i2c@2510000 {
+ 			#size-cells = <0>;
+ 		};
+ 
++		gpadc: adc@2521000 {
++			compatible = "allwinner,sun60i-a733-gpadc",
++				     "allwinner,sun20i-d1-gpadc";
++			reg = <0x02521000 0x1000>;
++			interrupts = <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_GPADC0>, <&ccu CLK_GPADC0_24M>;
++			clock-names = "bus", "mod";
++			resets = <&ccu RST_BUS_GPADC0>;
++			#io-channel-cells = <1>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
+ 		ths: thermal-sensor@2522000 {
+ 			compatible = "allwinner,sun60i-a733-ths";
+ 			reg = <0x02522000 0x400>;
+@@ -700,6 +714,16 @@ ths: thermal-sensor@2522000 {
+ 			#thermal-sensor-cells = <1>;
+ 		};
+ 
++		lradc: lradc@2524000 {
++			compatible = "allwinner,sun60i-a733-lradc",
++				     "allwinner,sun50i-r329-lradc";
++			reg = <0x02524000 0x1000>;
++			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_LRADC>;
++			resets = <&ccu RST_BUS_LRADC>;
++			status = "disabled";
++		};
++
+ 		syscon: syscon@3000000 {
+ 			compatible = "allwinner,sun60i-a733-system-control";
+ 			reg = <0x03000000 0x1000>;

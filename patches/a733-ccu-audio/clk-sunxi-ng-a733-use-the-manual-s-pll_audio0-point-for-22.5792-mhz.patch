@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 05:24:05 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Use the manual's PLL_AUDIO0 point for
+ 22.5792 MHz
+
+The 22.5792 MHz x 4 entry of PLL_AUDIO0's sigma-delta table is the
+A523's: N = 75, P0 = 20 and pattern 0xa002872b (triangular 1-bit mode,
+32 kHz slope, bottom 0x0872b). The A733 manual gives its own point for
+this rate in the PLL table: N = 67 plus the fraction 0x179a7 / 2^17
+(VCO 1625.7024 MHz), divided by P0 = 18. Both produce 90.3168 MHz, but
+only the second is documented for this SoC.
+
+Use the documented point. The pattern follows the manual's fractional
+division setting: SIG_DELT_PAT_EN (bit 31) set, SPR_FREQ_MODE = 3 as
+recommended, WAVE_STEP = 0, so WAVE_BOT carries the fraction. Bit 31 is
+part of the pattern because ccu_sdm compares the pattern against the
+whole PAT0 register when it reads the rate back.
+
+Not covered: the PAT1 enable bits (PLL_PI_EN, PLL_SDM_EN) stay as the
+CCU driver sets them.
+
+Tested on Radxa Cubie A7S: booted on two boards; during a 44.1 kHz OWA
+stream PLL_AUDIO0 reads 0xF9114200 (N 67, P0 18, locked), PAT0
+0xE00179A7 and PAT1 0xB8000000, and pll-audio0-4x runs at 90.3168 MHz.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index efcf5ff0def7..700cae872ece 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -353,10 +353,16 @@ static struct ccu_nkmp pll_ve1_clk = {
+  * ignore the divider and force it to 1 (encoded as 0), in the probe function
+  * below.
+  * The M factor must be an even number to produce a 50% duty cycle output.
++ *
++ * The 22.5792 MHz x 4 point is the one in the A733 manual (Table 4-3):
++ * N = 67 plus the fraction 0x179a7 / 2^17, so the VCO runs at 1625.7024 MHz,
++ * divided by P0 = 18. The pattern is fractional division as described in
++ * the manual: SIG_DELT_PAT_EN set, SPR_FREQ_MODE = 3, WAVE_STEP = 0 and
++ * WAVE_BOT = 0x179a7.
+  */
+ #define SUN60I_A733_PLL_AUDIO0_REG	0x260
+ static struct ccu_sdm_setting pll_audio0_sdm_table[] = {
+-	{ .rate = 90316800, .pattern = 0xa002872b, .m = 20, .n = 75 }, /* 22.5792 * 4 */
++	{ .rate = 90316800, .pattern = 0xe00179a7, .m = 18, .n = 67 }, /* 22.5792 * 4 */
+ };
+ 
+ static struct ccu_nm pll_audio0_4x_clk = {

@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:10:29 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the watchdogs
+
+Add WDT0 and WDT_CPUS. WDT0 does not reliably reset the SoC while WDT_CPUS
+does, so WDT0 is added disabled, as on the H6.
+
+Tested on Radxa Cubie A7S: booted on two boards; only WDT_CPUS probes, and
+opened and not fed it resets the board.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index c17794b1233a..ae8a7a4d2c61 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -338,6 +338,17 @@ ccu: clock-controller@2002000 {
+ 			#reset-cells = <1>;
+ 		};
+ 
++		wdt: watchdog@2050000 {
++			compatible = "allwinner,sun60i-a733-wdt",
++				     "allwinner,sun55i-a523-wdt";
++			reg = <0x02050000 0x20>;
++			interrupts = <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&osc>, <&rtc CLK_OSC32K>;
++			clock-names = "hosc", "losc";
++			/* does not reliably reset the SoC, r_wdt does */
++			status = "disabled";
++		};
++
+ 		timer@2052000 {
+ 			compatible = "allwinner,sun60i-a733-timer",
+ 				     "allwinner,sun8i-a23-timer";
+@@ -406,6 +417,15 @@ r_ccu: clock-controller@7010000 {
+ 			#reset-cells = <1>;
+ 		};
+ 
++		r_wdt: watchdog@7021000 {
++			compatible = "allwinner,sun60i-a733-wdt",
++				     "allwinner,sun55i-a523-wdt";
++			reg = <0x07021000 0x20>;
++			interrupts = <GIC_SPI 191 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&osc>, <&rtc CLK_OSC32K>;
++			clock-names = "hosc", "losc";
++		};
++
+ 		r_pio: pinctrl@7025000 {
+ 			compatible = "allwinner,sun60i-a733-r-pinctrl";
+ 			reg = <0x07025000 0x410>;

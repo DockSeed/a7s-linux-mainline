@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 14:50:13 +0200
+Subject: [PATCH] pinctrl: sunxi: a733: Set the withstand voltage of the banks
+ with a supply
+
+The withstand mode of the A733 pin banks in GPIO_POW_MOD_SEL is left as
+the boot chain set it, except for bank PF. The boot chain on the Radxa
+Cubie A7S sets every bank to the adaptive mode; a boot chain that does
+not touch the register leaves the reset value 0x022aaaa0, the 3.3V mode
+for every bank, also for the banks that run at 1.8V.
+
+Without this, the eMMC on bank PC fails when the bank is in its 3.3V
+mode at a 1.8V supply, because the withstand mode of a bank has to
+match its supply (user manual section 18.14.4.6). Seen on the Radxa
+Cubie A7S: with the PC field at 10 and the eMMC at HS400 enhanced
+strobe, raw reads returned no data and the card dropped out:
+
+  mmc2: mmc_select_hs400es failed, error -110
+
+Program the mode from the bank supply with the two-bit variant, for the
+banks PC, PD, PE, PG, PH, PJ and PK (fields per user manual section
+18.14.6.1). The manual gives the adaptive code for banks PC, PE and PK
+as 01 in the register table and as 10 in the text of section 18.14.4.6;
+a fixed mode depends on neither. Bank PF keeps its mode with its supply
+switch. A bank without a supply in the DT is not written.
+
+With bank PC in the 1.8V mode (11), the eMMC read the same data at
+HS400 enhanced strobe as in the adaptive mode, in the same time.
+
+Tested on Radxa Cubie A7S: after boot bank PC was in its 1.8V mode and
+the eMMC read the same data at HS400 enhanced strobe, the 3.3V banks
+with a requested pin were in their 3.3V mode, and the banks without one
+kept the value of the boot chain.
+
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+index 3b8d7dda66fc..c54d1744d152 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+@@ -24,6 +24,14 @@ static const u8 a733_irq_bank_muxes[SUNXI_PINCTRL_MAX_BANKS] =
+ static struct sunxi_pinctrl_desc a733_pinctrl_data = {
+ 	.irq_banks = 11,
+ 	.pf_power_source = true,
++	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_SEL_2BIT,
++	/*
++	 * PC, PD, PE, PG, PH, PJ, PK. PF follows its supply switch, see
++	 * sunxi_pconf_set_power_source(); PB has no field of its own
++	 * and the field of PI is reserved.
++	 */
++	.io_bias_banks = BIT(2) | BIT(3) | BIT(4) | BIT(6) | BIT(7) |
++			 BIT(9) | BIT(10),
+ };
+ 
+ static int a733_pinctrl_probe(struct platform_device *pdev)

@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:56:24 +0200
+Subject: [PATCH] dt-bindings: watchdog: sun4i-a10-wdt: Add Allwinner A733
+
+The A733 has two watchdogs, WDT0 and WDT_CPUS, both with the register set
+of the A523 watchdog. Add an A733 compatible with the A523 one as fallback.
+
+Tested on Radxa Cubie A7S: booted on two boards; the WDT_CPUS node with
+this compatible passes the schema check and probes sunxi-wdt through the
+fallback.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/watchdog/allwinner,sun4i-a10-wdt.yaml  | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/watchdog/allwinner,sun4i-a10-wdt.yaml b/Documentation/devicetree/bindings/watchdog/allwinner,sun4i-a10-wdt.yaml
+index b35ac03d5172..0744e005e974 100644
+--- a/Documentation/devicetree/bindings/watchdog/allwinner,sun4i-a10-wdt.yaml
++++ b/Documentation/devicetree/bindings/watchdog/allwinner,sun4i-a10-wdt.yaml
+@@ -33,6 +33,9 @@ properties:
+           - const: allwinner,sun20i-d1-wdt-reset
+           - const: allwinner,sun20i-d1-wdt
+       - const: allwinner,sun55i-a523-wdt
++      - items:
++          - const: allwinner,sun60i-a733-wdt
++          - const: allwinner,sun55i-a523-wdt
+ 
+   reg:
+     maxItems: 1

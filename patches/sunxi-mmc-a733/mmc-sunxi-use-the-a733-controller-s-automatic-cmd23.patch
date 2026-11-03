@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:06:34 +0200
+Subject: [PATCH] mmc: sunxi: Use the A733 controller's automatic CMD23
+
+Without MMC_CAP_CMD23 every multiple-block transfer is open-ended and
+closed by an automatic CMD12, which is slow on the A733 eMMC.
+
+The A733 SMHC sends CMD23 itself: SMHC_A23A holds the argument and
+SMHC_EXT_CMD bit 0 enables it. A soft reset clears the enable, so arm it
+per request after the DMA setup, skip the automatic stop when the block
+count was set and read the CMD23 response from SMHC_EXT_RESP. Announce
+MMC_CAP_CMD23 only on controllers with this feature.
+
+Tested on Radxa Cubie A7S: booted on two boards; the hosts advertise
+CMD23, and 256 MiB read in 64 KiB requests gives the same checksum twice
+and no error, from the SD card and from the eMMC.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 25 ++++++++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index 4a7a21ccfca4..39f48f98187f 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -72,6 +72,9 @@
+ #define SDXC_REG_DRV_DL		0x140 /* Drive Delay Control Register */
+ #define SDXC_REG_SAMP_DL_REG	0x144 /* SMC sample delay control */
+ #define SDXC_REG_DS_DL_REG	0x148 /* SMC data strobe delay control */
++#define SDXC_REG_A23A		0x108 /* SMC Auto Command 23 Argument */
++#define SDXC_REG_ECMD		0x138 /* SMC Extended Command */
++#define SDXC_REG_ERESP		0x13C /* SMC Extended Response */
+ 
+ #define mmc_readl(host, reg) \
+ 	readl((host)->reg_base + SDXC_##reg)
+@@ -153,6 +156,9 @@
+ 	(SDXC_AUTO_COMMAND_DONE | SDXC_DATA_OVER | \
+ 	 SDXC_COMMAND_DONE | SDXC_VOLTAGE_CHANGE_DONE)
+ 
++/* extended command */
++#define SDXC_AUTO_CMD23_EN		BIT(0)
++
+ /* status */
+ #define SDXC_RXWL_FLAG			BIT(0)
+ #define SDXC_TXWL_FLAG			BIT(1)
+@@ -269,6 +275,9 @@ struct sunxi_mmc_cfg {
+ 
+ 	/* SMHC_FIFOTH value, 0 selects the default */
+ 	u32 fifoth;
++
++	/* controller sends CMD23 by itself (SMHC_A23A, SMHC_ECMD) */
++	bool can_auto_cmd23;
+ };
+ 
+ struct sunxi_mmc_host {
+@@ -560,6 +569,9 @@ static irqreturn_t sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
+ 			mrq->cmd->resp[0] = mmc_readl(host, REG_RESP0);
+ 		}
+ 
++		if (mrq->sbc && host->cfg->can_auto_cmd23)
++			mrq->sbc->resp[0] = mmc_readl(host, REG_ERESP);
++
+ 		if (data)
+ 			data->bytes_xfered = data->blocks * data->blksz;
+ 	}
+@@ -1037,6 +1049,7 @@ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ 	u32 imask = SDXC_INTERRUPT_ERROR_BIT;
+ 	u32 cmd_val = SDXC_START | (cmd->opcode & 0x3f);
+ 	bool wait_dma = host->wait_dma;
++	bool auto_cmd23 = mrq->sbc && host->cfg->can_auto_cmd23;
+ 	int ret;
+ 
+ 	/* Check for set_ios errors (should never happen) */
+@@ -1072,7 +1085,7 @@ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ 		if ((cmd->flags & MMC_CMD_MASK) == MMC_CMD_ADTC) {
+ 			cmd_val |= SDXC_DATA_EXPIRE | SDXC_WAIT_PRE_OVER;
+ 
+-			if (cmd->data->stop) {
++			if (cmd->data->stop && !auto_cmd23) {
+ 				imask |= SDXC_AUTO_COMMAND_DONE;
+ 				cmd_val |= SDXC_SEND_AUTO_STOP;
+ 			} else {
+@@ -1115,6 +1128,12 @@ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ 		sunxi_mmc_start_dma(host, data);
+ 	}
+ 
++	/* Cleared by a soft reset, so armed for each request */
++	if (auto_cmd23) {
++		mmc_writel(host, REG_A23A, mrq->sbc->arg);
++		mmc_writel(host, REG_ECMD, SDXC_AUTO_CMD23_EN);
++	}
++
+ 	host->mrq = mrq;
+ 	host->wait_dma = wait_dma;
+ 	mmc_writel(host, REG_IMASK, host->sdio_imask | imask);
+@@ -1238,6 +1257,7 @@ static const struct sunxi_mmc_cfg sun60i_a733_cfg = {
+ 	.no_ceata_funs = true,
+ 	/* burst 16, RX trigger level 15, TX trigger level 240 */
+ 	.fifoth = 0x300f00f0,
++	.can_auto_cmd23 = true,
+ };
+ 
+ static const struct of_device_id sunxi_mmc_of_match[] = {
+@@ -1488,6 +1508,9 @@ static int sunxi_mmc_probe(struct platform_device *pdev)
+ 				     "allwinner,sun50i-h5-emmc"))
+ 		mmc->caps      |= MMC_CAP_1_8V_DDR | MMC_CAP_3_3V_DDR;
+ 
++	if (host->cfg->can_auto_cmd23)
++		mmc->caps |= MMC_CAP_CMD23;
++
+ 	ret = mmc_of_parse(mmc);
+ 	if (ret)
+ 		goto error_free_dma;

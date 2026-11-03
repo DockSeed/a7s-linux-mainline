@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:39:03 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Add the gates of the USB PHY reference
+ clocks
+
+The reference clocks of the USB0/USB1 PHY (0x1340) and of the USB 2.0
+PHY of the USB3 controller (0x1348) have a gate in bit 31, but are
+described as plain muxes. The second gate is off after reset, so Linux
+cannot turn that clock on.
+
+Describe both as muxes with a gate.
+
+Tested on Radxa Cubie A7S: booted on two boards; the USB-A port
+enumerates its hub and a stick on the first reference clock, and the
+USB3 controller enumerates a stick behind its own USB 2.0 PHY on the
+second.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 15ba7312e654..730237d5a604 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -1288,9 +1288,12 @@ static const struct clk_parent_data usb01_ref_parents[] = {
+ 	{ .hw = &sys_24M_clk.hw },
+ 	{ .fw_name = "hosc" },
+ };
+-static SUNXI_CCU_MUX_DATA(usb01_ref_clk, "usb01-ref", usb01_ref_parents, 0x1340, 24, 3, 0);
+ 
+-static SUNXI_CCU_MUX_DATA(usb2_u2_ref_clk, "usb2-u2-ref", usb01_ref_parents, 0x1348, 24, 3, 0);
++static SUNXI_CCU_MUX_DATA_WITH_GATE(usb01_ref_clk, "usb01-ref", usb01_ref_parents, 0x1340,
++				    24, 3, BIT(31), 0);
++
++static SUNXI_CCU_MUX_DATA_WITH_GATE(usb2_u2_ref_clk, "usb2-u2-ref", usb01_ref_parents, 0x1348,
++				    24, 3, BIT(31), 0);
+ 
+ static const struct clk_parent_data usb2_suspend_parents[] = {
+ 	{ .fw_name = "losc" },

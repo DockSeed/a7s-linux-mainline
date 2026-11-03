@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:23:13 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Supply the eMMC from
+ the PMIC
+
+The eMMC names two fixed regulators as supplies, but its rails are
+SWOUT2 (3.3 V) and CLDO5 (1.8 V) of the AXP318W. Describe CLDO5 at its
+single 1.8 V setting and use both rails; the fixed 1.8 V regulator goes.
+CLDO5 keeps the name vcc-1v8, as vcc-pc would make the pin controller
+take it as the bank PC supply, which is a change of its own.
+
+Tested on Radxa Cubie A7S: booted on two boards; on the board with eMMC,
+mmc2 takes vmmc from vcc-io and vqmmc from CLDO5, whose voltage register
+in the PMIC reads back 1.8 V, comes up in HS400 enhanced strobe mode and
+reads 256 MiB without errors. The other board has no eMMC.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 21 +++++++++----------
+ 1 file changed, 10 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 0e5b82aec3dd..b2cfae1c0449 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -58,15 +58,6 @@ scp@48100000 {
+ 		};
+ 	};
+ 
+-	/* CLDO5 of the PMIC: VCC-PC and with it the eMMC VCCQ */
+-	reg_vcc1v8: vcc1v8 {
+-		compatible = "regulator-fixed";
+-		regulator-name = "vcc-1v8";
+-		regulator-min-microvolt = <1800000>;
+-		regulator-max-microvolt = <1800000>;
+-		regulator-always-on;
+-	};
+-
+ 	reg_vcc3v3: vcc3v3 {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "vcc-3v3";
+@@ -114,8 +105,8 @@ &mmc0 {
+ };
+ 
+ &mmc2 {
+-	vmmc-supply = <&reg_vcc3v3>;
+-	vqmmc-supply = <&reg_vcc1v8>;
++	vmmc-supply = <&reg_swout2>;
++	vqmmc-supply = <&reg_cldo5>;
+ 	bus-width = <8>;
+ 	non-removable;
+ 	cap-mmc-hw-reset;
+@@ -152,6 +143,14 @@ reg_dcdc1: dcdc1 {
+ 				regulator-always-on;
+ 			};
+ 
++			/* 1.8 V I/O: eMMC VCCQ, bank PC */
++			reg_cldo5: cldo5 {
++				regulator-name = "vcc-1v8";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <1800000>;
++				regulator-always-on;
++			};
++
+ 			/*
+ 			 * Ethernet PHY, bank PD through R251, bank PJ, the
+ 			 * TWI2/TWI7 pull-ups on J11. Always on: bank PJ and the

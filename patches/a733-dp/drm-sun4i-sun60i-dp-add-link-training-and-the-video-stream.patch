@@ -1,0 +1,676 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:47:07 +0200
+Subject: [PATCH] drm/sun4i: sun60i_dp: Add link training and the video stream
+
+The A733 DisplayPort transmitter so far reads the sink's capabilities
+and EDID, but brings up no link.
+
+Train the link when the bridge is enabled, at the highest rate and lane
+count both ends support, falling back to lower rates and then to fewer
+lanes while the mode fits: clock recovery with training pattern 1, then
+equalisation with pattern 3 where the sink supports it, else pattern 2,
+with the drm_dp_helper delays and the levels the sink asks for. Then
+program the main stream attributes, transfer unit and line length as
+section 15.4.5.3 of the user manual gives them, reset the video path
+and start the stream.
+
+The link clock gates, the transmitter output and the source input are
+switched on before training: without them the link does not reach clock
+recovery on our boards. The stream starts only if the pixel clock the
+core measures at its input matches the mode; otherwise the TCON does
+not feed the transmitter.
+
+Put the sink in D3 when the bridge is disabled and back in D0 before the
+link is trained (DPCD 0x600), as other DisplayPort drivers do. Without it
+the sink is left with a link that carries no stream. Seen on the Radxa
+Cubie A7S: shortly after a console blank the sink signals IRQ_HPD, the
+port controller passes it on as a hot-plug event and the fbdev
+emulation enables the output again.
+
+Differences from the vendor code: the transfer unit is computed in
+sixteenths instead of truncated, the source enables are cleared on
+disable, the video path is reset before every start, and the data
+accumulation delay is checked against the transfer unit.
+
+The transmitter always frames enhanced (section 15.4.7.3, pages 745 to
+746); a sink that does not advertise it gets a warning.
+
+Not covered: other pixel depths, YCbCr, two and four pixels per clock,
+audio, spread spectrum clocking, and an HPD IRQ from the sink.
+
+Tested on Radxa Cubie A7S: booted on one board; clock recovery and
+equalisation succeeded on all four lanes, the stream timing matched the
+mode, and the monitor showed a stable picture. On an fbdev blank the
+sink is put in D3 once and the pipe stays off; on unblank it is woken
+and the link trains again.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun60i_dp.c | 599 ++++++++++++++++++++++++++++++
+ 1 file changed, 599 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun60i_dp.c b/drivers/gpu/drm/sun4i/sun60i_dp.c
+index 4dca05f3bbf7..06aeeb0a2bf3 100644
+--- a/drivers/gpu/drm/sun4i/sun60i_dp.c
++++ b/drivers/gpu/drm/sun4i/sun60i_dp.c
+@@ -188,6 +188,13 @@ struct sun60i_dp {
+ 	bool			dpcd_valid;
+ 	unsigned int		link_rate;
+ 	unsigned int		lanes;
++	bool			enabled;
++};
++
++/* Swing and pre-emphasis levels per lane */
++struct sun60i_dp_levels {
++	u8	voltage[SUN60I_DP_MAX_LANES];
++	u8	pre[SUN60I_DP_MAX_LANES];
+ };
+ 
+ static struct sun60i_dp *bridge_to_sun60i_dp(struct drm_bridge *bridge)
+@@ -369,6 +376,596 @@ static bool sun60i_dp_bandwidth_ok(const struct drm_display_mode *mode,
+ 	return need <= drm_dp_max_dprx_data_rate(rate, lanes);
+ }
+ 
++static void sun60i_dp_set_levels_reached(const struct sun60i_dp_levels *lv,
++					 unsigned int lane, u8 *set)
++{
++	u8 v = lv->voltage[lane];
++	u8 p = lv->pre[lane];
++
++	*set = FIELD_PREP(DP_TRAIN_VOLTAGE_SWING_MASK, v) |
++	       FIELD_PREP(DP_TRAIN_PRE_EMPHASIS_MASK, p);
++	if (v == SUN60I_DP_MAX_LEVEL)
++		*set |= DP_TRAIN_MAX_SWING_REACHED;
++	if (p == SUN60I_DP_MAX_LEVEL - v)
++		*set |= DP_TRAIN_MAX_PRE_EMPHASIS_REACHED;
++}
++
++/* Drive the levels through the PHY, then tell the sink */
++static int sun60i_dp_set_levels(struct sun60i_dp *dp,
++				const struct sun60i_dp_levels *lv)
++{
++	union phy_configure_opts opts = { };
++	u8 set[SUN60I_DP_MAX_LANES];
++	unsigned int lane;
++	int ret;
++
++	opts.dp.lanes = dp->lanes;
++	opts.dp.set_voltages = 1;
++	for (lane = 0; lane < dp->lanes; lane++) {
++		opts.dp.voltage[lane] = lv->voltage[lane];
++		opts.dp.pre[lane] = lv->pre[lane];
++		sun60i_dp_set_levels_reached(lv, lane, &set[lane]);
++	}
++
++	ret = phy_configure(dp->phy, &opts);
++	if (ret)
++		return ret;
++
++	return drm_dp_dpcd_write_data(&dp->aux, DP_TRAINING_LANE0_SET, set,
++				      dp->lanes);
++}
++
++/*
++ * Take the levels the sink asks for, within the PHY's limit of three for
++ * swing and pre-emphasis together. Returns whether they changed.
++ */
++static bool sun60i_dp_get_adjust(struct sun60i_dp *dp,
++				 const u8 status[DP_LINK_STATUS_SIZE],
++				 struct sun60i_dp_levels *lv)
++{
++	bool changed = false;
++	unsigned int lane;
++	u8 v, p;
++
++	for (lane = 0; lane < dp->lanes; lane++) {
++		v = drm_dp_get_adjust_request_voltage(status, lane) >>
++		    DP_TRAIN_VOLTAGE_SWING_SHIFT;
++		p = drm_dp_get_adjust_request_pre_emphasis(status, lane) >>
++		    DP_TRAIN_PRE_EMPHASIS_SHIFT;
++
++		v = min_t(u8, v, SUN60I_DP_MAX_LEVEL);
++		p = min_t(u8, p, SUN60I_DP_MAX_LEVEL - v);
++
++		if (v != lv->voltage[lane] || p != lv->pre[lane])
++			changed = true;
++
++		lv->voltage[lane] = v;
++		lv->pre[lane] = p;
++	}
++
++	return changed;
++}
++
++static bool sun60i_dp_max_swing(struct sun60i_dp *dp,
++				const struct sun60i_dp_levels *lv)
++{
++	unsigned int lane;
++
++	for (lane = 0; lane < dp->lanes; lane++)
++		if (lv->voltage[lane] != SUN60I_DP_MAX_LEVEL)
++			return false;
++
++	return true;
++}
++
++/*
++ * The transmitter sends the pattern first, then the sink is told, the order
++ * the link trained with on our boards. The patterns are sent unscrambled.
++ */
++static int sun60i_dp_set_pattern(struct sun60i_dp *dp, u8 pattern)
++{
++	u8 val = pattern;
++
++	writel(pattern, dp->regs + SUN60I_DP_TRAINING_PATTERN_SET);
++	msleep(SUN60I_DP_TRAIN_SETTLE_MS);
++
++	if (pattern != DP_TRAINING_PATTERN_DISABLE)
++		val |= DP_LINK_SCRAMBLING_DISABLE;
++
++	return drm_dp_dpcd_write_byte(&dp->aux, DP_TRAINING_PATTERN_SET, val);
++}
++
++static int sun60i_dp_train_cr(struct sun60i_dp *dp,
++			      struct sun60i_dp_levels *lv)
++{
++	u8 status[DP_LINK_STATUS_SIZE];
++	unsigned int round, same = 0;
++	int ret;
++
++	ret = sun60i_dp_set_pattern(dp, DP_TRAINING_PATTERN_1);
++	if (ret)
++		return ret;
++
++	for (round = 0; round < SUN60I_DP_CR_MAX_ROUNDS; round++) {
++		drm_dp_link_train_clock_recovery_delay(&dp->aux, dp->dpcd);
++
++		ret = drm_dp_dpcd_read_link_status(&dp->aux, status);
++		if (ret)
++			return ret;
++
++		if (drm_dp_clock_recovery_ok(status, dp->lanes))
++			return 0;
++
++		if (sun60i_dp_max_swing(dp, lv))
++			break;
++
++		if (sun60i_dp_get_adjust(dp, status, lv))
++			same = 0;
++		else if (++same >= SUN60I_DP_CR_MAX_SAME_LEVEL)
++			break;
++
++		ret = sun60i_dp_set_levels(dp, lv);
++		if (ret)
++			return ret;
++	}
++
++	return -EIO;
++}
++
++static int sun60i_dp_train_eq(struct sun60i_dp *dp,
++			      struct sun60i_dp_levels *lv)
++{
++	u8 status[DP_LINK_STATUS_SIZE];
++	unsigned int round;
++	u8 pattern;
++	int ret;
++
++	pattern = drm_dp_tps3_supported(dp->dpcd) ? DP_TRAINING_PATTERN_3 :
++						    DP_TRAINING_PATTERN_2;
++	ret = sun60i_dp_set_pattern(dp, pattern);
++	if (ret)
++		return ret;
++
++	for (round = 0; round < SUN60I_DP_EQ_MAX_ROUNDS; round++) {
++		drm_dp_link_train_channel_eq_delay(&dp->aux, dp->dpcd);
++
++		ret = drm_dp_dpcd_read_link_status(&dp->aux, status);
++		if (ret)
++			return ret;
++
++		if (!drm_dp_clock_recovery_ok(status, dp->lanes))
++			return -EIO;
++
++		if (drm_dp_channel_eq_ok(status, dp->lanes))
++			return 0;
++
++		sun60i_dp_get_adjust(dp, status, lv);
++
++		ret = sun60i_dp_set_levels(dp, lv);
++		if (ret)
++			return ret;
++	}
++
++	return -EIO;
++}
++
++/*
++ * Set rate and lane count in the PHY, the transmitter and the sink. The
++ * transmitter always uses enhanced framing (section 15.4.7.3).
++ */
++static int sun60i_dp_link_config(struct sun60i_dp *dp)
++{
++	union phy_configure_opts opts = { };
++	u8 bw = drm_dp_link_rate_to_bw_code(dp->link_rate);
++	u8 buf[2];
++	int ret;
++
++	opts.dp.link_rate = dp->link_rate / 100;
++	opts.dp.lanes = dp->lanes;
++	opts.dp.set_rate = 1;
++	opts.dp.set_lanes = 1;
++	ret = phy_configure(dp->phy, &opts);
++	if (ret)
++		return ret;
++
++	writel(bw, dp->regs + SUN60I_DP_LINK_BW_SET);
++	writel(dp->lanes, dp->regs + SUN60I_DP_LANE_COUNT_SET);
++	writel(1, dp->regs + SUN60I_DP_SCRAMBLING_DISABLE);
++
++	/* The sink is told what the transmitter does, whatever the sink says */
++	if (!drm_dp_enhanced_frame_cap(dp->dpcd))
++		dev_warn(dp->dev,
++			 "the sink does not advertise enhanced framing, the link uses it anyway\n");
++
++	buf[0] = bw;
++	buf[1] = dp->lanes | DP_LANE_COUNT_ENHANCED_FRAME_EN;
++	ret = drm_dp_dpcd_write_data(&dp->aux, DP_LINK_BW_SET, buf,
++				     sizeof(buf));
++	if (ret)
++		return ret;
++
++	buf[0] = 0;
++	buf[1] = DP_SET_ANSI_8B10B;
++
++	return drm_dp_dpcd_write_data(&dp->aux, DP_DOWNSPREAD_CTRL, buf,
++				      sizeof(buf));
++}
++
++/* After the patterns, the sink must still hold the link */
++static int sun60i_dp_train_check(struct sun60i_dp *dp)
++{
++	u8 status[DP_LINK_STATUS_SIZE];
++	int ret;
++
++	msleep(SUN60I_DP_TRAIN_SETTLE_MS);
++
++	ret = drm_dp_dpcd_read_link_status(&dp->aux, status);
++	if (ret)
++		return ret;
++
++	if (!drm_dp_clock_recovery_ok(status, dp->lanes) ||
++	    !drm_dp_channel_eq_ok(status, dp->lanes))
++		return -EIO;
++
++	return 0;
++}
++
++/* Clock recovery, then channel equalisation, at dp->link_rate and dp->lanes */
++static int sun60i_dp_train_link(struct sun60i_dp *dp)
++{
++	struct sun60i_dp_levels lv = { };
++	int ret, stop;
++
++	ret = sun60i_dp_link_config(dp);
++	if (ret)
++		return ret;
++
++	ret = sun60i_dp_set_levels(dp, &lv);
++	if (ret)
++		return ret;
++
++	writel(SUN60I_DP_SOFT_RESET_LINK, dp->regs + SUN60I_DP_SOFT_RESET);
++	msleep(SUN60I_DP_TRAIN_SETTLE_MS);
++
++	ret = sun60i_dp_train_cr(dp, &lv);
++	if (!ret)
++		ret = sun60i_dp_train_eq(dp, &lv);
++
++	stop = sun60i_dp_set_pattern(dp, DP_TRAINING_PATTERN_DISABLE);
++	writel(0, dp->regs + SUN60I_DP_SCRAMBLING_DISABLE);
++	if (ret)
++		return ret;
++	if (stop)
++		return stop;
++
++	return sun60i_dp_train_check(dp);
++}
++
++/*
++ * Train at the highest link rate both ends support, falling back to lower
++ * rates and then to fewer lanes, as long as the mode fits the link.
++ */
++static int sun60i_dp_train(struct sun60i_dp *dp,
++			   const struct drm_display_mode *mode)
++{
++	unsigned int max_rate, max_lanes, lanes, i;
++
++	sun60i_dp_max_link(dp, &max_rate, &max_lanes);
++
++	for (lanes = max_lanes; lanes; lanes /= 2) {
++		for (i = 0; i < ARRAY_SIZE(sun60i_dp_link_rates); i++) {
++			if (sun60i_dp_link_rates[i] > max_rate)
++				continue;
++
++			if (!sun60i_dp_bandwidth_ok(mode, sun60i_dp_link_rates[i],
++						    lanes))
++				break;
++
++			dp->link_rate = sun60i_dp_link_rates[i];
++			dp->lanes = lanes;
++			if (!sun60i_dp_train_link(dp))
++				return 0;
++
++			dev_dbg(dp->dev, "training at %u kHz, %u lanes failed\n",
++				dp->link_rate * 10, lanes);
++		}
++	}
++
++	return -EIO;
++}
++
++/*
++ * The link and video clock gates, the transmitter output and the source
++ * input must be on before training: the link does not reach clock recovery
++ * on our boards without them. With the stream off, the source sends the
++ * NO_VIDEO pattern (section 15.4.7.16).
++ */
++static void sun60i_dp_output_on(struct sun60i_dp *dp, bool on)
++{
++	writel(on, dp->pad + SUN60I_DP_PAD_LNK_CLK);
++	writel(on ? SUN60I_DP_PAD_VID0_CLK : 0, dp->pad + SUN60I_DP_PAD_VID_CLK);
++	writel(on, dp->regs + SUN60I_DP_TX_OUTPUT_ENABLE);
++	writel(on, dp->regs + SUN60I_DP_INPUT_SOURCE_ENABLE);
++}
++
++/* Main stream attributes; start is the distance from sync to active */
++static void sun60i_dp_set_msa(struct sun60i_dp *dp,
++			      const struct drm_display_mode *mode)
++{
++	u32 pol = 0;
++
++	if (mode->flags & DRM_MODE_FLAG_PVSYNC)
++		pol |= SUN60I_DP_POLARITY_VSYNC;
++	if (mode->flags & DRM_MODE_FLAG_PHSYNC)
++		pol |= SUN60I_DP_POLARITY_HSYNC;
++
++	writel(mode->htotal, dp->regs + SUN60I_DP_SRC0_HTOTAL);
++	writel(mode->vtotal, dp->regs + SUN60I_DP_SRC0_VTOTAL);
++	writel(pol, dp->regs + SUN60I_DP_SRC0_POLARITY);
++	writel(mode->hsync_end - mode->hsync_start,
++	       dp->regs + SUN60I_DP_SRC0_HSWIDTH);
++	writel(mode->vsync_end - mode->vsync_start,
++	       dp->regs + SUN60I_DP_SRC0_VSWIDTH);
++	writel(mode->hdisplay, dp->regs + SUN60I_DP_SRC0_HRES);
++	writel(mode->vdisplay, dp->regs + SUN60I_DP_SRC0_VRES);
++	writel(mode->htotal - mode->hsync_start,
++	       dp->regs + SUN60I_DP_SRC0_HSTART);
++	writel(mode->vtotal - mode->vsync_start,
++	       dp->regs + SUN60I_DP_SRC0_VSTART);
++
++	/* Asynchronous clock mode, RGB, 8 bits per component */
++	writel(FIELD_PREP(SUN60I_DP_MISC0_BPC, SUN60I_DP_MISC0_BPC_8) |
++	       FIELD_PREP(SUN60I_DP_MISC0_FORMAT, SUN60I_DP_MISC0_FORMAT_RGB),
++	       dp->regs + SUN60I_DP_SRC0_MISC0);
++	writel(0, dp->regs + SUN60I_DP_SRC0_MISC1);
++	writel(0, dp->regs + SUN60I_DP_SRC0_INTERLACED);
++	writel(1, dp->regs + SUN60I_DP_SRC0_USER_PIXEL_COUNT);
++}
++
++/*
++ * The secondary data window is nine tenths of the horizontal blanking in
++ * link symbol clocks (section 15.4.7.40).
++ */
++static u32 sun60i_dp_secondary_window(struct sun60i_dp *dp,
++				      const struct drm_display_mode *mode)
++{
++	u64 blank = div_u64((u64)(mode->htotal - mode->hdisplay) *
++			    dp->link_rate, mode->clock);
++	u64 window;
++
++	if (blank < 2)
++		return 0;
++
++	window = min(div_u64(blank * 9, 10), blank - 1);
++
++	return min_t(u64, window, SUN60I_DP_SECONDARY_DATA_WINDOW_MASK);
++}
++
++/*
++ * Transfer unit and line length in the manual's form (section 15.4.5.3):
++ * valid symbols per transfer unit in sixteenths, and the data symbols of an
++ * active line per lane.
++ */
++static int sun60i_dp_set_tu(struct sun60i_dp *dp,
++			    const struct drm_display_mode *mode)
++{
++	u64 data = div_u64((u64)mode->clock * SUN60I_DP_BPP, BITS_PER_BYTE);
++	u64 link = (u64)dp->link_rate * dp->lanes;
++	u32 sym, delay, count;
++
++	sym = div64_u64(data * SUN60I_DP_TU_SYMBOLS_MAX * SUN60I_DP_TU_FRAC,
++			link);
++	if (!sym || sym > SUN60I_DP_TU_SYMBOLS_MAX * SUN60I_DP_TU_FRAC)
++		return -EINVAL;
++
++	/* The delay must be at least half the transfer unit (15.4.5.4) */
++	delay = FIELD_GET(SUN60I_DP_DATA_ACCUMULATION_DELAY,
++			  readl(dp->regs + SUN60I_DP_SRC0_DATA_CONTROL));
++	if (delay < SUN60I_DP_TU_SYMBOLS_MAX / 2)
++		return -EINVAL;
++
++	writel(FIELD_PREP(SUN60I_DP_TU_SIZE, SUN60I_DP_TU_SYMBOLS_MAX) |
++	       FIELD_PREP(SUN60I_DP_TU_SYMBOLS, sym / SUN60I_DP_TU_FRAC) |
++	       FIELD_PREP(SUN60I_DP_TU_FRAC_SYMBOLS, sym % SUN60I_DP_TU_FRAC),
++	       dp->regs + SUN60I_DP_SRC0_TU_CONFIG);
++
++	count = DIV_ROUND_UP(DIV_ROUND_UP(mode->hdisplay * SUN60I_DP_BPP,
++					  BITS_PER_BYTE), dp->lanes);
++	if (count > SUN60I_DP_USER_DATA_COUNT_MASK)
++		return -EINVAL;
++	writel(count, dp->regs + SUN60I_DP_SRC0_USER_DATA_COUNT);
++
++	writel(sun60i_dp_secondary_window(dp, mode),
++	       dp->regs + SUN60I_DP_SRC0_SECONDARY_DATA_WINDOW);
++
++	return 0;
++}
++
++/*
++ * In asynchronous clock mode the core measures the pixel clock at its video
++ * input against the link symbol clock and returns it as MVID, over the fixed
++ * NVID. A pixel clock off the mode means the TCON does not feed the
++ * transmitter as the mode says.
++ */
++static int sun60i_dp_check_video_clock(struct sun60i_dp *dp,
++				       const struct drm_display_mode *mode)
++{
++	u32 mvid = readl(dp->regs + SUN60I_DP_SRC0_MVID) & SUN60I_DP_MVID_MASK;
++	u32 nvid = readl(dp->regs + SUN60I_DP_SRC0_NVID) & SUN60I_DP_MVID_MASK;
++	u64 khz = div_u64((u64)mvid * dp->link_rate, SUN60I_DP_NVID_ASYNC);
++	u64 diff = abs((s64)khz - mode->clock);
++
++	if (nvid == SUN60I_DP_NVID_ASYNC &&
++	    diff * 100 <= (u64)mode->clock * SUN60I_DP_MVID_TOLERANCE_PERCENT)
++		return 0;
++
++	dev_err(dp->dev, "video clock of %llu kHz for a mode of %d kHz\n",
++		khz, mode->clock);
++
++	return -EIO;
++}
++
++/*
++ * The stream starts at the next frame of the video input (section 15.4.5.3);
++ * the sink then reports that it is in sync with it.
++ */
++static int sun60i_dp_stream_on(struct sun60i_dp *dp,
++			       const struct drm_display_mode *mode)
++{
++	unsigned int waited;
++	u8 status;
++	int ret;
++
++	ret = sun60i_dp_check_video_clock(dp, mode);
++	if (ret)
++		return ret;
++
++	writel(SUN60I_DP_SOFT_RESET_VIDEO, dp->regs + SUN60I_DP_SOFT_RESET);
++	usleep_range(SUN60I_DP_VIDEO_RESET_US, 2 * SUN60I_DP_VIDEO_RESET_US);
++
++	writel(1, dp->regs + SUN60I_DP_SRC0_ENABLE);
++	writel(1, dp->regs + SUN60I_DP_SRC0_STREAM_ENABLE);
++
++	for (waited = 0; waited < SUN60I_DP_SINK_SYNC_TIMEOUT_MS;
++	     waited += SUN60I_DP_SINK_SYNC_POLL_MS) {
++		msleep(SUN60I_DP_SINK_SYNC_POLL_MS);
++
++		ret = drm_dp_dpcd_read_byte(&dp->aux, DP_SINK_STATUS, &status);
++		if (ret)
++			return ret;
++
++		if (status & DP_RECEIVE_PORT_0_STATUS)
++			return 0;
++	}
++
++	/* Left running: the sink may still lock on to it */
++	dev_warn(dp->dev, "the sink is not in sync with the stream\n");
++
++	return 0;
++}
++
++static void sun60i_dp_stream_off(struct sun60i_dp *dp)
++{
++	writel(0, dp->regs + SUN60I_DP_SRC0_STREAM_ENABLE);
++	writel(0, dp->regs + SUN60I_DP_SRC0_ENABLE);
++	sun60i_dp_output_on(dp, false);
++}
++
++static int sun60i_dp_enable(struct sun60i_dp *dp,
++			    const struct drm_display_mode *mode)
++{
++	int ret;
++
++	ret = sun60i_dp_read_caps(dp);
++	if (ret)
++		return ret;
++
++	/* Disabling put the sink in D3, it must be in D0 to train */
++	ret = drm_dp_link_power_up(&dp->aux, dp->dpcd[DP_DPCD_REV]);
++	if (ret)
++		return ret;
++
++	sun60i_dp_output_on(dp, true);
++
++	ret = sun60i_dp_train(dp, mode);
++	if (ret)
++		return ret;
++
++	sun60i_dp_set_msa(dp, mode);
++
++	ret = sun60i_dp_set_tu(dp, mode);
++	if (ret)
++		return ret;
++
++	return sun60i_dp_stream_on(dp, mode);
++}
++
++static const struct drm_display_mode *
++sun60i_dp_get_mode(struct drm_bridge *bridge, struct drm_atomic_commit *state)
++{
++	const struct drm_connector_state *conn_state;
++	const struct drm_crtc_state *crtc_state;
++	struct drm_connector *connector;
++
++	connector = drm_atomic_get_new_connector_for_encoder(state,
++							     bridge->encoder);
++	if (!connector)
++		return NULL;
++
++	conn_state = drm_atomic_get_new_connector_state(state, connector);
++	if (!conn_state || !conn_state->crtc)
++		return NULL;
++
++	crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
++	if (!crtc_state)
++		return NULL;
++
++	return &crtc_state->adjusted_mode;
++}
++
++static void sun60i_dp_bridge_atomic_enable(struct drm_bridge *bridge,
++					   struct drm_atomic_commit *state)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++	const struct drm_display_mode *mode;
++	int ret;
++
++	mode = sun60i_dp_get_mode(bridge, state);
++	if (!mode)
++		return;
++
++	ret = pm_runtime_resume_and_get(dp->dev);
++	if (ret < 0) {
++		dev_err(dp->dev, "failed to resume: %d\n", ret);
++		return;
++	}
++
++	ret = phy_init(dp->phy);
++	if (ret)
++		goto err_put;
++
++	ret = phy_power_on(dp->phy);
++	if (ret)
++		goto err_exit;
++
++	ret = sun60i_dp_enable(dp, mode);
++	if (ret)
++		goto err_off;
++
++	dev_dbg(dp->dev, "link at %u kHz, %u lanes\n", dp->link_rate * 10,
++		dp->lanes);
++	dp->enabled = true;
++
++	return;
++
++err_off:
++	sun60i_dp_stream_off(dp);
++	phy_power_off(dp->phy);
++err_exit:
++	phy_exit(dp->phy);
++err_put:
++	pm_runtime_put_autosuspend(dp->dev);
++	dev_err(dp->dev, "failed to enable the link: %d\n", ret);
++}
++
++static void sun60i_dp_bridge_atomic_disable(struct drm_bridge *bridge,
++					    struct drm_atomic_commit *state)
++{
++	struct sun60i_dp *dp = bridge_to_sun60i_dp(bridge);
++
++	if (!dp->enabled)
++		return;
++
++	sun60i_dp_stream_off(dp);
++	/* Tell the sink that the stream is gone */
++	if (dp->dpcd_valid)
++		drm_dp_link_power_down(&dp->aux, dp->dpcd[DP_DPCD_REV]);
++	phy_power_off(dp->phy);
++	phy_exit(dp->phy);
++	pm_runtime_put_autosuspend(dp->dev);
++	dp->enabled = false;
++}
++
+ static int sun60i_dp_bridge_attach(struct drm_bridge *bridge,
+ 				   struct drm_encoder *encoder,
+ 				   enum drm_bridge_attach_flags flags)
+@@ -510,6 +1107,8 @@ static const struct drm_bridge_funcs sun60i_dp_bridge_funcs = {
+ 	.detect			= sun60i_dp_bridge_detect,
+ 	.edid_read		= sun60i_dp_bridge_edid_read,
+ 	.mode_valid		= sun60i_dp_bridge_mode_valid,
++	.atomic_enable		= sun60i_dp_bridge_atomic_enable,
++	.atomic_disable		= sun60i_dp_bridge_atomic_disable,
+ };
+ 
+ /*

@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 07:12:32 +0200
+Subject: [PATCH] gpiolib: take a hog's line from the controller's of_xlate()
+
+Since the hogs moved into the GPIO core, gpiochip_add_hog() takes the
+first cell of the "gpios" property of a gpio-hog node as the line
+offset. For device tree nodes it still calls the controller's
+of_xlate(), but keeps only the flags from it. That is right for
+controllers with the default two-cell binding and wrong for every
+controller whose of_xlate() builds the offset from more than one cell.
+On sunxi ("#gpio-cells = <3>": bank, pin, flags) a hog on <1 1 0> is
+meant for pin 1 of the controller's second bank and takes line 1
+instead, a pin of the first bank. Seen on the Radxa Cubie A7S: a hog
+on PM1 of the R_PIO controller took PL1, the SDA line of the PMIC's
+I2C bus.
+
+Before the move, of_parse_own_gpio() took the descriptor from
+of_xlate_and_get_gpiod_flags(). Do so again: the OF helper returns the
+translated descriptor along with the flags, and gpiochip_add_hog() uses
+it for device tree nodes. Other firmware nodes have no of_xlate() and
+keep the first cell as the offset.
+
+Tested on Radxa Cubie A7S: a gpio-hog on PM4 of the R_PIO controller
+takes PM4 as an input, and PL1 stays with the PMIC's I2C controller.
+
+Fixes: d1d564ec4992 ("gpio: move hogs into GPIO core")
+Assisted-by: LLM
+---
+ drivers/gpio/gpiolib-of.c | 10 +++++-----
+ drivers/gpio/gpiolib-of.h | 15 ++++++++-------
+ drivers/gpio/gpiolib.c    | 18 +++++++++++-------
+ 3 files changed, 24 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/gpio/gpiolib-of.c b/drivers/gpio/gpiolib-of.c
+index f36e4b171fa7..707ef0f1a11e 100644
+--- a/drivers/gpio/gpiolib-of.c
++++ b/drivers/gpio/gpiolib-of.c
+@@ -721,9 +721,9 @@ struct gpio_desc *of_find_gpio(struct device_node *np, const char *con_id,
+ 	return desc;
+ }
+ 
+-int of_gpiochip_get_lflags(struct gpio_chip *chip,
+-			   struct fwnode_reference_args *gpiospec,
+-			   unsigned long *lflags)
++struct gpio_desc *of_gpiochip_get_hog_desc(struct gpio_chip *chip,
++					   struct fwnode_reference_args *gpiospec,
++					   unsigned long *lflags)
+ {
+ 	enum of_gpio_flags xlate_flags;
+ 	struct of_phandle_args args;
+@@ -737,11 +737,11 @@ int of_gpiochip_get_lflags(struct gpio_chip *chip,
+ 
+ 	desc = of_xlate_and_get_gpiod_flags(chip, &args, &xlate_flags);
+ 	if (IS_ERR(desc))
+-		return PTR_ERR(desc);
++		return desc;
+ 
+ 	*lflags = of_convert_gpio_flags(xlate_flags);
+ 
+-	return 0;
++	return desc;
+ }
+ 
+ #ifdef CONFIG_OF_DYNAMIC
+diff --git a/drivers/gpio/gpiolib-of.h b/drivers/gpio/gpiolib-of.h
+index 218cfe5bc4ac..a5f651ef3266 100644
+--- a/drivers/gpio/gpiolib-of.h
++++ b/drivers/gpio/gpiolib-of.h
+@@ -25,9 +25,9 @@ int of_gpiochip_add(struct gpio_chip *gc);
+ void of_gpiochip_remove(struct gpio_chip *gc);
+ bool of_gpiochip_instance_match(struct gpio_chip *gc, unsigned int index);
+ int of_gpio_count(const struct fwnode_handle *fwnode, const char *con_id);
+-int of_gpiochip_get_lflags(struct gpio_chip *chip,
+-			   struct fwnode_reference_args *gpiospec,
+-			   unsigned long *lflags);
++struct gpio_desc *of_gpiochip_get_hog_desc(struct gpio_chip *chip,
++					   struct fwnode_reference_args *gpiospec,
++					   unsigned long *lflags);
+ #else
+ static inline struct gpio_desc *of_find_gpio(struct device_node *np,
+ 					     const char *con_id,
+@@ -48,11 +48,12 @@ static inline int of_gpio_count(const struct fwnode_handle *fwnode,
+ {
+ 	return 0;
+ }
+-static inline int of_gpiochip_get_lflags(struct gpio_chip *chip,
+-					 struct fwnode_reference_args *gpiospec,
+-					 unsigned long *lflags)
++static inline struct gpio_desc *
++of_gpiochip_get_hog_desc(struct gpio_chip *chip,
++			 struct fwnode_reference_args *gpiospec,
++			 unsigned long *lflags)
+ {
+-	return -ENOENT;
++	return ERR_PTR(-ENOENT);
+ }
+ #endif /* CONFIG_OF_GPIO */
+ 
+diff --git a/drivers/gpio/gpiolib.c b/drivers/gpio/gpiolib.c
+index c0394c7d6279..51c46ad9af16 100644
+--- a/drivers/gpio/gpiolib.c
++++ b/drivers/gpio/gpiolib.c
+@@ -1026,9 +1026,13 @@ int gpiochip_add_hog(struct gpio_chip *gc, struct fwnode_handle *fwnode)
+ 			for (unsigned int j = 0; j < cells; j++)
+ 				gpiospec.args[j] = gpios[i * cells + j];
+ 
+-			ret = of_gpiochip_get_lflags(gc, &gpiospec, &lflags);
+-			if (ret)
+-				return ret;
++			/*
++			 * The controller's of_xlate() maps the cells to a
++			 * line offset, which is not always the first cell.
++			 */
++			desc = of_gpiochip_get_hog_desc(gc, &gpiospec, &lflags);
++			if (IS_ERR(desc))
++				return PTR_ERR(desc);
+ 
+ 			/*
+ 			 * If no line-name property is present, fall back to the OF
+@@ -1043,11 +1047,11 @@ int gpiochip_add_hog(struct gpio_chip *gc, struct fwnode_handle *fwnode)
+ 			 */
+ 			if (gpios[i * cells + 1])
+ 				lflags |= GPIO_ACTIVE_LOW;
+-		}
+ 
+-		desc = gpiochip_get_desc(gc, gpios[i * cells]);
+-		if (IS_ERR(desc))
+-			return PTR_ERR(desc);
++			desc = gpiochip_get_desc(gc, gpios[i * cells]);
++			if (IS_ERR(desc))
++				return PTR_ERR(desc);
++		}
+ 
+ 		ret = gpiod_hog(desc, name, lflags, dflags);
+ 		if (ret)

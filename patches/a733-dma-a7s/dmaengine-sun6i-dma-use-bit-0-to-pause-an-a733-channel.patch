@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:56:13 +0200
+Subject: [PATCH] dmaengine: sun6i-dma: Use bit 0 to pause an A733 channel
+
+The A733 pauses a channel with bit 0 of its DMA_PAU_REG; bits 31:1 are
+reserved (A733 user manual, section 13.1.7.7). The driver writes bit 1,
+the pause bit of the older controllers. On the A733 that write is
+dropped and the register reads back 0, so dmaengine_pause() reports
+success while the transfer goes on.
+
+Add the pause bit to the per-SoC configuration and set bit 0 for the
+A733. The other SoCs leave it at 0 and keep writing bit 1. Resume
+writes 0 to the register and needs no change.
+
+Tested on Radxa Cubie A7S: booted on two boards; sun6i-dma probes and
+dmatest passes with this change. The pause path is not exercised: no
+client in this test pauses a channel.
+
+Assisted-by: LLM
+---
+ drivers/dma/sun6i-dma.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/dma/sun6i-dma.c b/drivers/dma/sun6i-dma.c
+index db4946947b5b..d2c612a05ef9 100644
+--- a/drivers/dma/sun6i-dma.c
++++ b/drivers/dma/sun6i-dma.c
+@@ -72,6 +72,7 @@
+ 
+ #define DMA_CHAN_PAUSE		0x04
+ #define DMA_CHAN_PAUSE_PAUSE		BIT(1)
++#define DMA_CHAN_PAUSE_PAUSE_A733	BIT(0)
+ #define DMA_CHAN_PAUSE_RESUME		0
+ 
+ #define DMA_CHAN_LLI_ADDR	0x08
+@@ -162,6 +163,8 @@ struct sun6i_dma_config {
+ 	u32 irq_en_offset;
+ 	u32 irq_stat_offset;
+ 	u32 num_channels_per_reg;
++	/* Pause bit of DMA_CHAN_PAUSE, 0 means DMA_CHAN_PAUSE_PAUSE */
++	u32 pause_bit;
+ };
+ 
+ /*
+@@ -941,7 +944,7 @@ static int sun6i_dma_pause(struct dma_chan *chan)
+ 	dev_dbg(chan2dev(chan), "vchan %p: pause\n", &vchan->vc);
+ 
+ 	if (pchan) {
+-		writel(DMA_CHAN_PAUSE_PAUSE,
++		writel(sdev->cfg->pause_bit ?: DMA_CHAN_PAUSE_PAUSE,
+ 		       pchan->base + DMA_CHAN_PAUSE);
+ 	} else {
+ 		spin_lock(&sdev->lock);
+@@ -1350,6 +1353,7 @@ static struct sun6i_dma_config sun60i_a733_dma_cfg = {
+ 	.irq_en_offset   = DMA_IRQ_EN_OFFSET_A733,
+ 	.irq_stat_offset = DMA_IRQ_STAT_OFFSET_A733,
+ 	.num_channels_per_reg = DMA_IRQ_CHAN_NR_A733,
++	.pause_bit = DMA_CHAN_PAUSE_PAUSE_A733,
+ };
+ 
+ /*

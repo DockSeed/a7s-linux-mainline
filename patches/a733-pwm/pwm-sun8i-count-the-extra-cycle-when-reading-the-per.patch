@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 11:00:00 +0200
+Subject: [PATCH] pwm: sun8i: Count the extra cycle when reading the period
+ back
+
+PPR.PWM_ENTIRE_CYCLE holds the number of cycles of a period minus one,
+and sun8i_pwm_apply() programs it that way. sun8i_pwm_get_state() takes
+the field as the number of cycles.
+
+Without this, get_state() reports a period one cycle shorter than
+apply() programmed, so applying the read-back state shortens the period
+by one cycle each time; with CONFIG_PWM_DEBUG the core reports that
+.apply is not idempotent.
+
+Add the cycle in get_state(). The product in the period calculation
+stays below 2^63: 0x10000 cycles, a prescaler of at most 0x100 and a
+divider of at most 2^8 give 2^32, times 10^9.
+
+Seen on the Radxa Cubie A7S.
+
+Tested on Radxa Cubie A7S: booted on one board with CONFIG_PWM_DEBUG; a
+period set on a PWM1 channel reads back as set, and the core no longer
+reports that .apply is not idempotent.
+
+Assisted-by: LLM
+---
+ drivers/pwm/pwm-sun8i.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/pwm/pwm-sun8i.c b/drivers/pwm/pwm-sun8i.c
+index 6e196f31314b..b07805ad7084 100644
+--- a/drivers/pwm/pwm-sun8i.c
++++ b/drivers/pwm/pwm-sun8i.c
+@@ -123,7 +123,7 @@ static int sun8i_pwm_get_state(struct pwm_chip *chip,
+ 				struct pwm_state *state)
+ {
+ 	struct sun8i_pwm_chip *sun8i_chip = to_sun8i_pwm_chip(chip);
+-	u16 ent_cycle, act_cycle, prescale_k;
++	u32 ent_cycle, act_cycle, prescale_k;
+ 	u64 clk_rate, tmp;
+ 	u8 div_m;
+ 	u32 val;
+@@ -154,7 +154,8 @@ static int sun8i_pwm_get_state(struct pwm_chip *chip,
+ 	val = sun8i_pwm_readl(sun8i_chip, SUN8I_PWM_PERIOD(pwm->hwpwm));
+ 	act_cycle = FIELD_GET(SUN8I_PWM_PERIOD_ACT_CYCLE, val);
+ 
+-	ent_cycle = FIELD_GET(SUN8I_PWM_PERIOD_ENTIRE_CYCLE, val);
++	/* For N cycles, PPRx.PWM_ENTIRE_CYCLE = (N-1) */
++	ent_cycle = FIELD_GET(SUN8I_PWM_PERIOD_ENTIRE_CYCLE, val) + 1;
+ 
+ 	/*
+ 	 * The duration of the active phase should not be longer
+@@ -164,7 +165,7 @@ static int sun8i_pwm_get_state(struct pwm_chip *chip,
+ 		act_cycle = ent_cycle;
+ 
+ 	/*
+-	 * We have act_cycle <= ent_cycle <= 0xffff, prescale_k <= 0x100,
++	 * We have act_cycle <= ent_cycle <= 0x10000, prescale_k <= 0x100,
+ 	 * div_m <= 8. So the multiplication fits into an u64 without
+ 	 * overflow.
+ 	 */

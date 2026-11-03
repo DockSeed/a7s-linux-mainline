@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 10 Oct 2026 17:06:33 +0200
+Subject: [PATCH] pmdomain: sunxi: sun55i-pck600: Register the A733 GPU_CORE
+ domain by its state
+
+GPU_CORE is flagged always-on, so the driver reports it on whatever its
+PPU says. On the Cubie A7S its PPU reads off from boot until the GPU
+driver binds, which powers the domain through the GPU clock, its bus
+gate and its reset rather than through the PPU. A consumer attached to
+GPU_CORE on the strength of that report would reach an unpowered block,
+and an access there stops the SoC without a message.
+
+Drop the always-on flag. GPU_CORE is then registered in the state its
+PPU reports, as every other A733 domain.
+
+The PPU does not switch this domain by its policy. It comes on once
+the GPU PLL, the GPU module clock and the bus gate with the reset
+released are all on, and it stays on afterwards, also while GPU_TOP is
+off and with the policy written to off. A consumer must therefore not
+attach GPU_CORE: power_on() would wait for a status that the domain
+only reaches after the consumer has clocked the block, and time out.
+The GPU node uses GPU_TOP only.
+
+Tested on Radxa Cubie A7S: GPU_CORE registers off as its PPU reads,
+the GPU still binds, renders and runtime-suspends, no power transition
+reaches the controller while sync_state is pending, and with the GPU
+suspended the PPU keeps GPU_CORE on after its policy is written to off.
+
+Assisted-by: LLM
+---
+ drivers/pmdomain/sunxi/sun55i-pck600.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pmdomain/sunxi/sun55i-pck600.c b/drivers/pmdomain/sunxi/sun55i-pck600.c
+index 72b5cb79d358..6784d642360f 100644
+--- a/drivers/pmdomain/sunxi/sun55i-pck600.c
++++ b/drivers/pmdomain/sunxi/sun55i-pck600.c
+@@ -241,7 +241,7 @@ static const struct sunxi_pck600_desc sun55i_a523_pck600_desc = {
+ 
+ static const struct sunxi_pck600_pd_desc sun60i_a733_pck600_pds[] = {
+ 	{ "VI", }, { "DE_SYS", }, { "VE_DEC", }, { "VE_ENC", }, { "NPU", },
+-	{ "GPU_TOP", }, { "GPU_CORE", GENPD_FLAG_ALWAYS_ON },
++	{ "GPU_TOP", }, { "GPU_CORE", },
+ 	{ "PCIE", }, { "USB2", }, { "VO", }, { "VO1", },
+ };
+ 

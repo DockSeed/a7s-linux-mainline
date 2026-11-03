@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 7 Oct 2026 20:33:17 +0200
+Subject: [PATCH] PCI: sun60i-a733: Remove the Root Port's VPD capability
+
+The Root Port advertises a VPD capability, but every access to it times
+out and the PCI core logs "VPD access failed" on each read of the
+config space through sysfs, as lspci -vvv does.
+
+The DesignWare core does not hold VPD itself. It pulses cfg_vpd_int
+(SII_INT_0 bit 0, A733 user manual V1.00, 18.3.8.62) and leaves the
+transfer and the completion flag to the application. The A733 has no
+such logic, so the flag never changes.
+
+Remove the capability in host_init, before enumeration, as other
+DesignWare glue drivers remove capabilities their port cannot serve.
+This scopes it to this controller; a PCI quirk would have to match the
+port's vendor and device ID instead.
+
+Not covered: VPD of endpoints, which is theirs.
+
+Tested on Radxa Cubie A7S: booted on one board; the Root Port shows no VPD
+capability and no "VPD access failed" message appears.
+
+Assisted-by: LLM
+---
+ drivers/pci/controller/dwc/pcie-sun60i-a733.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-sun60i-a733.c b/drivers/pci/controller/dwc/pcie-sun60i-a733.c
+index 08515f8f6a71..106cfd5857ca 100644
+--- a/drivers/pci/controller/dwc/pcie-sun60i-a733.c
++++ b/drivers/pci/controller/dwc/pcie-sun60i-a733.c
+@@ -338,6 +338,13 @@ static int sun60i_a733_pcie_host_init(struct dw_pcie_rp *pp)
+ 	writel(SUN60I_A733_PCIE_SII_RP_EVENTS,
+ 	       pcie->app + SUN60I_A733_PCIE_SII_INT_0);
+ 
++	/*
++	 * The core only pulses cfg_vpd_int (SII_INT_0 bit 0) and leaves the
++	 * VPD transfer to the application, which the A733 does not have, so
++	 * every VPD access would time out.
++	 */
++	dw_pcie_remove_capability(pci, PCI_CAP_ID_VPD);
++
+ 	pcie->exp_cap = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+ 	if (!pcie->exp_cap)
+ 		return dev_err_probe(dev, -ENODEV,

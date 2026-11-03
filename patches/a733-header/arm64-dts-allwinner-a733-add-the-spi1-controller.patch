@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 08:29:10 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the SPI1 controller
+
+The SoC dtsi describes no SPI controller. Boards that bring SPI1 out on
+a pin header cannot use it.
+
+Add SPI1 at 0x02541000. The manual describes it as the instance with the
+display bus interface (DBI) next to the plain SPI mode, which is the
+binding's "allwinner,sun60i-a733-spi-dbi" compatible. In SPI mode it has
+64-entry TX and RX FIFOs and dual and quad master modes, which is what
+spi-sun6i assumes for the "allwinner,sun55i-a523-spi" fallback, so the
+driver binds through the binding's fallback chain and uses the plain SPI
+mode. The node has the bus clock, the module clock SPI1_CLK, the reset
+and DMA request 24 of DMAC0 for both directions (manual, 13.1).
+
+Add the pin groups that reach the Cubie A7S header J11, all function 6:
+clock, MOSI and MISO on PD11 to PD13, and chip select 0 on PD10 in a
+group of its own, so that a board can use a GPIO chip select. The node
+is disabled; a board enables it.
+
+Not covered: chip select 1, HOLD and WP, where PD14 (HOLD) is a plain
+GPIO pin on the header; the DBI mode, which the driver does not have.
+
+Tested on Radxa Cubie A7S: with the node enabled in a copy of the DTB and
+MOSI bridged to MISO on the header, 256-byte full-duplex transfers, which
+go through DMA, read back unchanged at 1 MHz and 10 MHz.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 30 +++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 599e9a00e2d8..d0677503b443 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -595,6 +595,20 @@ spdif_out_pb_pin: spdif-pb-pin {
+ 				function = "spdif";
+ 			};
+ 
++			/omit-if-no-ref/
++			spi1_cs0_pd_pin: spi1-cs0-pd-pin {
++				pins = "PD10";
++				allwinner,pinmux = <6>;
++				function = "spi1";
++			};
++
++			/omit-if-no-ref/
++			spi1_pd_pins: spi1-pd-pins {
++				pins = "PD11", "PD12", "PD13";
++				allwinner,pinmux = <6>;
++				function = "spi1";
++			};
++
+ 			uart0_pb_pins: uart0-pb-pins {
+ 				pins = "PB9", "PB10";
+ 				allwinner,pinmux = <2>;
+@@ -871,6 +885,22 @@ spdif: spdif@2537000 {
+ 			status = "disabled";
+ 		};
+ 
++		spi1: spi@2541000 {
++			compatible = "allwinner,sun60i-a733-spi-dbi",
++				     "allwinner,sun55i-a523-spi-dbi",
++				     "allwinner,sun55i-a523-spi";
++			reg = <0x02541000 0x1000>;
++			interrupts = <GIC_SPI 25 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_SPI1>, <&ccu CLK_SPI1>;
++			clock-names = "ahb", "mod";
++			resets = <&ccu RST_BUS_SPI1>;
++			dmas = <&dma 24>, <&dma 24>;
++			dma-names = "rx", "tx";
++			status = "disabled";
++			#address-cells = <1>;
++			#size-cells = <0>;
++		};
++
+ 		sid: efuse@3006000 {
+ 			compatible = "allwinner,sun60i-a733-sid",
+ 				     "allwinner,sun50i-a64-sid";

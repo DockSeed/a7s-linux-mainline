@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:47:29 +0200
+Subject: [PATCH] drm/sun4i: drv: Stop the pipeline walk at USB Type-C
+ connectors
+
+The display engine driver adds every node it finds along the display
+pipeline graph as a component, except connectors. A DisplayPort
+transmitter in USB Type-C alternate mode ends its graph at the SBU port
+of a usb-c-connector node, which no component driver binds, so the
+display engine would wait for it forever.
+
+Treat usb-c-connector nodes as connectors, as hdmi-connector nodes are.
+
+Tested on Radxa Cubie A7S: booted on one board; the display engine bound
+with the USB Type-C connector at the end of the output path.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_drv.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_drv.c b/drivers/gpu/drm/sun4i/sun4i_drv.c
+index 5e80d48aad75..c60861cf05ad 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_drv.c
++++ b/drivers/gpu/drm/sun4i/sun4i_drv.c
+@@ -155,7 +155,8 @@ static const struct component_master_ops sun4i_drv_master_ops = {
+ 
+ static bool sun4i_drv_node_is_connector(struct device_node *node)
+ {
+-	return of_device_is_compatible(node, "hdmi-connector");
++	return of_device_is_compatible(node, "hdmi-connector") ||
++		of_device_is_compatible(node, "usb-c-connector");
+ }
+ 
+ static bool sun4i_drv_node_is_frontend(struct device_node *node)

@@ -1,0 +1,269 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 14:55:56 +0200
+Subject: [PATCH] mmc: sunxi: Let the controller time the R1b busy on the A733
+
+With the host busy wait, an R1b command without data, such as CMD6,
+CMD38 or a CMD12 the driver sends, is completed by a delayed work that
+reads SMHC_STATUS CARD_BUSY until DAT0 is idle. Every such command
+costs at least one sleep of that work, also when the busy is short.
+
+The A733 controller can time the R1b busy itself. Send these commands
+with SMHC_CMD R1B_RESP and R1B_BUSY_HW_DETECT and unmask bit 17 of
+SMHC_RINTSTS, which the controller raises when the busy has ended. The
+interrupt is treated like the write busy clear: it says when to look
+at CARD_BUSY, and the request completes only with DAT0 idle, so an
+early or a missing interrupt cannot complete a busy command.
+
+Whether the controller raises the command done bit at the response or
+holds it until the busy ends is not documented. Since the busy wait,
+and with it busy_timeout, only starts with that bit, a command whose
+done bit does not arrive within its busy_timeout plus one second now
+fails as a response timeout.
+
+Not covered: writes keep their own busy-clear interrupt, and the
+automatic CMD12 is left as the controller sends it.
+
+Tested on Radxa Cubie A7S: booted on two boards; the CMD6 switch of the
+eMMC to HS400 enhanced strobe and the discards (CMD38) on the eMMC and
+the SD card complete, and no busy timeout is logged.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 116 +++++++++++++++++++++++++++--------
+ 1 file changed, 92 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index cb68adde3cda..57f8167eec4f 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -125,6 +125,8 @@
+ #define SDXC_WAIT_PRE_OVER		BIT(13)
+ #define SDXC_STOP_ABORT_CMD		BIT(14)
+ #define SDXC_SEND_INIT_SEQUENCE		BIT(15)
++#define SDXC_R1B_RESP			BIT(16)
++#define SDXC_R1B_BUSY_HW_DETECT		BIT(17)
+ #define SDXC_UPCLK_ONLY			BIT(21)
+ #define SDXC_READ_CEATA_DEV		BIT(22)
+ #define SDXC_CCS_EXPIRE			BIT(23)
+@@ -155,6 +157,7 @@
+ #define SDXC_AUTO_COMMAND_DONE		BIT(14)
+ #define SDXC_END_BIT_ERROR		BIT(15)
+ #define SDXC_SDIO_INTERRUPT		BIT(16)
++#define SDXC_R1B_BUSY_CLEAR		BIT(17)
+ #define SDXC_CARD_INSERT		BIT(30)
+ #define SDXC_CARD_REMOVE		BIT(31)
+ #define SDXC_INTERRUPT_ERROR_BIT \
+@@ -289,8 +292,17 @@
+  * only delay its recovery.
+  */
+ #define SDXC_WRITE_BUSY_TIMEOUT_MS	1000
+-/* A write whose busy clear came without DTC or ACD fails after this */
++/*
++ * A write whose busy clear came without DTC or ACD fails after this, and an
++ * R1b command with hardware busy detection whose command done does not come
++ * fails this long after its busy_timeout.
++ */
+ #define SDXC_BUSY_CLEAR_DONE_MS		1000
++/*
++ * Below this the first look at DAT0 can beat the R1b busy-clear interrupt,
++ * so a missing interrupt cannot be concluded from it.
++ */
++#define SDXC_R1B_IRQ_MIN_US		1000
+ /*
+  * max_busy_timeout. The wait is timed in software; the value decides which
+  * R1b commands the core leaves to the host and how large a discard it
+@@ -602,7 +614,8 @@ static bool sunxi_mmc_send_manual_stop(struct sunxi_mmc_host *host,
+ 
+ 	/* A busy clear of the failed write is no error of this command */
+ 	if (host->cfg->can_wait_busy)
+-		mmc_writel(host, REG_RINTR, SDXC_WRITE_BUSY_CLEAR);
++		mmc_writel(host, REG_RINTR,
++			   SDXC_WRITE_BUSY_CLEAR | SDXC_R1B_BUSY_CLEAR);
+ 
+ 	mmc_writel(host, REG_CARG, arg);
+ 	mmc_writel(host, REG_CMDR, cmd_val);
+@@ -761,6 +774,20 @@ static irqreturn_t sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
+  * stays the DAT0 level, so it holds whatever order the controller raises
+  * the done and the busy-clear interrupts in.
+  */
++/*
++ * An R1b command without data (CMD6, a CMD12 sent by the driver, CMD38,
++ * CMD5) is sent with SMHC_CMD R1B_RESP and R1B_BUSY_HW_DETECT, and the
++ * controller raises bit 17 of SMHC_RINTSTS when the busy ends. A write keeps
++ * its own busy-clear interrupt, and the automatic CMD12 is left to the
++ * controller.
++ */
++static bool sunxi_mmc_r1b_hw_detect(struct sunxi_mmc_host *host,
++				    struct mmc_request *mrq)
++{
++	return host->cfg->can_wait_busy && !mrq->data &&
++	       (mrq->cmd->flags & MMC_RSP_BUSY);
++}
++
+ static bool sunxi_mmc_wants_busy_wait(struct sunxi_mmc_host *host,
+ 				      struct mmc_request *mrq)
+ {
+@@ -868,7 +895,7 @@ static void sunxi_mmc_busy_work(struct work_struct *work)
+ 	unsigned long iflags;
+ 	irqreturn_t ret;
+ 	bool busy, expired;
+-	u32 seq;
++	u32 rint, seq;
+ 
+ 	spin_lock_irqsave(&host->lock, iflags);
+ 	if (!host->busy_wait) {
+@@ -917,13 +944,19 @@ static void sunxi_mmc_busy_work(struct work_struct *work)
+ 	 * busy-clear interrupt, neither handled nor pending: the interrupt
+ 	 * does not work as described. Say so.
+ 	 */
+-	if (!busy && mrq->data &&
+-	    !((host->int_sum | mmc_readl(host, REG_RINTR)) &
+-	      SDXC_WRITE_BUSY_CLEAR) &&
++	rint = host->int_sum | mmc_readl(host, REG_RINTR);
++	if (!busy && mrq->data && !(rint & SDXC_WRITE_BUSY_CLEAR) &&
+ 	    ktime_us_delta(ktime_get(), host->busy_start) >=
+ 	    SDXC_BUSY_IRQ_GRACE_MS * USEC_PER_MSEC)
+ 		dev_warn_ratelimited(mmc_dev(host->mmc),
+ 				     "write: busy ended without the busy-clear interrupt\n");
++	else if (!busy && sunxi_mmc_r1b_hw_detect(host, mrq) &&
++		 !(rint & SDXC_R1B_BUSY_CLEAR) &&
++		 ktime_us_delta(ktime_get(), host->busy_start) >=
++		 SDXC_R1B_IRQ_MIN_US)
++		dev_warn_ratelimited(mmc_dev(host->mmc),
++				     "cmd %d: busy ended without the r1b busy-clear interrupt\n",
++				     mrq->cmd->opcode);
+ 
+ 	mrq = sunxi_mmc_end_busy_wait(host, busy, "DAT0 poll");
+ 	spin_unlock_irqrestore(&host->lock, iflags);
+@@ -932,9 +965,13 @@ static void sunxi_mmc_busy_work(struct work_struct *work)
+ }
+ 
+ /*
+- * A write's busy clear came in SDXC_BUSY_CLEAR_DONE_MS ago and DTC or ACD
+- * never followed. Fail it as a data timeout, which sends the stop command,
+- * instead of leaving it open.
++ * Two requests that would otherwise stay open: a write whose busy clear
++ * came in SDXC_BUSY_CLEAR_DONE_MS ago without DTC or ACD, failed as a data
++ * timeout, which sends the stop command; and an R1b command with hardware
++ * busy detection whose command done never came, failed as a response
++ * timeout. Whether the controller raises that done bit at the response or
++ * only after the busy is not documented, and the busy wait that enforces
++ * busy_timeout only starts with it.
+  */
+ static void sunxi_mmc_done_work(struct work_struct *work)
+ {
+@@ -954,12 +991,19 @@ static void sunxi_mmc_done_work(struct work_struct *work)
+ 		return;
+ 	}
+ 
+-	dev_err(mmc_dev(host->mmc),
+-		"cmd %d WR: busy clear without DTC/ACD after %d ms, int_sum %08x rint %08x\n",
+-		mrq->cmd->opcode, SDXC_BUSY_CLEAR_DONE_MS, host->int_sum,
+-		mmc_readl(host, REG_RINTR));
+-
+-	host->int_sum |= SDXC_DATA_TIMEOUT;
++	if (mrq->data) {
++		dev_err(mmc_dev(host->mmc),
++			"cmd %d WR: busy clear without DTC/ACD after %d ms, int_sum %08x rint %08x\n",
++			mrq->cmd->opcode, SDXC_BUSY_CLEAR_DONE_MS,
++			host->int_sum, mmc_readl(host, REG_RINTR));
++		host->int_sum |= SDXC_DATA_TIMEOUT;
++	} else {
++		dev_err(mmc_dev(host->mmc),
++			"cmd %d: no command done with r1b busy detection, int_sum %08x rint %08x\n",
++			mrq->cmd->opcode, host->int_sum,
++			mmc_readl(host, REG_RINTR));
++		host->int_sum |= SDXC_RESP_TIMEOUT;
++	}
+ 	ret = sunxi_mmc_finalize_request(host);
+ 	spin_unlock_irqrestore(&host->lock, iflags);
+ 
+@@ -970,6 +1014,7 @@ static irqreturn_t sunxi_mmc_irq(int irq, void *dev_id)
+ {
+ 	struct sunxi_mmc_host *host = dev_id;
+ 	struct mmc_request *mrq, *busy_mrq = NULL;
++	const char *busy_how = "busy-clear irq";
+ 	u32 msk_int, idma_int;
+ 	bool finalize = false;
+ 	bool end_busy = false;
+@@ -1009,14 +1054,20 @@ static irqreturn_t sunxi_mmc_irq(int irq, void *dev_id)
+ 			 host->idma_err)
+ 			finalize = true;
+ 		else if (host->busy_wait) {
+-			/* The busy clear says when to look at DAT0 */
+-			if (msk_int & SDXC_WRITE_BUSY_CLEAR) {
++			/* Either busy clear says when to look at DAT0 */
++			u32 clear = msk_int & (SDXC_WRITE_BUSY_CLEAR |
++					       SDXC_R1B_BUSY_CLEAR);
++
++			if (clear) {
+ 				if (!(mmc_readl(host, REG_STAS) &
+-				      SDXC_CARD_DATA_BUSY))
++				      SDXC_CARD_DATA_BUSY)) {
+ 					end_busy = true;
+-				else
++					if (clear & SDXC_R1B_BUSY_CLEAR)
++						busy_how = "r1b busy-clear irq";
++				} else {
+ 					mod_delayed_work(system_dfl_long_wq,
+ 							 &host->busy_work, 0);
++				}
+ 			}
+ 		} else if ((host->int_sum & SDXC_INTERRUPT_DONE_BIT) &&
+ 			   !host->wait_dma) {
+@@ -1043,8 +1094,7 @@ static irqreturn_t sunxi_mmc_irq(int irq, void *dev_id)
+ 	if (finalize)
+ 		ret = sunxi_mmc_finalize_request(host);
+ 	else if (end_busy)
+-		busy_mrq = sunxi_mmc_end_busy_wait(host, false,
+-						   "busy-clear irq");
++		busy_mrq = sunxi_mmc_end_busy_wait(host, false, busy_how);
+ 
+ 	spin_unlock(&host->lock);
+ 
+@@ -1713,6 +1763,12 @@ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ 		imask |= SDXC_COMMAND_DONE;
+ 	}
+ 
++	/* Let the controller time this command's R1b busy */
++	if (sunxi_mmc_r1b_hw_detect(host, mrq)) {
++		cmd_val |= SDXC_R1B_RESP | SDXC_R1B_BUSY_HW_DETECT;
++		imask |= SDXC_R1B_BUSY_CLEAR;
++	}
++
+ 	dev_dbg(mmc_dev(mmc), "cmd %d(%08x) arg %x ie 0x%08x len %d\n",
+ 		cmd_val & 0x3f, cmd_val, cmd->arg, imask,
+ 		mrq->data ? mrq->data->blksz * mrq->data->blocks : 0);
+@@ -1751,16 +1807,28 @@ static void sunxi_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ 	}
+ 
+ 	/*
+-	 * A busy clear that came in after the previous write was finalized
+-	 * must not reach this request as a start bit error.
++	 * A busy clear that came in after the previous request was finalized
++	 * must not reach this one, bit 13 as a start bit error or bit 17 as
++	 * the end of this command's busy. The 0xffff the finalize writes does
++	 * not reach bit 17.
+ 	 */
+ 	if (host->cfg->can_wait_busy)
+-		mmc_writel(host, REG_RINTR, SDXC_WRITE_BUSY_CLEAR);
++		mmc_writel(host, REG_RINTR,
++			   SDXC_WRITE_BUSY_CLEAR | SDXC_R1B_BUSY_CLEAR);
+ 
+ 	host->mrq = mrq;
+ 	host->wait_dma = wait_dma;
+ 	host->req_seq++;
+ 
++	/* The busy wait only starts with the command done bit: bound it */
++	if (cmd_val & SDXC_R1B_BUSY_HW_DETECT) {
++		host->done_seq = host->req_seq;
++		mod_delayed_work(system_dfl_long_wq, &host->done_work,
++				 msecs_to_jiffies((cmd->busy_timeout ? :
++						   mmc->max_busy_timeout) +
++						  SDXC_BUSY_CLEAR_DONE_MS));
++	}
++
+ 	if (data) {
+ 		host->data_seq = host->req_seq;
+ 		host->data_timeout_ms = sunxi_mmc_data_timeout_ms(host, data);

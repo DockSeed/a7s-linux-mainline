@@ -1,0 +1,283 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:54:31 +0200
+Subject: [PATCH] phy: allwinner: Add a driver for the A733 USB2 PHY of the
+ USB3 controller
+
+The USB3 DRD controller of the A733 has a USB 2.0 UTMI PHY of its own.
+The DWC3 core soft reset runs on the UTMI clock of this PHY, so the PHY
+has to be powered up and its PLL locked before the core leaves reset.
+
+Add a driver for it. On init it has the 200 ohm reference resistor
+calibrated by the unit in the system control block, takes the PHY out of
+IDDQ, has it report VBUS as valid to the controller, and then releases
+the PHY reset.
+
+The user manual does not describe the calibration registers; their
+layout follows the vendor USB PHY driver. Unlike that driver, which maps
+the system control block itself and on exit writes fixed values back,
+this one goes through the regmap of the system control device and on
+exit restores the two control bits it found before init; the trim of
+RES1_CTRL stays cleared.
+
+IDDQ is cleared while the PHY is still held in reset: with a gap between
+the reset release and the IDDQ clear, the DWC3 soft reset that follows
+timed out on the board. The manual does not describe this; PHY_CTRL
+keeps a value written during reset.
+
+Tested on Radxa Cubie A7S: on two boards the USB3 controller was unbound
+and bound again many times, idle and under load, and every DWC3 core
+soft reset succeeded; on each unbind the calibration control bits went
+back to the values found at boot.
+
+Assisted-by: LLM
+---
+ drivers/phy/allwinner/Kconfig                |  15 ++
+ drivers/phy/allwinner/Makefile               |   1 +
+ drivers/phy/allwinner/phy-sun60i-a733-usb2.c | 205 +++++++++++++++++++
+ 3 files changed, 221 insertions(+)
+ create mode 100644 drivers/phy/allwinner/phy-sun60i-a733-usb2.c
+
+diff --git a/drivers/phy/allwinner/Kconfig b/drivers/phy/allwinner/Kconfig
+index fb584518b2d0..94c4dba69cde 100644
+--- a/drivers/phy/allwinner/Kconfig
++++ b/drivers/phy/allwinner/Kconfig
+@@ -57,3 +57,18 @@ config PHY_SUN50I_USB3
+ 	  part of Allwinner H6 SoC.
+ 
+ 	  This driver controls each individual USB 2+3 host PHY combo.
++
++config PHY_SUN60I_A733_USB2
++	tristate "Allwinner A733 USB2 PHY of the USB3 controller"
++	depends on ARCH_SUNXI || COMPILE_TEST
++	depends on HAS_IOMEM && OF
++	depends on RESET_CONTROLLER
++	select GENERIC_PHY
++	select MFD_SYSCON
++	help
++	  Enable this to support the USB 2.0 PHY of the USB3 DRD
++	  controller of the Allwinner A733 SoC. The controller needs
++	  this PHY to leave reset, also when only SuperSpeed devices
++	  are used.
++
++	  If unsure and building for an A733, say M.
+diff --git a/drivers/phy/allwinner/Makefile b/drivers/phy/allwinner/Makefile
+index bd74901a1255..0ffa5bf950f8 100644
+--- a/drivers/phy/allwinner/Makefile
++++ b/drivers/phy/allwinner/Makefile
+@@ -3,3 +3,4 @@ obj-$(CONFIG_PHY_SUN4I_USB)		+= phy-sun4i-usb.o
+ obj-$(CONFIG_PHY_SUN6I_MIPI_DPHY)	+= phy-sun6i-mipi-dphy.o
+ obj-$(CONFIG_PHY_SUN9I_USB)		+= phy-sun9i-usb.o
+ obj-$(CONFIG_PHY_SUN50I_USB3)		+= phy-sun50i-usb3.o
++obj-$(CONFIG_PHY_SUN60I_A733_USB2)	+= phy-sun60i-a733-usb2.o
+diff --git a/drivers/phy/allwinner/phy-sun60i-a733-usb2.c b/drivers/phy/allwinner/phy-sun60i-a733-usb2.c
+new file mode 100644
+index 000000000000..89c1e9c811a4
+--- /dev/null
++++ b/drivers/phy/allwinner/phy-sun60i-a733-usb2.c
+@@ -0,0 +1,205 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Allwinner A733 USB 2.0 PHY of the USB3 DRD controller
++ *
++ * The UTMI clock of this PHY runs the soft reset of the DWC3 core, so the PHY
++ * has to be up before the core leaves reset. Its PLL needs the 200 ohm
++ * reference resistor calibrated by the unit in the system control block,
++ * which the PHY of the PCIe/USB SERDES uses as well. The user manual does not
++ * describe those registers; their layout follows the vendor USB PHY driver,
++ * which maps them itself. Here they are reached through the regmap of the
++ * system control device. phy_exit() puts back the two control bits phy_init()
++ * changed and leaves the trim cleared.
++ */
++
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/io.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/phy/phy.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++
++#define PHY_CTRL_REG			0x10
++#define  PHY_CTRL_OTG_DISABLE		BIT(10)
++#define  PHY_CTRL_VBUS_VALID_EXT	BIT(5)
++#define  PHY_CTRL_SIDDQ			BIT(3)
++#define PHY_TUNE_REG			0x18
++#define  PHY_TUNE_VALUE			0x143338d6
++
++/* Registers of the system control block */
++#define RESCAL_CTRL_REG			0x160
++#define  RESCAL_CTRL_CAL_EN		BIT(0)
++#define  RESCAL_CTRL_RES200_TRIM_SEL	BIT(10)
++#define  RESCAL_CTRL_MASK		(RESCAL_CTRL_CAL_EN | \
++					 RESCAL_CTRL_RES200_TRIM_SEL)
++#define RESCAL_RES1_CTRL_REG		0x168
++#define  RESCAL_RES1_RES200_TRIM	GENMASK(15, 8)
++
++struct sun60i_a733_usb2_phy {
++	void __iomem		*base;
++	struct regmap		*sysctrl;
++	struct clk		*clk;
++	struct reset_control	*reset;
++	/* control bits as found before phy_init(), put back on exit */
++	u32			rescal_ctrl;
++};
++
++/* Select the trimmed 200 ohm reference, remembering what was there */
++static int sun60i_a733_usb2_phy_rescal_on(struct sun60i_a733_usb2_phy *p)
++{
++	int ret;
++
++	ret = regmap_read(p->sysctrl, RESCAL_CTRL_REG, &p->rescal_ctrl);
++	if (ret)
++		return ret;
++
++	ret = regmap_update_bits(p->sysctrl, RESCAL_CTRL_REG, RESCAL_CTRL_MASK,
++				 RESCAL_CTRL_RES200_TRIM_SEL);
++	if (ret)
++		return ret;
++
++	ret = regmap_update_bits(p->sysctrl, RESCAL_RES1_CTRL_REG,
++				 RESCAL_RES1_RES200_TRIM, 0);
++	if (ret)
++		regmap_update_bits(p->sysctrl, RESCAL_CTRL_REG,
++				   RESCAL_CTRL_MASK, p->rescal_ctrl);
++
++	return ret;
++}
++
++static void sun60i_a733_usb2_phy_rescal_off(struct sun60i_a733_usb2_phy *p)
++{
++	regmap_update_bits(p->sysctrl, RESCAL_CTRL_REG, RESCAL_CTRL_MASK,
++			   p->rescal_ctrl);
++}
++
++static int sun60i_a733_usb2_phy_init(struct phy *phy)
++{
++	struct sun60i_a733_usb2_phy *p = phy_get_drvdata(phy);
++	u32 val;
++	int ret;
++
++	ret = clk_prepare_enable(p->clk);
++	if (ret)
++		return ret;
++
++	ret = sun60i_a733_usb2_phy_rescal_on(p);
++	if (ret)
++		goto err_clk;
++
++	/*
++	 * Take the PHY out of IDDQ before its reset release: with a gap
++	 * between the release and the IDDQ clear, the DWC3 soft reset that
++	 * follows times out (measured, not documented). PHY_CTRL keeps a
++	 * value written while the PHY is in reset.
++	 */
++	val = readl(p->base + PHY_CTRL_REG);
++	val |= PHY_CTRL_OTG_DISABLE | PHY_CTRL_VBUS_VALID_EXT;
++	val &= ~PHY_CTRL_SIDDQ;
++	writel(val, p->base + PHY_CTRL_REG);
++
++	ret = reset_control_deassert(p->reset);
++	if (ret)
++		goto err_iddq;
++
++	writel(PHY_TUNE_VALUE, p->base + PHY_TUNE_REG);
++
++	return 0;
++
++err_iddq:
++	val = readl(p->base + PHY_CTRL_REG);
++	val &= ~(PHY_CTRL_OTG_DISABLE | PHY_CTRL_VBUS_VALID_EXT);
++	val |= PHY_CTRL_SIDDQ;
++	writel(val, p->base + PHY_CTRL_REG);
++	sun60i_a733_usb2_phy_rescal_off(p);
++err_clk:
++	clk_disable_unprepare(p->clk);
++	return ret;
++}
++
++static int sun60i_a733_usb2_phy_exit(struct phy *phy)
++{
++	struct sun60i_a733_usb2_phy *p = phy_get_drvdata(phy);
++	u32 val;
++
++	val = readl(p->base + PHY_CTRL_REG);
++	val &= ~(PHY_CTRL_OTG_DISABLE | PHY_CTRL_VBUS_VALID_EXT);
++	val |= PHY_CTRL_SIDDQ;
++	writel(val, p->base + PHY_CTRL_REG);
++
++	reset_control_assert(p->reset);
++	sun60i_a733_usb2_phy_rescal_off(p);
++	clk_disable_unprepare(p->clk);
++
++	return 0;
++}
++
++static const struct phy_ops sun60i_a733_usb2_phy_ops = {
++	.init	= sun60i_a733_usb2_phy_init,
++	.exit	= sun60i_a733_usb2_phy_exit,
++	.owner	= THIS_MODULE,
++};
++
++static int sun60i_a733_usb2_phy_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sun60i_a733_usb2_phy *p;
++	struct phy_provider *provider;
++	struct phy *phy;
++
++	p = devm_kzalloc(dev, sizeof(*p), GFP_KERNEL);
++	if (!p)
++		return -ENOMEM;
++
++	p->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(p->base))
++		return PTR_ERR(p->base);
++
++	/* -EPROBE_DEFER until the system control driver has registered it */
++	p->sysctrl = syscon_regmap_lookup_by_phandle(dev->of_node,
++						     "allwinner,sram");
++	if (IS_ERR(p->sysctrl))
++		return dev_err_probe(dev, PTR_ERR(p->sysctrl),
++				     "failed to get the system control regmap\n");
++
++	p->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(p->clk))
++		return dev_err_probe(dev, PTR_ERR(p->clk), "failed to get clock\n");
++
++	p->reset = devm_reset_control_get_exclusive(dev, NULL);
++	if (IS_ERR(p->reset))
++		return dev_err_probe(dev, PTR_ERR(p->reset),
++				     "failed to get reset\n");
++
++	phy = devm_phy_create(dev, NULL, &sun60i_a733_usb2_phy_ops);
++	if (IS_ERR(phy))
++		return PTR_ERR(phy);
++
++	phy_set_drvdata(phy, p);
++
++	provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
++
++	return PTR_ERR_OR_ZERO(provider);
++}
++
++static const struct of_device_id sun60i_a733_usb2_phy_of_match[] = {
++	{ .compatible = "allwinner,sun60i-a733-usb2-phy" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sun60i_a733_usb2_phy_of_match);
++
++static struct platform_driver sun60i_a733_usb2_phy_driver = {
++	.probe	= sun60i_a733_usb2_phy_probe,
++	.driver	= {
++		.name		= "sun60i-a733-usb2-phy",
++		.of_match_table	= sun60i_a733_usb2_phy_of_match,
++	},
++};
++module_platform_driver(sun60i_a733_usb2_phy_driver);
++
++MODULE_DESCRIPTION("Allwinner A733 USB2 PHY of the USB3 controller");
++MODULE_LICENSE("GPL");

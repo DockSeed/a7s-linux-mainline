@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 07:05:06 +0200
+Subject: [PATCH] drm/imagination: Ask for idle again when nobody holds the GPU
+
+When a client exits while the firmware has not yet reported POW_IDLE,
+the last put's ->runtime_idle, pvr_power_device_idle(), returns -EBUSY.
+rpm_idle() arms no retry after a refused idle check, and the watchdog,
+the only periodic worker, does nothing at usage count 0:
+pm_runtime_get_if_in_use() takes no reference and it jumps to the
+requeue. The GPU then stays powered with no user until the next client
+arrives.
+
+When the watchdog finds no reference, call pm_request_idle(). The
+watchdog only runs while the firmware runs, so this fires only on a
+powered GPU, at most once per watchdog period, and
+pvr_power_device_idle() still decides whether the GPU may suspend.
+
+Tested on Radxa Cubie A7S: after each of five GL client exits the GPU
+was runtime-suspended; whether this retry or the first idle check let
+it go was not traced.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/imagination/pvr_power.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/imagination/pvr_power.c b/drivers/gpu/drm/imagination/pvr_power.c
+index 75058f774c73..f9707e351572 100644
+--- a/drivers/gpu/drm/imagination/pvr_power.c
++++ b/drivers/gpu/drm/imagination/pvr_power.c
+@@ -242,8 +242,16 @@ pvr_watchdog_worker(struct work_struct *work)
+ 	if (pvr_dev->lost)
+ 		return;
+ 
+-	if (pm_runtime_get_if_in_use(from_pvr_device(pvr_dev)->dev) <= 0)
++	if (pm_runtime_get_if_in_use(from_pvr_device(pvr_dev)->dev) <= 0) {
++		/*
++		 * No reference is held, yet the watchdog runs, so the GPU is still
++		 * powered. The last put's idle check was refused by
++		 * pvr_power_device_idle() and rpm_idle() arms no retry, so nothing
++		 * would ask again. Ask on every tick; the idle callback still decides.
++		 */
++		pm_request_idle(from_pvr_device(pvr_dev)->dev);
+ 		goto out_requeue;
++	}
+ 
+ 	if (!READ_ONCE(pvr_dev->fw_dev.initialised))
+ 		goto out_pm_runtime_put;

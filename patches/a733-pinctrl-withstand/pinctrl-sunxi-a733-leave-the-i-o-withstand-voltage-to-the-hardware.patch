@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 20:19:58 +0200
+Subject: [PATCH] pinctrl: sunxi: a733: Leave the I/O withstand voltage to the
+ hardware
+
+The A733 programs its I/O withstand voltage through GPIO_POW_MOD_SEL
+with the one-bit-per-bank layout of older SoCs. The A733 register has
+two bits per bank, starting with bank PC at bits 5:4, so a bank supply
+in the DT writes the wrong bits.
+
+Do not program the withstand voltage on the A733. It stays as the boot
+chain set it, in the adaptive mode that follows the bank supply. The
+manual two-bit encoding is not documented unambiguously for banks PC,
+PE and PK.
+
+Tested on Radxa Cubie A7S: booted on two boards; GPIO_POW_MOD_SEL keeps
+the value of the boot chain after boot, after an SD read load, after an
+SD unbind and bind, and after loading the GMAC.
+
+Assisted-by: LLM
+---
+ drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+index 6c0eed5ce933..3b8d7dda66fc 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun60i-a733.c
+@@ -24,7 +24,6 @@ static const u8 a733_irq_bank_muxes[SUNXI_PINCTRL_MAX_BANKS] =
+ static struct sunxi_pinctrl_desc a733_pinctrl_data = {
+ 	.irq_banks = 11,
+ 	.pf_power_source = true,
+-	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_SEL,
+ };
+ 
+ static int a733_pinctrl_probe(struct platform_device *pdev)

@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 6 Oct 2026 19:41:22 +0200
+Subject: [PATCH] clk: sunxi-ng: a733: Take the IR TX clock from the 24 MHz
+ system clock
+
+IRTX_CLK_REG selects 000 = SYS_CLK24M in the A733 manual. The driver
+maps 000 to the 32 kHz oscillator, so at the reset value the clock tree
+reports irtx at 32768 Hz while the hardware runs from 24 MHz, and an IR
+TX driver would compute its carrier from a rate about 730 times too
+low.
+
+Map 000 to the 24 MHz system clock. 001 = PERI1_600M and 010 = DCXO are
+unchanged.
+
+Tested on Radxa Cubie A7S: the IR transmitter on mux value 0 finished in
+the time of a 24 MHz source, not of the 32 kHz oscillator, and the clock
+tree showed sys-24M as its parent.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index ee5925122e0e..1ec59f5f0df4 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -1123,7 +1123,7 @@ static SUNXI_CCU_M_DATA_WITH_MUX_GATE(irrx_clk, "irrx", irrx_parents, 0x1000,
+ static SUNXI_CCU_GATE_HWS(bus_irrx_clk, "bus-irrx", apb0_hws, 0x1004, BIT(0), 0);
+ 
+ static const struct clk_parent_data irtx_parents[] = {
+-	{ .fw_name = "losc"},
++	{ .hw = &sys_24M_clk.hw },
+ 	{ .hw = &pll_periph1_600M_clk.hw },
+ 	{ .fw_name = "hosc"},
+ };

@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 05:44:32 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Use the CPU operating
+ points
+
+Include the CPU operating points on the Cubie A7S, set them on all
+eight CPUs and give the first CPU of each cluster its supply: DCDC5 for
+the Cortex-A55 cores and DCDC3 for the Cortex-A76 cores. The other CPUs
+of a cluster share the table, and with it the regulator.
+
+The AXP318W settles an output at 10 mV per 7.8125 us, 1280 uV/us, with
+its dynamic voltage scaling bit set, and the regulator driver has no
+ramp setting of its own; the boot firmware sets the scaling bit and
+the kernel does not. Set regulator-ramp-delay on both rails so that
+the regulator core waits for the output before the OPP core raises the
+clock. The property only sets this wait and programs nothing. A change over
+the full 250 mV window waits 196 us.
+
+With this patch cpufreq runs on the Cubie A7S. A kernel without the
+sun50i-cpufreq-nvmem support for the A733 finds operating points that
+all carry opp-supported-hw and stops with an empty table, so the CPUs
+stay at the boot clock.
+
+Not covered: the settling time of a rail with a different slew setting
+(the wait is then too short by the factor of the setting) and changing
+the AXP318W regulator driver to set the slew.
+
+Tested on Radxa Cubie A7S: booted on two boards; cpufreq runs on all
+eight CPUs with DCDC5 supplying the A55 cluster and DCDC3 the A76
+cluster, each rail follows the operating point of its cluster, holds it
+under load at the top points and returns to the lowest voltage at the
+lowest points, and no regulator warning or failed voltage setting
+appears.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 37 +++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 76793d350b30..e76f308e21ba 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -3,6 +3,7 @@
+ /dts-v1/;
+ 
+ #include "sun60i-a733.dtsi"
++#include "sun60i-a733-cpu-opp.dtsi"
+ 
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/leds/common.h>
+@@ -90,6 +91,40 @@ combophy0_ss: endpoint {
+ 	};
+ };
+ 
++&cpu0 {
++	operating-points-v2 = <&cluster0_opp>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu1 {
++	operating-points-v2 = <&cluster0_opp>;
++};
++
++&cpu2 {
++	operating-points-v2 = <&cluster0_opp>;
++};
++
++&cpu3 {
++	operating-points-v2 = <&cluster0_opp>;
++};
++
++&cpu4 {
++	operating-points-v2 = <&cluster0_opp>;
++};
++
++&cpu5 {
++	operating-points-v2 = <&cluster0_opp>;
++};
++
++&cpu6 {
++	operating-points-v2 = <&cluster1_opp>;
++	cpu-supply = <&reg_dcdc3>;
++};
++
++&cpu7 {
++	operating-points-v2 = <&cluster1_opp>;
++};
++
+ &ehci1 {
+ 	status = "okay";
+ };
+@@ -224,6 +259,7 @@ reg_dcdc3: dcdc3 {
+ 				regulator-name = "vdd-cpub";
+ 				regulator-min-microvolt = <800000>;
+ 				regulator-max-microvolt = <1050000>;
++				regulator-ramp-delay = <1280>;
+ 				regulator-always-on;
+ 			};
+ 
+@@ -240,6 +276,7 @@ reg_dcdc5: dcdc5 {
+ 				regulator-name = "vdd-cpul";
+ 				regulator-min-microvolt = <800000>;
+ 				regulator-max-microvolt = <1050000>;
++				regulator-ramp-delay = <1280>;
+ 				regulator-always-on;
+ 			};
+ 		};

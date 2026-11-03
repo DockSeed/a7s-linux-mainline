@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:35:37 +0200
+Subject: [PATCH] dt-bindings: clock: sun60i-a733-ccu: Add the SERDES CCU
+
+The SERDES block of the A733 starts with a small clock and reset unit at
+0x06c00000. It holds the bus gates of the USB3 controller, the reset of
+the USB 2.0 PHY of that controller and the select that takes the PIPE
+clock of the controller from the main CCU instead of the combo PHY (user
+manual 18.2.6.2). It is fed by the SERDES bus matrix gates of the main
+CCU and by its USB2_U2_PIPE clock, the clock source of the PIPE clock of
+the controller (18.4.3), and its registers only answer while the SERDES
+reset of the main CCU is deasserted.
+
+Add a compatible for it, with these inputs, and the indices of its
+clocks and resets.
+
+Tested on Radxa Cubie A7S: booted on two boards; the node described by
+this binding probes and provides the clocks, including the PIPE clock,
+and the reset that the USB3 controller, its USB 2.0 PHY and the PCIe
+controller use.
+
+Assisted-by: LLM
+---
+ .../clock/allwinner,sun60i-a733-ccu.yaml      | 52 ++++++++++++++++++-
+ .../clock/allwinner,sun60i-a733-serdes-ccu.h  | 10 ++++
+ .../reset/allwinner,sun60i-a733-serdes-ccu.h  |  8 +++
+ 3 files changed, 68 insertions(+), 2 deletions(-)
+ create mode 100644 include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h
+ create mode 100644 include/dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h
+
+diff --git a/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml b/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
+index 7c9068d3bbb0..9b1268300864 100644
+--- a/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
++++ b/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
+@@ -14,18 +14,22 @@ properties:
+     enum:
+       - allwinner,sun60i-a733-ccu
+       - allwinner,sun60i-a733-r-ccu
++      - allwinner,sun60i-a733-serdes-ccu
+ 
+   reg:
+     maxItems: 1
+ 
+   clocks:
+-    minItems: 4
++    minItems: 2
+     maxItems: 7
+ 
+   clock-names:
+-    minItems: 4
++    minItems: 2
+     maxItems: 7
+ 
++  resets:
++    maxItems: 1
++
+   "#clock-cells":
+     const: 1
+ 
+@@ -91,6 +95,39 @@ allOf:
+             - const: pll-periph0-300m
+             - const: pll-periph1-300m
+ 
++  - if:
++      properties:
++        compatible:
++          enum:
++            - allwinner,sun60i-a733-serdes-ccu
++
++    then:
++      properties:
++        clocks:
++          items:
++            - description: SERDES AHB bus matrix gate
++            - description: SERDES MBUS bus matrix gate
++            - description: USB2_U2_PIPE clock, the PIPE clock of the controller when the CCU feeds it
++
++        clock-names:
++          items:
++            - const: ahb
++            - const: mbus
++            - const: usb2-u2-pipe
++
++      required:
++        - resets
++
++    else:
++      properties:
++        clocks:
++          minItems: 4
++
++        clock-names:
++          minItems: 4
++
++        resets: false
++
+ additionalProperties: false
+ 
+ examples:
+@@ -104,4 +141,15 @@ examples:
+       #reset-cells = <1>;
+     };
+ 
++  - |
++    clock-controller@6c00000 {
++      compatible = "allwinner,sun60i-a733-serdes-ccu";
++      reg = <0x06c00000 0x10>;
++      clocks = <&ccu 68>, <&ccu 81>, <&ccu 223>;
++      clock-names = "ahb", "mbus", "usb2-u2-pipe";
++      resets = <&ccu 92>;
++      #clock-cells = <1>;
++      #reset-cells = <1>;
++    };
++
+ ...
+diff --git a/include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h b/include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h
+new file mode 100644
+index 000000000000..ca87c2f120d6
+--- /dev/null
++++ b/include/dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h
+@@ -0,0 +1,10 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++
++#ifndef _DT_BINDINGS_CLK_ALLWINNER_SUN60I_A733_SERDES_CCU_H_
++#define _DT_BINDINGS_CLK_ALLWINNER_SUN60I_A733_SERDES_CCU_H_
++
++#define CLK_BUS_USB3_HCLK	0
++#define CLK_BUS_USB3_ACLK	1
++#define CLK_USB3_PIPE_CCU	2
++
++#endif /* _DT_BINDINGS_CLK_ALLWINNER_SUN60I_A733_SERDES_CCU_H_ */
+diff --git a/include/dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h b/include/dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h
+new file mode 100644
+index 000000000000..54b1fc1b5842
+--- /dev/null
++++ b/include/dt-bindings/reset/allwinner,sun60i-a733-serdes-ccu.h
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++
++#ifndef _DT_BINDINGS_RST_ALLWINNER_SUN60I_A733_SERDES_CCU_H_
++#define _DT_BINDINGS_RST_ALLWINNER_SUN60I_A733_SERDES_CCU_H_
++
++#define RST_USB3_USB2_PHY	0
++
++#endif /* _DT_BINDINGS_RST_ALLWINNER_SUN60I_A733_SERDES_CCU_H_ */

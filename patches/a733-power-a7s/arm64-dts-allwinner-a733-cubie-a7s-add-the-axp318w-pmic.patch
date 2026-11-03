@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:23:47 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Add the AXP318W PMIC
+
+The Cubie A7S is powered by an X-Powers AXP318W PMIC at address 0x36 on
+S_TWI0. Its two switch outputs behind DCDC1 feed the board's 3.3 V
+devices: SWOUT1 the Ethernet PHY, SWOUT2 the SD card, the eMMC, the I/O
+bank PH and other 3.3 V I/O. Linux does not know about the PMIC, so no
+device can name these rails as its supply.
+
+Describe the PMIC with DCDC1 at 3.3 V and its two switch outputs. All
+three are on when Linux starts, and they stay always-on: SWOUT2 also
+feeds VCC-IO, and the SD card supply has no load switch, so it is never
+cut. SWOUT1 also feeds bank PD through R251, bank PJ and the TWI2/TWI7
+pull-ups on J11; bank PJ and the pull-ups name no supply.
+
+Not covered: the other rails, which stay as the boot chain set them, and
+the PMIC interrupt, which nothing uses yet. The node is still an
+interrupt controller, as the binding asks.
+
+Tested on Radxa Cubie A7S: booted on two boards; the AXP318W probes at
+0-0036 and registers its regulators, vcc-3v3-sys at 3.3 V. A minute
+after boot the output enable registers 0x11 and 0x12 read 0x1f and 0x17.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 35 +++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index ad82a4425039..cfbe67e74b9d 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -102,6 +102,41 @@ &r_i2c0 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&r_i2c0_pl_pins>;
+ 	status = "okay";
++
++	axp318: pmic@36 {
++		compatible = "x-powers,axp318w";
++		reg = <0x36>;
++		interrupt-controller;
++		#interrupt-cells = <1>;
++
++		regulators {
++			reg_dcdc1: dcdc1 {
++				regulator-name = "vcc-3v3-sys";
++				regulator-min-microvolt = <3300000>;
++				regulator-max-microvolt = <3300000>;
++				regulator-always-on;
++			};
++
++			/*
++			 * Ethernet PHY, bank PD through R251, bank PJ, the
++			 * TWI2/TWI7 pull-ups on J11. Always on: bank PJ and the
++			 * pull-ups name no supply.
++			 */
++			reg_swout1: swout1 {
++				regulator-name = "vcc33-lcd";
++				regulator-always-on;
++			};
++
++			/*
++			 * VCC-IO (bank PB, console), SD card, eMMC, bank PH. Always
++			 * on: the card supply has no load switch and is never cut.
++			 */
++			reg_swout2: swout2 {
++				regulator-name = "vcc-io";
++				regulator-always-on;
++			};
++		};
++	};
+ };
+ 
+ &r_i2c1 {

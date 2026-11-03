@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 14:03:21 +0200
+Subject: [PATCH] Bluetooth: btusb: Request the reset GPIO only where a handler
+ uses it
+
+When onboard_usb_dev powers a WiFi/Bluetooth combo chip, the enable
+line of the chip is the reset-gpios property of its USB device node,
+and onboard_usb_dev holds that line. btusb asks for a "reset" GPIO on
+the same node for every device and ends the probe on any error, so it
+fails with -EBUSY and the Bluetooth function of the chip stays unbound.
+Seen on the Radxa Cubie A7S with an AIC8800D80: no hci0.
+
+Only the reset handlers of Intel, MediaTek, QCA and Realtek devices
+use the line. Request it for those devices only. For them nothing
+changes, a failure to get the line still ends the probe. All other
+devices never drove the line after probe. On a combo chip a btusb
+reset through it would also cut the WiFi function.
+
+A combo chip of one of these vendors behind onboard_usb_dev still
+collides; that needs the reset to go through onboard_usb_dev.
+
+Tested on Radxa Cubie A7S: with onboard_usb_dev holding the CHIP_EN line of
+the AIC8800D80, btusb binds the Bluetooth interfaces and hci0 comes up,
+WiFi on the same chip keeps working.
+
+Assisted-by: LLM
+---
+ drivers/bluetooth/btusb.c | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
+index dc7191bf4234..9d05e35e6118 100644
+--- a/drivers/bluetooth/btusb.c
++++ b/drivers/bluetooth/btusb.c
+@@ -4299,13 +4299,21 @@ static int btusb_probe(struct usb_interface *intf,
+ 
+ 	SET_HCIDEV_DEV(hdev, &intf->dev);
+ 
+-	reset_gpio = gpiod_get_optional(&data->udev->dev, "reset",
+-					GPIOD_OUT_LOW);
+-	if (IS_ERR(reset_gpio)) {
+-		err = PTR_ERR(reset_gpio);
+-		goto err_free_hdev;
+-	} else if (reset_gpio) {
+-		data->reset_gpio = reset_gpio;
++	/* Only the Intel, MediaTek, QCA and Realtek reset handlers use the
++	 * reset line. On other devices it may belong to another driver,
++	 * such as onboard_usb_dev powering a WiFi/Bluetooth combo chip.
++	 */
++	if (id->driver_info & (BTUSB_INTEL_COMBINED | BTUSB_MEDIATEK |
++			       BTUSB_QCA_ROME | BTUSB_QCA_WCN6855 |
++			       BTUSB_REALTEK)) {
++		reset_gpio = gpiod_get_optional(&data->udev->dev, "reset",
++						GPIOD_OUT_LOW);
++		if (IS_ERR(reset_gpio)) {
++			err = PTR_ERR(reset_gpio);
++			goto err_free_hdev;
++		} else if (reset_gpio) {
++			data->reset_gpio = reset_gpio;
++		}
+ 	}
+ 
+ 	hdev->open    = btusb_open;

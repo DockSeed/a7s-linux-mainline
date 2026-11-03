@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:54:58 +0200
+Subject: [PATCH] dt-bindings: clock: sun60i-a733-ccu: Add the A733 CPU CCU
+
+The A733 keeps its CPU clocks in a block of their own, CPU_PLL_CFG at
+0x08870000: one PLL each for the two core clusters and the DSU, a backup
+PLL, and one clock mux per cluster and for the DSU. Linux has no
+description of it, so the CPU clocks cannot be named in the device tree.
+
+Add the compatible to the A733 CCU binding. The block has no resets. Its
+inputs are the high frequency oscillator, which is the PLLs' reference
+and, with the 32 kHz oscillator and the internal oscillator, a source of
+the muxes' slow clock, and two outputs of the peripheral PLL 0 that the
+muxes can select: 1.2 GHz for the core clusters and 600 MHz for the DSU.
+
+The header exports the clocks a consumer needs: the two cluster clocks,
+the DSU clock and the DSU's AXI clock. The PLLs and their dividers stay
+internal to the driver.
+
+Tested on Radxa Cubie A7S: booted on two boards; the node with this
+compatible binds the CPU CCU driver, has no reset cells and provides the
+clocks of both core clusters, the DSU and the DSU's AXI divider.
+
+Assisted-by: LLM
+---
+ .../clock/allwinner,sun60i-a733-ccu.yaml      | 50 ++++++++++++++++++-
+ .../clock/allwinner,sun60i-a733-cpu-ccu.h     | 11 ++++
+ 2 files changed, 60 insertions(+), 1 deletion(-)
+ create mode 100644 include/dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h
+
+diff --git a/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml b/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
+index 9b1268300864..012996e52771 100644
+--- a/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
++++ b/Documentation/devicetree/bindings/clock/allwinner,sun60i-a733-ccu.yaml
+@@ -13,6 +13,7 @@ properties:
+   compatible:
+     enum:
+       - allwinner,sun60i-a733-ccu
++      - allwinner,sun60i-a733-cpu-ccu
+       - allwinner,sun60i-a733-r-ccu
+       - allwinner,sun60i-a733-serdes-ccu
+ 
+@@ -42,9 +43,22 @@ required:
+   - clocks
+   - clock-names
+   - "#clock-cells"
+-  - "#reset-cells"
+ 
+ allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: allwinner,sun60i-a733-cpu-ccu
++
++    then:
++      properties:
++        "#reset-cells": false
++
++    else:
++      required:
++        - "#reset-cells"
++
+   - if:
+       properties:
+         compatible:
+@@ -67,6 +81,30 @@ allOf:
+             - const: iosc
+             - const: losc-fanout
+ 
++  - if:
++      properties:
++        compatible:
++          enum:
++            - allwinner,sun60i-a733-cpu-ccu
++
++    then:
++      properties:
++        clocks:
++          items:
++            - description: High Frequency Oscillator (19.2MHz, 24MHz, or 26MHz)
++            - description: Low Frequency Oscillator (usually at 32kHz)
++            - description: Internal Oscillator
++            - description: Peripherals PLL 0 (1200 MHz output)
++            - description: Peripherals PLL 0 (600 MHz output)
++
++        clock-names:
++          items:
++            - const: hosc
++            - const: losc
++            - const: iosc
++            - const: pll-periph0-2x
++            - const: pll-periph0-600m
++
+   - if:
+       properties:
+         compatible:
+@@ -152,4 +190,14 @@ examples:
+       #reset-cells = <1>;
+     };
+ 
++  - |
++    clock-controller@8870000 {
++      compatible = "allwinner,sun60i-a733-cpu-ccu";
++      reg = <0x08870000 0x4000>;
++      clocks = <&osc>, <&rtc 0>, <&rtc 2>, <&ccu 4>, <&ccu 7>;
++      clock-names = "hosc", "losc", "iosc", "pll-periph0-2x",
++                    "pll-periph0-600m";
++      #clock-cells = <1>;
++    };
++
+ ...
+diff --git a/include/dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h b/include/dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h
+new file mode 100644
+index 000000000000..6d0b6399338e
+--- /dev/null
++++ b/include/dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h
+@@ -0,0 +1,11 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++
++#ifndef _DT_BINDINGS_CLK_ALLWINNER_SUN60I_A733_CPU_CCU_H_
++#define _DT_BINDINGS_CLK_ALLWINNER_SUN60I_A733_CPU_CCU_H_
++
++#define CLK_CPU_L		0
++#define CLK_CPU_B		1
++#define CLK_CPU_DSU		2
++#define CLK_CPU_DSU_AXI		3
++
++#endif /* _DT_BINDINGS_CLK_ALLWINNER_SUN60I_A733_CPU_CCU_H_ */

@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 20:33:32 +0200
+Subject: [PATCH] ASoC: dt-bindings: sun4i-spdif: Add the Allwinner A733
+
+The S/PDIF (OWA) block of the A733 has the control register of the
+A523 one and, like it, separate TX and RX module clocks with a single
+reset. Add a compatible with the A523 as fallback.
+
+Tested on Radxa Cubie A7S: booted on two boards; the OWA node with this
+compatible binds sun4i-spdif and plays 48 kHz and 44.1 kHz, which the
+SoC's own receiver takes in with every window clean and the channel
+status intact. The OWA pins PB7 and PB8 reach the header J6, but
+nothing is attached there, so the stream is proven inside the SoC only.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/sound/allwinner,sun4i-a10-spdif.yaml   | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-spdif.yaml b/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-spdif.yaml
+index 1d089ba70f45..3679b6f2979e 100644
+--- a/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-spdif.yaml
++++ b/Documentation/devicetree/bindings/sound/allwinner,sun4i-a10-spdif.yaml
+@@ -30,6 +30,9 @@ properties:
+       - items:
+           - const: allwinner,sun50i-a64-spdif
+           - const: allwinner,sun8i-h3-spdif
++      - items:
++          - const: allwinner,sun60i-a733-spdif
++          - const: allwinner,sun55i-a523-spdif
+ 
+   reg:
+     maxItems: 1

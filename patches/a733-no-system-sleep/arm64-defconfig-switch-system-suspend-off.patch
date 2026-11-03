@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 17 Oct 2026 12:00:00 +0200
+Subject: [PATCH] arm64: defconfig: Switch system suspend off
+
+Any system sleep resets the Radxa Cubie A7S: after a suspend to idle the
+SPL banner appears again, nothing resumes and no reboot message is
+logged. The firmware has no SYSTEM_SUSPEND, so the platform has no deep
+sleep, and suspend to idle saves no power on its own.
+
+Without CONFIG_SUSPEND, /sys/power/state offers neither "freeze" nor
+"mem", the suspend request of a desktop session is refused, and nothing
+can trigger the reset.
+
+CONFIG_HIBERNATION stays, so CONFIG_PM_SLEEP and the system-sleep
+callbacks of the drivers are still built. Switch CONFIG_SUSPEND on again
+when the platform gets deep sleep.
+
+Tested on Radxa Cubie A7S: /sys/power/state offers only "disk", there is
+no mem_sleep, and writing "freeze" to /sys/power/state fails.
+
+Assisted-by: LLM
+---
+ arch/arm64/configs/defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 9ae084ec02d8..db1990a64112 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -89,6 +89,7 @@ CONFIG_NUMA=y
+ CONFIG_XEN=y
+ CONFIG_COMPAT=y
+ CONFIG_RANDOMIZE_BASE=y
++# CONFIG_SUSPEND is not set
+ CONFIG_HIBERNATION=y
+ CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
+ CONFIG_ENERGY_MODEL=y

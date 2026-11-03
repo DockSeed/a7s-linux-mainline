@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 10 Oct 2026 15:27:17 +0200
+Subject: [PATCH] usb: typec: tcpm: Restart discovery after a response timeout
+
+When the partner's response to Discover Identity, Discover SVIDs or
+Discover Modes on SOP arrives after tVDMSenderResponse, the VDM state
+machine times out, finishes the AMS and never asks again. Discovery
+stops at that step, and the partner's alternate modes stay unregistered
+until the next attach. On a DisplayPort alternate mode connection that
+is a connection without a picture.
+
+Seen on the Radxa Cubie A7S with a USB-C DisplayPort adapter: it
+answers each discovery request within about 17 ms, but in some cold
+boots one answer, to Discover Identity or to Discover Modes, came only
+after about 50 ms, after the 30 ms response timeout, and the boot
+ended without DisplayPort.
+
+A timeout is not a refusal. Restart discovery from Discover Identity
+when one of the three requests times out on SOP, at most three times
+per attach; the count is reset on attach and on hard reset.
+svdm_consume_identity() clears the modes gathered by the interrupted
+pass. Discovery on SOP' keeps its existing handling. A late Discover
+Identity or Discover SVIDs response is dropped; a late Discover Modes
+response that arrives while the restarted discovery is in flight is
+still handled as a mode response.
+
+Not covered: a data role swap restarts discovery without resetting the
+count.
+
+Tested on Radxa Cubie A7S: not tested; the restart was not triggered in
+the runs.
+
+Assisted-by: LLM
+---
+ drivers/usb/typec/tcpm/tcpm.c | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 06692feb6d46..999e999d039e 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -296,6 +296,7 @@ enum frs_typec_current {
+ 
+ #define GET_SINK_CAP_RETRY_MS	100
+ #define SEND_DISCOVERY_VDM_RETRY_MS	100
++#define VDM_DISCOVERY_TIMEOUT_RETRIES	3
+ 
+ struct pd_mode_data {
+ 	int svid_index;		/* current SVID index		*/
+@@ -607,6 +608,8 @@ struct tcpm_port {
+ 
+ 	/* VDM Discovery State to determine message sent */
+ 	enum vdm_discovery_states vdm_discovery_state;
++	/* Discovery restarts after a response timeout since the last attach */
++	u32 vdm_discovery_timeouts;
+ 
+ 	/* PD state for Vendor Defined Messages */
+ 	enum vdm_states vdm_state;
+@@ -2942,6 +2945,34 @@ static unsigned int vdm_ready_timeout(u32 vdm_hdr)
+ 	return timeout;
+ }
+ 
++/*
++ * A partner that answers Discover Identity, Discover SVIDs or Discover Modes
++ * on SOP only after tVDMSenderResponse has expired is not asked again, so its
++ * alternate modes are never registered. Restart discovery from Discover
++ * Identity, a bounded number of times per attach. svdm_consume_identity()
++ * clears the modes of the interrupted pass. A late Identity or SVIDs response
++ * is dropped; a late Modes response can still be handled.
++ */
++static void tcpm_vdm_discovery_timeout(struct tcpm_port *port)
++{
++	if (port->tx_sop_type != TCPC_TX_SOP)
++		return;
++
++	if (port->ams != DISCOVER_IDENTITY && port->ams != DISCOVER_SVIDS &&
++	    port->ams != DISCOVER_MODES)
++		return;
++
++	if (port->vdm_discovery_timeouts >= VDM_DISCOVERY_TIMEOUT_RETRIES)
++		return;
++
++	port->vdm_discovery_timeouts++;
++	tcpm_log(port, "%s timed out, restarting discovery (%u of %u)",
++		 tcpm_ams_str[port->ams], port->vdm_discovery_timeouts,
++		 VDM_DISCOVERY_TIMEOUT_RETRIES);
++	tcpm_update_vdm_discovery_state(port, VDM_DISCOVERY_UNKNOWN);
++	mod_vdm_discovery_delayed_work(port, SEND_DISCOVERY_VDM_RETRY_MS);
++}
++
+ static void vdm_run_state_machine(struct tcpm_port *port)
+ {
+ 	struct pd_message msg;
+@@ -3021,6 +3052,7 @@ static void vdm_run_state_machine(struct tcpm_port *port)
+ 		break;
+ 	case VDM_STATE_BUSY:
+ 		port->vdm_state = VDM_STATE_ERR_TMOUT;
++		tcpm_vdm_discovery_timeout(port);
+ 		if (port->ams != NONE_AMS)
+ 			tcpm_ams_finish(port);
+ 		break;
+@@ -5072,6 +5104,7 @@ static int tcpm_src_attach(struct tcpm_port *port)
+ 	port->partner = NULL;
+ 
+ 	port->attached = true;
++	port->vdm_discovery_timeouts = 0;
+ 	tcpm_update_vdm_discovery_state(port, VDM_DISCOVERY_UNKNOWN);
+ 
+ 	return 0;
+@@ -5234,6 +5267,7 @@ static int tcpm_snk_attach(struct tcpm_port *port)
+ 	port->partner = NULL;
+ 
+ 	port->attached = true;
++	port->vdm_discovery_timeouts = 0;
+ 	tcpm_update_vdm_discovery_state(port, VDM_DISCOVERY_UNKNOWN);
+ 
+ 	return 0;
+@@ -6078,6 +6112,7 @@ static void run_state_machine(struct tcpm_port *port)
+ 		port->tcpc->set_pd_rx(port->tcpc, false);
+ 		tcpm_unregister_altmodes(port);
+ 		port->nr_sink_caps = 0;
++		port->vdm_discovery_timeouts = 0;
+ 		tcpm_update_vdm_discovery_state(port, VDM_DISCOVERY_UNKNOWN);
+ 		mod_vdm_discovery_cancel_delayed_work(port);
+ 		if (port->pwr_role == TYPEC_SOURCE)

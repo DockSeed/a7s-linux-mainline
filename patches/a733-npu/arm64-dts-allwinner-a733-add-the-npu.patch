@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 16:30:36 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the NPU
+
+The A733 has a Vivante NPU, which the etnaviv driver binds through the
+generic "vivante,gc" compatible, as on the A523.
+
+- reg: the NPU window of the memory map, 0x03600000-0x03600fff.
+- interrupts: INTID 97, the NPU's only interrupt line.
+- clocks: "bus" is the MBUS gate of the NPU, the master interface to
+  memory. "core" is the NPU module clock, which runs from PLL_NPU out of
+  reset. "reg" is the NPU gate of its bus gating reset register; its
+  parent is the AHB matrix gate of the NPU.
+- resets: core, AXI, AHB and SRAM, in the order of the binding.
+- power-domains: PD_NPU of the PCK-600.
+
+Tested on Radxa Cubie A7S: booted on two boards; etnaviv binds the NPU
+with its clocks, resets and power domain, the module clock runs from
+PLL_NPU, and the "bus" and "reg" gates are off in runtime suspend. No
+job was submitted.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index e4cc492a5565..d5c181e8b056 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -794,6 +794,18 @@ ppi_partition1: interrupt-partition-1 {
+ 			};
+ 		};
+ 
++		npu: npu@3600000 {
++			compatible = "vivante,gc";
++			reg = <0x03600000 0x1000>;
++			interrupts = <GIC_SPI 65 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_MBUS_NPU>, <&ccu CLK_NPU>,
++				 <&ccu CLK_BUS_NPU>;
++			clock-names = "bus", "core", "reg";
++			resets = <&ccu RST_BUS_NPU_CORE>, <&ccu RST_BUS_NPU_AXI>,
++				 <&ccu RST_BUS_NPU_AHB>, <&ccu RST_BUS_NPU_SRAM>;
++			power-domains = <&pck600 PD_NPU>;
++		};
++
+ 		iommu0: iommu@3900000 {
+ 			compatible = "allwinner,sun60i-a733-iommu";
+ 			reg = <0x03900000 0x10000>;

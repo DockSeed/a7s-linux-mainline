@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 10:10:00 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Put the display engine behind
+ IOMMU1
+
+The mixer keeps a layer's buffer address in one 32-bit register and sets
+a 32-bit DMA mask, and the DRM device allocates and imports its buffers
+through the mixer device. RAM starts at 0x40000000, so on a board with
+more than 3 GiB a buffer can lie above 4 GiB: the DMA API then copies it
+through a bounce buffer, and a buffer imported from another driver is
+refused unless it is one contiguous range of DMA addresses.
+
+The display engine is master 2 of the second IOMMU (manual chapter 10).
+Behind the IOMMU its buffers get 32-bit addresses wherever the pages
+are, and scattered pages form one contiguous range. Put the mixer
+there, as the H6 does for its mixer. The "display-engine" node gets no
+property: the DMA device of the DRM device is the mixer.
+
+Not covered: the other masters of the second IOMMU, the deinterlacer,
+G2D and EINK, which have no node.
+
+Tested on Radxa Cubie A7S: the display engine scans out through the
+IOMMU, from a page above 4 GiB at a 32-bit address, with the same
+picture as without it; a fault on an unmapped address is reported and
+the picture recovers once the address is back.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 384e13a004b3..b9e48dbcbdad 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1299,6 +1299,7 @@ mixer0: mixer@5100000 {
+ 			clock-names = "bus", "mod";
+ 			resets = <&de_top RST_DE_TOP_DISP0>;
+ 			power-domains = <&pck600 PD_DE_SYS>;
++			iommus = <&iommu1 2>;
+ 			status = "disabled";
+ 
+ 			ports {

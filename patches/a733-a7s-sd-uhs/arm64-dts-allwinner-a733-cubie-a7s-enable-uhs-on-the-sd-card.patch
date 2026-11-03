@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:57:21 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable UHS on the SD
+ card
+
+The SD slot sits on bank PF, which the board feeds from VCC-IO at 3.3 V
+and from VCC18-PF at 1.8 V. Give the controller the pin states for both
+signalling voltages and enable SDR50 and SDR104.
+
+Tested on Radxa Cubie A7S: booted on two boards; the card comes up as
+UHS-I SDR104, reads, and takes a write at a spare offset with an equal
+read-back.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index d7eb3f11b8bd..d7248efc83eb 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -123,11 +123,16 @@ ext_rgmii_phy: ethernet-phy@1 {
+ };
+ 
+ &mmc0 {
++	pinctrl-names = "default", "sdmmc-3v3", "sdmmc-1v8";
++	pinctrl-1 = <&mmc0_3v3_pins>, <&mmc0_clk_pin>;
++	pinctrl-2 = <&mmc0_1v8_pins>, <&mmc0_clk_pin>;
+ 	vmmc-supply = <&reg_swout2>;
+ 	cd-gpios = <&pio 5 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; /* PF6 */
+ 	bus-width = <4>;
+ 	no-mmc;
+ 	no-sdio;
++	sd-uhs-sdr50;
++	sd-uhs-sdr104;
+ 	status = "okay";
+ };
+ 

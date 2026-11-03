@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 12:29:21 +0000
+Subject: [PATCH] net: stmmac: dwmac4: disable RBUE in the default channel
+ interrupt mask
+
+Since commit 1b9707e6f1a9 ("net: stmmac: enable RPS and RBU interrupts")
+the receive buffer unavailable interrupt is enabled on every DMA
+channel, so that rx_buf_unav_irq counts. It does nothing else:
+dwmac4_dma_interrupt() counts RBU and schedules no NAPI for it.
+
+When the page pool runs dry, the RX refill cannot hand descriptors back
+to the DMA. The RX DMA suspends with RBU set, and RBU is raised again
+right after it is cleared while frames keep arriving. In multi-MSI mode
+(INTM = 1) the abnormal summary of a channel is signalled on the common
+MAC interrupt, and stmmac_mac_interrupt() does not service
+DMA_CHAN_STATUS, so the level line stays asserted and one CPU spends all
+its time in the interrupt handler. The RX NAPI and the refill on that
+CPU starve.
+
+Seen on the Radxa Cubie A7S (Allwinner A733, dwmac 5.30) with failed RX
+refills under RX load: the MAC interrupt line storms with RBU and AIS
+set in the channel status, while the RX and TX queue lines are quiet.
+
+The same storm was fixed for XGMAC2 by taking RBUE out of its default
+mask, commit d3265c19b35d ("net: stmmac: xgmac2: disable RBUE in default
+RX interrupt mask"). Do the same for dwmac4, for cores before and from
+4.10 (only the A733 was tested). Recovering a dry ring is the job of the
+refill path; this interrupt schedules nothing. rx_buf_unav_irq reads 0
+from now on, as it did before 1b9707e6f1a9.
+
+This is the minimal fix, as for XGMAC2. That stmmac_mac_interrupt() does
+not service DMA_CHAN_STATUS in multi-MSI mode is a separate problem and
+is left alone here.
+
+Tested on Radxa Cubie A7S: with RX refills failed on purpose under RX
+load, the MAC interrupt line stays quiet and RX resumes once the refills
+succeed again.
+
+Fixes: 1b9707e6f1a9 ("net: stmmac: enable RPS and RBU interrupts")
+Cc: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+Cc: Nazim Amirul <muhammad.nazim.amirul.nazle.asmade@altera.com>
+Assisted-by: LLM
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac4_dma.h | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac4_dma.h b/drivers/net/ethernet/stmicro/stmmac/dwmac4_dma.h
+index 43b036d4e95b..d6c29b57bbf0 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac4_dma.h
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac4_dma.h
+@@ -110,7 +110,6 @@ static inline u32 dma_chanx_base_addr(const struct dwmac4_addrs *addrs,
+ 
+ #define DMA_CHAN_INTR_ABNORMAL		(DMA_CHAN_INTR_ENA_AIE | \
+ 					 DMA_CHAN_INTR_ENA_RPS | \
+-					 DMA_CHAN_INTR_ENA_RBU | \
+ 					 DMA_CHAN_INTR_ENA_FBE)
+ /* DMA default interrupt mask for 4.00 */
+ #define DMA_CHAN_INTR_DEFAULT_MASK	(DMA_CHAN_INTR_NORMAL | \
+@@ -122,7 +121,6 @@ static inline u32 dma_chanx_base_addr(const struct dwmac4_addrs *addrs,
+ 
+ #define DMA_CHAN_INTR_ABNORMAL_4_10	(DMA_CHAN_INTR_ENA_AIE_4_10 | \
+ 					 DMA_CHAN_INTR_ENA_RPS | \
+-					 DMA_CHAN_INTR_ENA_RBU | \
+ 					 DMA_CHAN_INTR_ENA_FBE)
+ /* DMA default interrupt mask for 4.10a */
+ #define DMA_CHAN_INTR_DEFAULT_MASK_4_10	(DMA_CHAN_INTR_NORMAL_4_10 | \

@@ -1,0 +1,946 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 17:05:27 +0200
+Subject: [PATCH] clk: sunxi-ng: Add support for the A733 CPU CCU
+
+The A733 has no driver for its CPU clocks. The two core clusters and the
+DSU stay at the rates the boot loader set, and cpufreq has no clock to
+change.
+
+Add a driver for the CPU_PLL_CFG block. A cluster PLL and its EXT_DIVP
+form one clock: N in the VCO range of 650 to 2260 MHz, P = M0 = M1 = 1
+and EXT_DIVP /1, /2 or /4, the highest rate not above the request. The
+manual's 288 MHz note on EXT_DIVP names a use, not a limit. Each mux
+lists its parents in the order of the encoding (5.1.10.13, 5.1.10.25,
+5.1.10.37), so every value the manual describes maps to its source; the
+DSU's 100 is not described further and has no clock. The backup PLL is
+only read. probe() refuses a slow clock other than the oscillator. A mux
+that the boot loader left off its PLL is put back on it before the
+clocks are registered, since a rate request goes to the source the mux
+is on and the notifiers return a mux to its PLL. The mux switches
+glitch-free; probe() moves it only to a PLL that is enabled, locked and
+has its output on, at no more than the rate the cluster runs at the
+lowest voltage of its supply (1014 MHz for the core clusters, 780 MHz
+for the DSU), and otherwise ends without clocks. P, M0 and M1 other
+than 1 and a reserved EXT_DIVP are only reported.
+
+A rate change parks the mux on the slow clock. The notifier sits on the
+PLL, and set_rate() writes N and EXT_DIVP while the cores are parked:
+gate and lock detector off, factors, detector on, one update, wait for
+it to clear, three lock reads in a row with the first 3 us after the
+update, settling time, gate on. That is the order for enabling these
+PLLs and for the main CCU's PLLs (5.1.4.2, 4.1.4.1, 4.1.4.2); the list
+for a factor change in 5.1.4.2 repeats the update and waits for the
+lock bit to clear instead of to set.
+
+If the update is not taken or the PLL does not lock, set_rate() reports
+it, leaves the gate closed and returns -ETIMEDOUT. The clock framework
+drops that error, and the OPP core sets the voltage of the new rate all
+the same. So the notifier, otherwise ccu_mux_notifier_cb(), moves the
+mux back to the PLL only while the PLL runs; else the cores stay on the
+park source, which runs at any voltage, until the next rate change.
+
+Not covered: faster park sources and the DSU's AXI divider.
+
+Tested on Radxa Cubie A7S: booted on two boards; both core clusters
+changed rate over their operating points under cpufreq without a CPU CCU
+error, and on one board, with the B cluster mux set to the backup PLL in
+U-Boot, probe put it back on its PLL. Not triggered: an UPDATE or lock
+timeout, which leaves the gate closed and the cores parked.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/Kconfig               |  10 +
+ drivers/clk/sunxi-ng/Makefile              |   2 +
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c | 816 +++++++++++++++++++++
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.h |  17 +
+ 4 files changed, 845 insertions(+)
+ create mode 100644 drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+ create mode 100644 drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.h
+
+diff --git a/drivers/clk/sunxi-ng/Kconfig b/drivers/clk/sunxi-ng/Kconfig
+index 978c1459c599..4361bf67c1e9 100644
+--- a/drivers/clk/sunxi-ng/Kconfig
++++ b/drivers/clk/sunxi-ng/Kconfig
+@@ -77,6 +77,16 @@ config SUN60I_A733_R_CCU
+ 	default ARCH_SUNXI
+ 	depends on ARM64 || COMPILE_TEST
+ 
++config SUN60I_A733_CPU_CCU
++	tristate "Support for the Allwinner A733 CPU CCU"
++	default ARCH_SUNXI
++	depends on ARM64 || COMPILE_TEST
++	help
++	  Support for the CPU clock control unit of the Allwinner A733
++	  (CPU_PLL_CFG). It provides the clocks of the two CPU clusters and
++	  of the DSU, which cpufreq needs to change the CPU frequency.
++	  Say Y or M if you want CPU frequency scaling on an A733.
++
+ config SUN60I_A733_SERDES_CCU
+ 	tristate "Support for the Allwinner A733 SERDES CCU"
+ 	default ARCH_SUNXI
+diff --git a/drivers/clk/sunxi-ng/Makefile b/drivers/clk/sunxi-ng/Makefile
+index 7cab2eac35a9..fa2d2574c87f 100644
+--- a/drivers/clk/sunxi-ng/Makefile
++++ b/drivers/clk/sunxi-ng/Makefile
+@@ -38,6 +38,7 @@ obj-$(CONFIG_SUN55I_A523_MCU_CCU)	+= sun55i-a523-mcu-ccu.o
+ obj-$(CONFIG_SUN55I_A523_R_CCU)	+= sun55i-a523-r-ccu.o
+ obj-$(CONFIG_SUN60I_A733_CCU)	+= sun60i-a733-ccu.o
+ obj-$(CONFIG_SUN60I_A733_R_CCU)	+= sun60i-a733-r-ccu.o
++obj-$(CONFIG_SUN60I_A733_CPU_CCU)	+= sun60i-a733-cpu-ccu.o
+ obj-$(CONFIG_SUN60I_A733_SERDES_CCU)	+= sun60i-a733-serdes-ccu.o
+ obj-$(CONFIG_SUN4I_A10_CCU)	+= sun4i-a10-ccu.o
+ obj-$(CONFIG_SUN5I_CCU)		+= sun5i-ccu.o
+@@ -69,6 +70,7 @@ sun55i-a523-mcu-ccu-y		+= ccu-sun55i-a523-mcu.o
+ sun55i-a523-r-ccu-y		+= ccu-sun55i-a523-r.o
+ sun60i-a733-ccu-y		+= ccu-sun60i-a733.o
+ sun60i-a733-r-ccu-y		+= ccu-sun60i-a733-r.o
++sun60i-a733-cpu-ccu-y		+= ccu-sun60i-a733-cpu.o
+ sun60i-a733-serdes-ccu-y	+= ccu-sun60i-a733-serdes.o
+ sun4i-a10-ccu-y			+= ccu-sun4i-a10.o
+ sun5i-ccu-y			+= ccu-sun5i.o
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+new file mode 100644
+index 000000000000..7a78ee2979b5
+--- /dev/null
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+@@ -0,0 +1,816 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Allwinner A733 CPU clock control unit (CPU_PLL_CFG)
++ *
++ * The block has four PLLs. CPU_L (cores 0-5), CPU_B (cores 6-7) and
++ * CPU_DSU (the DynamIQ shared unit) are linear PLLs,
++ * input * N / P / (M0 * M1), each followed by a post-divider EXT_DIVP
++ * that lives in the cluster's clock register. CPU_BACK is a generic PLL,
++ * input * N / M1 / P0, that the firmware may run as a backup source.
++ * Each cluster and the DSU has a glitch-free mux. Its parents are listed
++ * in the order of the encoding (5.1.10.13, 5.1.10.25, 5.1.10.37):
++ *
++ *   encoding   cpu-l / cpu-b        cpu-dsu
++ *   000-010    cpu-slow             cpu-slow
++ *   011        own PLL / EXT_DIVP   own PLL / EXT_DIVP
++ *   100        pll-periph0-2x       cpu0pll, no clock
++ *   101        pll-cpu-back         pll-periph0-600m
++ *   110, 111   not described        not described
++ *
++ * cpu-slow is selected in CPU_SLOW_CLK_SEL: hosc, losc or iosc
++ * (5.1.10.42). 100 of the core clusters is the 1.2 GHz backup source of
++ * 5.1.4.1, the peripheral PLL 0 at 1.2 GHz. The manual names 100 of the
++ * DSU CPU0PLL without saying which PLL that is, so it has no clock.
++ *
++ * A rate change parks the mux on another source while the PLL relocks:
++ * the mux notifier sits on the PLL, PRE_RATE_CHANGE moves the mux to the
++ * park source and POST_RATE_CHANGE moves it back. EXT_DIVP is part of
++ * the PLL clock and not a clock of its own. The clock framework sends
++ * POST_RATE_CHANGE for a clock before it changes the clock's children,
++ * so a divider of its own would be written only after the mux is back on
++ * the PLL, and the cores would run the new N through the old divider.
++ * set_rate() writes N and EXT_DIVP together while the cores are parked.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/log2.h>
++#include <linux/minmax.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++#include <dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h>
++
++#include "ccu_common.h"
++#include "ccu_gate.h"
++#include "ccu_mux.h"
++
++#include "ccu-sun60i-a733-cpu.h"
++
++#define SUN60I_A733_PLL_CPU_BACK_REG	0x0000
++#define SUN60I_A733_PLL_CPU_L_REG	0x1000
++#define SUN60I_A733_PLL_CPU_B_REG	0x2000
++#define SUN60I_A733_PLL_CPU_DSU_REG	0x3000
++#define SUN60I_A733_CPU_L_CLK_REG	0x101c
++#define SUN60I_A733_CPU_B_CLK_REG	0x201c
++#define SUN60I_A733_CPU_DSU_CLK_REG	0x301c
++#define SUN60I_A733_CPU_SLOW_CLK_REG	0x3034
++
++#define PLL_ENABLE		BIT(31)
++#define PLL_LDO_ENABLE		BIT(30)
++#define PLL_LOCK_ENABLE		BIT(29)
++#define PLL_LOCK		BIT(28)
++#define PLL_OUTPUT_GATE		BIT(27)
++/* A PLL a mux may select: enabled, locked and its output on (5.1.4.2) */
++#define PLL_RUNNING		(PLL_ENABLE | PLL_LDO_ENABLE | PLL_LOCK_ENABLE | \
++				 PLL_LOCK | PLL_OUTPUT_GATE)
++#define PLL_UPDATE		BIT(26)
++#define PLL_M0_MASK		GENMASK(21, 20)
++#define PLL_P_MASK		GENMASK(19, 16)
++#define PLL_N_MASK		GENMASK(15, 8)
++#define PLL_M1_MASK		GENMASK(3, 0)
++#define BACK_PLL_P0_MASK	GENMASK(22, 20)
++#define BACK_PLL_N_MASK		GENMASK(15, 8)
++#define BACK_PLL_M1_MASK	BIT(1)
++#define CPU_CLK_SEL_MASK	GENMASK(26, 24)
++#define CPU_CLK_SEL_PLL		3
++#define CPU_CLK_EXT_DIVP_MASK	GENMASK(17, 16)
++#define CPU_SLOW_CLK_SEL_MASK	GENMASK(1, 0)
++
++/*
++ * VCO range of the linear PLLs. With P = M0 = M1 = 1 the VCO runs at
++ * input * N, and N is searched only inside this range.
++ */
++#define PLL_VCO_MIN		650000000UL
++#define PLL_VCO_MAX		2260000000UL
++#define PLL_N_MIN		12
++#define PLL_N_MAX		255
++
++#define PLL_POLL_US		1
++#define PLL_TIMEOUT_US		10000
++/* The lock counts once it reads set this often in a row ... */
++#define PLL_LOCK_READS		3
++/* ... the first read no earlier than this after the detector restarts */
++#define PLL_LOCK_DELAY_US	3
++/* The PLL is usable this long after it reports lock */
++#define PLL_SETTLE_US		20
++
++/* Mux indices are the encodings */
++#define CPU_MUX_SLOW		0
++
++/*
++ * Operating points that the core clusters and the DSU run at the lowest
++ * voltage of their supplies: at or below them a cluster is never faster
++ * than its supply allows, whatever voltage is set. For bins without a
++ * board here the DSU value follows the vendor's operating points, not
++ * measured.
++ */
++#define CPU_CORE_LOW_VOLTAGE_RATE	1014000000UL
++#define CPU_DSU_LOW_VOLTAGE_RATE	780000000UL
++
++static const struct clk_parent_data hosc[] = {
++	{ .fw_name = "hosc" },
++};
++
++/*
++ * The backup PLL is only read: the kernel never enables, disables or
++ * reprograms it.
++ */
++static unsigned long sun60i_a733_back_pll_recalc_rate(struct clk_hw *hw,
++						      unsigned long parent_rate)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++	u32 reg = readl(common->base + common->reg);
++	u64 rate;
++
++	/* N, M1 and P0 are the field plus one */
++	rate = (u64)parent_rate * (FIELD_GET(BACK_PLL_N_MASK, reg) + 1);
++	do_div(rate, (FIELD_GET(BACK_PLL_M1_MASK, reg) + 1) *
++		     (FIELD_GET(BACK_PLL_P0_MASK, reg) + 1));
++
++	return rate;
++}
++
++static int sun60i_a733_back_pll_is_enabled(struct clk_hw *hw)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++	u32 on = PLL_ENABLE | PLL_OUTPUT_GATE;
++
++	return (readl(common->base + common->reg) & on) == on;
++}
++
++static const struct clk_ops sun60i_a733_back_pll_ops = {
++	.is_enabled	= sun60i_a733_back_pll_is_enabled,
++	.recalc_rate	= sun60i_a733_back_pll_recalc_rate,
++};
++
++static struct ccu_common pll_cpu_back_clk = {
++	.reg		= SUN60I_A733_PLL_CPU_BACK_REG,
++	.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-cpu-back", hosc,
++						   &sun60i_a733_back_pll_ops,
++						   CLK_IS_CRITICAL),
++};
++
++/*
++ * A linear PLL with its EXT_DIVP: N and P = M0 = M1 = 1 in the control
++ * register, EXT_DIVP in the cluster's clock register.
++ */
++struct sun60i_a733_cpu_pll {
++	u16			divp_reg;
++	struct ccu_common	common;
++};
++
++static inline struct sun60i_a733_cpu_pll *hw_to_sun60i_a733_cpu_pll(struct clk_hw *hw)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++
++	return container_of(common, struct sun60i_a733_cpu_pll, common);
++}
++
++struct sun60i_a733_cpu_pll_cfg {
++	u32	n;
++	u32	divp;
++};
++
++/* EXT_DIVP: 00 /1, 01 /2, 10 /4, 11 reserved */
++static const u32 sun60i_a733_cpu_pll_divp[] = { 1, 2, 4 };
++
++static void sun60i_a733_cpu_rmw(struct ccu_common *common, u16 reg, u32 mask,
++				u32 val)
++{
++	unsigned long flags;
++	u32 tmp;
++
++	spin_lock_irqsave(common->lock, flags);
++	tmp = readl(common->base + reg);
++	tmp &= ~mask;
++	tmp |= val & mask;
++	writel(tmp, common->base + reg);
++	spin_unlock_irqrestore(common->lock, flags);
++}
++
++/*
++ * The highest rate <= @rate from N inside the VCO range and EXT_DIVP /1,
++ * /2 or /4. The divider is tried in ascending order and a tie keeps the
++ * earlier hit, so the smaller divider, the lower VCO, wins. Below the
++ * lowest reachable rate: N at the VCO floor and the largest divider.
++ */
++static unsigned long sun60i_a733_cpu_pll_find(unsigned long parent,
++					      unsigned long rate,
++					      struct sun60i_a733_cpu_pll_cfg *cfg)
++{
++	unsigned int n_min, n_max, n, i;
++	unsigned long best = 0;
++
++	if (!parent)
++		return 0;
++
++	n_min = max_t(unsigned int, PLL_N_MIN,
++		      DIV_ROUND_UP(PLL_VCO_MIN, parent));
++	n_max = min_t(unsigned int, PLL_N_MAX, PLL_VCO_MAX / parent);
++	if (n_min > n_max)
++		return 0;
++
++	for (i = 0; i < ARRAY_SIZE(sun60i_a733_cpu_pll_divp); i++) {
++		for (n = n_min; n <= n_max; n++) {
++			unsigned long tmp = parent * n /
++					    sun60i_a733_cpu_pll_divp[i];
++
++			if (tmp > rate)
++				break;
++			if (tmp > best) {
++				best = tmp;
++				cfg->n = n;
++				cfg->divp = sun60i_a733_cpu_pll_divp[i];
++			}
++		}
++	}
++
++	if (!best) {
++		cfg->n = n_min;
++		cfg->divp = sun60i_a733_cpu_pll_divp[ARRAY_SIZE(sun60i_a733_cpu_pll_divp) - 1];
++		best = parent * cfg->n / cfg->divp;
++	}
++
++	return best;
++}
++
++/*
++ * The rate of a linear PLL behind its EXT_DIVP. A reserved EXT_DIVP
++ * counts as /1, the highest rate it can stand for.
++ */
++static unsigned long sun60i_a733_cpu_pll_rate(unsigned long parent, u32 ctrl,
++					      u32 clk)
++{
++	u32 divp = FIELD_GET(CPU_CLK_EXT_DIVP_MASK, clk);
++	unsigned long div;
++	u64 rate;
++
++	if (divp >= ARRAY_SIZE(sun60i_a733_cpu_pll_divp))
++		divp = 0;
++
++	/* N is used as it is, P, M0 and M1 are the field plus one */
++	div = (FIELD_GET(PLL_P_MASK, ctrl) + 1) *
++	      (FIELD_GET(PLL_M0_MASK, ctrl) + 1) *
++	      (FIELD_GET(PLL_M1_MASK, ctrl) + 1) *
++	      sun60i_a733_cpu_pll_divp[divp];
++
++	rate = (u64)parent * FIELD_GET(PLL_N_MASK, ctrl);
++	do_div(rate, div);
++
++	return rate;
++}
++
++static unsigned long sun60i_a733_cpu_pll_recalc_rate(struct clk_hw *hw,
++						     unsigned long parent_rate)
++{
++	struct sun60i_a733_cpu_pll *pll = hw_to_sun60i_a733_cpu_pll(hw);
++	u32 clk = readl(pll->common.base + pll->divp_reg);
++	u32 divp = FIELD_GET(CPU_CLK_EXT_DIVP_MASK, clk);
++
++	WARN_ONCE(divp >= ARRAY_SIZE(sun60i_a733_cpu_pll_divp),
++		  "%s: reserved EXT_DIVP value %u\n", clk_hw_get_name(hw), divp);
++
++	return sun60i_a733_cpu_pll_rate(parent_rate,
++					readl(pll->common.base + pll->common.reg),
++					clk);
++}
++
++static int sun60i_a733_cpu_pll_determine_rate(struct clk_hw *hw,
++					      struct clk_rate_request *req)
++{
++	struct sun60i_a733_cpu_pll_cfg cfg;
++	unsigned long rate;
++
++	rate = sun60i_a733_cpu_pll_find(req->best_parent_rate, req->rate, &cfg);
++	if (!rate)
++		return -EINVAL;
++
++	req->rate = rate;
++
++	return 0;
++}
++
++/*
++ * The lock counts once PLL_LOCK_READS reads in a row see it set, the
++ * first one at least PLL_LOCK_DELAY_US after the lock detector restarted
++ * and the update was taken (4.1.4.2, and the list for enabling a PLL in
++ * 5.1.4.2).
++ */
++static int sun60i_a733_cpu_pll_wait_lock(void __iomem *addr)
++{
++	unsigned int i, locked = 0;
++
++	udelay(PLL_LOCK_DELAY_US);
++
++	for (i = 0; i < PLL_TIMEOUT_US / PLL_POLL_US; i++) {
++		if (readl_relaxed(addr) & PLL_LOCK) {
++			if (++locked == PLL_LOCK_READS)
++				return 0;
++		} else {
++			locked = 0;
++		}
++
++		udelay(PLL_POLL_US);
++	}
++
++	return -ETIMEDOUT;
++}
++
++/*
++ * Runs with the cores parked by the mux notifier. The output gate is
++ * closed while the PLL relocks, so the mux never sees the PLL off
++ * frequency, and the lock detector is off while the factors change. N and
++ * EXT_DIVP are written before the gate opens again. N takes effect with
++ * the self-clearing update bit; then the lock and the settling time.
++ *
++ * The manual's list for changing the factors of these PLLs (5.1.4.2)
++ * writes the update bit twice and then waits for the lock bit to clear,
++ * not to set, so taken as written it opens the gate before the lock. The
++ * update handshake and the lock check are taken from its list for
++ * enabling a PLL in the same section, which also matches the factor
++ * change of the main CCU's PLLs (4.1.4.1, 4.1.4.2).
++ * PLL_EN and PLL_LDO_EN are never touched: the manual advises against
++ * switching PLLs on and off during operation and names the output gate
++ * for that (5.1.4.2).
++ *
++ * If the update is not taken or the PLL does not lock, the gate stays
++ * closed and -ETIMEDOUT is returned; the mux notifier then leaves the
++ * cores on the park source.
++ */
++static int sun60i_a733_cpu_pll_set_rate(struct clk_hw *hw, unsigned long rate,
++					unsigned long parent_rate)
++{
++	struct sun60i_a733_cpu_pll *pll = hw_to_sun60i_a733_cpu_pll(hw);
++	struct ccu_common *common = &pll->common;
++	void __iomem *addr = common->base + common->reg;
++	struct sun60i_a733_cpu_pll_cfg cfg;
++	u32 reg;
++	int ret;
++
++	if (!sun60i_a733_cpu_pll_find(parent_rate, rate, &cfg))
++		return -EINVAL;
++
++	sun60i_a733_cpu_rmw(common, common->reg, PLL_OUTPUT_GATE, 0);
++	sun60i_a733_cpu_rmw(common, common->reg, PLL_LOCK_ENABLE, 0);
++
++	/* N, and P = M0 = M1 = 1: each field holds the value minus one */
++	sun60i_a733_cpu_rmw(common, common->reg,
++			    PLL_N_MASK | PLL_M0_MASK | PLL_P_MASK |
++			    PLL_M1_MASK,
++			    FIELD_PREP(PLL_N_MASK, cfg.n));
++	sun60i_a733_cpu_rmw(common, pll->divp_reg, CPU_CLK_EXT_DIVP_MASK,
++			    FIELD_PREP(CPU_CLK_EXT_DIVP_MASK, ilog2(cfg.divp)));
++
++	sun60i_a733_cpu_rmw(common, common->reg, PLL_LOCK_ENABLE,
++			    PLL_LOCK_ENABLE);
++
++	sun60i_a733_cpu_rmw(common, common->reg, PLL_UPDATE, PLL_UPDATE);
++	ret = readl_relaxed_poll_timeout_atomic(addr, reg, !(reg & PLL_UPDATE),
++						PLL_POLL_US, PLL_TIMEOUT_US);
++	if (ret) {
++		pr_err("%s: update not taken\n", clk_hw_get_name(hw));
++		return ret;
++	}
++
++	/* Busy-polled: the cores of this cluster are parked meanwhile */
++	ret = sun60i_a733_cpu_pll_wait_lock(addr);
++	if (ret) {
++		pr_err("%s: no lock\n", clk_hw_get_name(hw));
++		return ret;
++	}
++
++	udelay(PLL_SETTLE_US);
++
++	sun60i_a733_cpu_rmw(common, common->reg, PLL_OUTPUT_GATE,
++			    PLL_OUTPUT_GATE);
++
++	return 0;
++}
++
++static int sun60i_a733_cpu_pll_enable(struct clk_hw *hw)
++{
++	struct sun60i_a733_cpu_pll *pll = hw_to_sun60i_a733_cpu_pll(hw);
++
++	return ccu_gate_helper_enable(&pll->common, PLL_OUTPUT_GATE);
++}
++
++static void sun60i_a733_cpu_pll_disable(struct clk_hw *hw)
++{
++	struct sun60i_a733_cpu_pll *pll = hw_to_sun60i_a733_cpu_pll(hw);
++
++	ccu_gate_helper_disable(&pll->common, PLL_OUTPUT_GATE);
++}
++
++static int sun60i_a733_cpu_pll_is_enabled(struct clk_hw *hw)
++{
++	struct sun60i_a733_cpu_pll *pll = hw_to_sun60i_a733_cpu_pll(hw);
++
++	return ccu_gate_helper_is_enabled(&pll->common, PLL_OUTPUT_GATE);
++}
++
++static const struct clk_ops sun60i_a733_cpu_pll_ops = {
++	.enable		= sun60i_a733_cpu_pll_enable,
++	.disable	= sun60i_a733_cpu_pll_disable,
++	.is_enabled	= sun60i_a733_cpu_pll_is_enabled,
++
++	.recalc_rate	= sun60i_a733_cpu_pll_recalc_rate,
++	.determine_rate	= sun60i_a733_cpu_pll_determine_rate,
++	.set_rate	= sun60i_a733_cpu_pll_set_rate,
++};
++
++/*
++ * CLK_IS_CRITICAL: no consumer enables the PLLs, and the cores run from
++ * them, so clk_disable_unused() must not close their output gates.
++ */
++#define SUN60I_A733_CPU_PLL(_struct, _name, _reg, _clk_reg)		\
++	static struct sun60i_a733_cpu_pll _struct = {			\
++		.divp_reg	= _clk_reg,				\
++		.common		= {					\
++			.reg		= _reg,				\
++			.hw.init	= CLK_HW_INIT_PARENTS_DATA(_name, hosc,	\
++						&sun60i_a733_cpu_pll_ops, \
++						CLK_IS_CRITICAL),	\
++		},							\
++	}
++
++SUN60I_A733_CPU_PLL(pll_cpu_l_clk, "pll-cpu-l", SUN60I_A733_PLL_CPU_L_REG,
++		    SUN60I_A733_CPU_L_CLK_REG);
++SUN60I_A733_CPU_PLL(pll_cpu_b_clk, "pll-cpu-b", SUN60I_A733_PLL_CPU_B_REG,
++		    SUN60I_A733_CPU_B_CLK_REG);
++SUN60I_A733_CPU_PLL(pll_cpu_dsu_clk, "pll-cpu-dsu", SUN60I_A733_PLL_CPU_DSU_REG,
++		    SUN60I_A733_CPU_DSU_CLK_REG);
++
++static const struct clk_parent_data cpu_slow_parents[] = {
++	{ .fw_name = "hosc" },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++};
++
++static SUNXI_CCU_MUX_DATA(cpu_slow_clk, "cpu-slow", cpu_slow_parents,
++			  SUN60I_A733_CPU_SLOW_CLK_REG, 0, 2,
++			  CLK_SET_RATE_NO_REPARENT);
++
++/* The parents in the order of the encoding, see the top of the file */
++static const struct clk_parent_data cpu_l_parents[] = {
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &pll_cpu_l_clk.common.hw },
++	{ .fw_name = "pll-periph0-2x" },
++	{ .hw = &pll_cpu_back_clk.hw },
++};
++
++static const struct clk_parent_data cpu_b_parents[] = {
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &pll_cpu_b_clk.common.hw },
++	{ .fw_name = "pll-periph0-2x" },
++	{ .hw = &pll_cpu_back_clk.hw },
++};
++
++static const struct clk_parent_data cpu_dsu_parents[] = {
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &cpu_slow_clk.common.hw },
++	{ .hw = &pll_cpu_dsu_clk.common.hw },
++	{ .index = -1 },
++	{ .fw_name = "pll-periph0-600m" },
++};
++
++/*
++ * A rate request goes to the selected parent only, which probe() checks
++ * to be the PLL path; the mux is moved by the notifiers alone.
++ */
++#define SUN60I_A733_CPU_MUX(_struct, _name, _parents, _reg)		\
++	static struct ccu_mux _struct = {				\
++		.mux	= _SUNXI_CCU_MUX(24, 3),			\
++		.common	= {						\
++			.reg		= _reg,				\
++			.hw.init	= CLK_HW_INIT_PARENTS_DATA(_name,	\
++						_parents, &ccu_mux_ops,	\
++						CLK_SET_RATE_PARENT |	\
++						CLK_SET_RATE_NO_REPARENT | \
++						CLK_IS_CRITICAL),	\
++		},							\
++	}
++
++SUN60I_A733_CPU_MUX(cpu_l_clk, "cpu-l", cpu_l_parents,
++		    SUN60I_A733_CPU_L_CLK_REG);
++SUN60I_A733_CPU_MUX(cpu_b_clk, "cpu-b", cpu_b_parents,
++		    SUN60I_A733_CPU_B_CLK_REG);
++SUN60I_A733_CPU_MUX(cpu_dsu_clk, "cpu-dsu", cpu_dsu_parents,
++		    SUN60I_A733_CPU_DSU_CLK_REG);
++
++static struct ccu_common *sun60i_a733_cpu_ccu_clks[] = {
++	&pll_cpu_back_clk,
++	&pll_cpu_l_clk.common,
++	&pll_cpu_b_clk.common,
++	&pll_cpu_dsu_clk.common,
++	&cpu_slow_clk.common,
++	&cpu_l_clk.common,
++	&cpu_b_clk.common,
++	&cpu_dsu_clk.common,
++};
++
++static struct clk_hw_onecell_data sun60i_a733_cpu_hw_clks = {
++	.hws	= {
++		[CLK_CPU_L]		= &cpu_l_clk.common.hw,
++		[CLK_CPU_B]		= &cpu_b_clk.common.hw,
++		[CLK_CPU_DSU]		= &cpu_dsu_clk.common.hw,
++		[CLK_PLL_CPU_BACK]	= &pll_cpu_back_clk.hw,
++		[CLK_PLL_CPU_L]		= &pll_cpu_l_clk.common.hw,
++		[CLK_PLL_CPU_B]		= &pll_cpu_b_clk.common.hw,
++		[CLK_PLL_CPU_DSU]	= &pll_cpu_dsu_clk.common.hw,
++		[CLK_CPU_SLOW]		= &cpu_slow_clk.common.hw,
++	},
++	.num	= CLK_NUMBER,
++};
++
++static DEFINE_SPINLOCK(sun60i_a733_cpu_ccu_lock);
++
++/*
++ * One notifier per cluster on its PLL: PRE_RATE_CHANGE moves the mux to
++ * bypass_index, POST_RATE_CHANGE moves it back to the PLL. The mux is
++ * glitch-free and switches within a few cycles of the slower source.
++ */
++#define SUN60I_A733_CPU_MUX_NB(_struct, _mux)				\
++	static struct ccu_mux_nb _struct = {				\
++		.common		= &(_mux).common,			\
++		.cm		= &(_mux).mux,				\
++		.delay_us	= 1,					\
++		.bypass_index	= CPU_MUX_SLOW,				\
++	}
++
++SUN60I_A733_CPU_MUX_NB(cpu_l_mux_nb, cpu_l_clk);
++SUN60I_A733_CPU_MUX_NB(cpu_b_mux_nb, cpu_b_clk);
++SUN60I_A733_CPU_MUX_NB(cpu_dsu_mux_nb, cpu_dsu_clk);
++
++/*
++ * ccu_mux_notifier_cb(), with two differences on the way back. The mux
++ * returns to the PLL, not to the source it was on at PRE_RATE_CHANGE:
++ * probe() puts it there, and a mux left parked by a failed change would
++ * otherwise stay parked. And it returns only to a PLL that runs. The
++ * clock framework drops an error of set_rate() and sends
++ * POST_RATE_CHANGE all the same, and the OPP core goes on to set the
++ * voltage of the new rate. A park source runs at no more than the
++ * cluster's rate at the lowest voltage of its supply, so at any voltage
++ * that is set: the cores stay there, and the next rate change tries
++ * again.
++ */
++static int sun60i_a733_cpu_mux_notifier_cb(struct notifier_block *nb,
++					   unsigned long event, void *data)
++{
++	struct ccu_mux_nb *mux = to_ccu_mux_nb(nb);
++	struct clk_hw *pll = clk_hw_get_parent_by_index(&mux->common->hw,
++							CPU_CLK_SEL_PLL);
++	struct ccu_common *pll_common = hw_to_ccu_common(pll);
++	int ret = 0;
++
++	if (event == PRE_RATE_CHANGE) {
++		ret = ccu_mux_helper_set_parent(mux->common, mux->cm,
++						mux->bypass_index);
++	} else if (event == POST_RATE_CHANGE) {
++		if ((readl(pll_common->base + pll_common->reg) & PLL_RUNNING) ==
++		    PLL_RUNNING)
++			ret = ccu_mux_helper_set_parent(mux->common, mux->cm,
++							CPU_CLK_SEL_PLL);
++		else
++			pr_err("%s: PLL not running, staying on the park source\n",
++			       clk_hw_get_name(&mux->common->hw));
++	}
++
++	udelay(mux->delay_us);
++
++	return notifier_from_errno(ret);
++}
++
++struct sun60i_a733_cpu_cluster {
++	u16			pll_reg;
++	u16			clk_reg;
++	struct clk_hw		*pll;
++	struct ccu_mux_nb	*mux_nb;
++	unsigned long		low_voltage_rate;
++};
++
++static const struct sun60i_a733_cpu_cluster sun60i_a733_cpu_clusters[] = {
++	{ SUN60I_A733_PLL_CPU_L_REG, SUN60I_A733_CPU_L_CLK_REG,
++	  &pll_cpu_l_clk.common.hw, &cpu_l_mux_nb, CPU_CORE_LOW_VOLTAGE_RATE },
++	{ SUN60I_A733_PLL_CPU_B_REG, SUN60I_A733_CPU_B_CLK_REG,
++	  &pll_cpu_b_clk.common.hw, &cpu_b_mux_nb, CPU_CORE_LOW_VOLTAGE_RATE },
++	{ SUN60I_A733_PLL_CPU_DSU_REG, SUN60I_A733_CPU_DSU_CLK_REG,
++	  &pll_cpu_dsu_clk.common.hw, &cpu_dsu_mux_nb, CPU_DSU_LOW_VOLTAGE_RATE },
++};
++
++/*
++ * Puts a mux the boot loader left elsewhere on its PLL, before the clocks
++ * are registered: a rate request goes to the parent the mux is on, the
++ * other inputs are park sources, a clock of the main CCU or no clock, and
++ * the notifiers return a mux to its PLL. The mux switches glitch-free
++ * (5.1.10.13, 5.1.10.25, 5.1.10.37). It is moved only to a PLL that runs
++ * and only at no more than the cluster's rate at the lowest voltage of
++ * its supply, so the move is safe whatever voltage is set.
++ * Otherwise the mux stays and probe() ends without clocks, so no rate
++ * request reaches the source it is on.
++ */
++static int sun60i_a733_cpu_init_mux(struct device *dev, void __iomem *reg,
++				    const struct sun60i_a733_cpu_cluster *cluster,
++				    unsigned long parent)
++{
++	u32 pll = readl(reg + cluster->pll_reg);
++	u32 clk = readl(reg + cluster->clk_reg);
++	unsigned long rate;
++
++	if (FIELD_GET(CPU_CLK_SEL_MASK, clk) == CPU_CLK_SEL_PLL)
++		return 0;
++
++	rate = sun60i_a733_cpu_pll_rate(parent, pll, clk);
++	if ((pll & PLL_RUNNING) != PLL_RUNNING || !rate ||
++	    rate > cluster->low_voltage_rate) {
++		dev_warn(dev, "mux at 0x%04x off its PLL, which cannot take it: 0x%08x, %lu Hz\n",
++			 cluster->clk_reg, pll, rate);
++		return -ENODEV;
++	}
++
++	writel((clk & ~CPU_CLK_SEL_MASK) |
++	       FIELD_PREP(CPU_CLK_SEL_MASK, CPU_CLK_SEL_PLL),
++	       reg + cluster->clk_reg);
++	dev_info(dev, "mux at 0x%04x moved from 0x%08x to its PLL at %lu Hz\n",
++		 cluster->clk_reg, clk, rate);
++
++	return 0;
++}
++
++/*
++ * P, M0 and M1 other than 1 are only reported: set_rate() writes them,
++ * and recalc_rate() takes them into account. recalc_rate() also reports
++ * a reserved EXT_DIVP, which set_rate() overwrites.
++ */
++static int sun60i_a733_cpu_check(struct device *dev, void __iomem *reg,
++				 unsigned long parent)
++{
++	const struct sun60i_a733_cpu_cluster *cluster;
++	unsigned int i;
++	u32 pll;
++	int ret;
++
++	/* The park source is cpu-slow, which must be the oscillator */
++	if (readl(reg + SUN60I_A733_CPU_SLOW_CLK_REG) & CPU_SLOW_CLK_SEL_MASK)
++		return dev_err_probe(dev, -EINVAL,
++				     "CPU slow clock is not the oscillator\n");
++
++	for (i = 0; i < ARRAY_SIZE(sun60i_a733_cpu_clusters); i++) {
++		cluster = &sun60i_a733_cpu_clusters[i];
++		pll = readl(reg + cluster->pll_reg);
++
++		if (pll & (PLL_M0_MASK | PLL_P_MASK | PLL_M1_MASK))
++			dev_warn(dev, "PLL at 0x%04x not at P = M0 = M1 = 1: 0x%08x\n",
++				 cluster->pll_reg, pll);
++
++		ret = sun60i_a733_cpu_init_mux(dev, reg, cluster, parent);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++static void sun60i_a733_cpu_mux_nb_unregister(void *data)
++{
++	const struct sun60i_a733_cpu_cluster *cluster = data;
++
++	clk_notifier_unregister(cluster->pll->clk, &cluster->mux_nb->clk_nb);
++}
++
++static int sun60i_a733_cpu_register_nb(struct device *dev,
++				       const struct sun60i_a733_cpu_cluster *cluster)
++{
++	int ret;
++
++	cluster->mux_nb->clk_nb.notifier_call = sun60i_a733_cpu_mux_notifier_cb;
++	ret = clk_notifier_register(cluster->pll->clk, &cluster->mux_nb->clk_nb);
++	if (ret)
++		return ret;
++
++	return devm_add_action_or_reset(dev, sun60i_a733_cpu_mux_nb_unregister,
++					(void *)cluster);
++}
++
++/*
++ * The rate range of a linear PLL with its EXT_DIVP: N at the VCO floor
++ * with /4 up to N at the VCO ceiling with /1.
++ */
++static int sun60i_a733_cpu_set_rate_ranges(void)
++{
++	unsigned long parent, min_rate, max_rate;
++	unsigned int n_min, n_max, i;
++
++	parent = clk_hw_get_rate(clk_hw_get_parent(&pll_cpu_l_clk.common.hw));
++	if (!parent)
++		return -EINVAL;
++
++	n_min = max_t(unsigned int, PLL_N_MIN, DIV_ROUND_UP(PLL_VCO_MIN, parent));
++	n_max = min_t(unsigned int, PLL_N_MAX, PLL_VCO_MAX / parent);
++	if (n_min > n_max)
++		return -EINVAL;
++
++	min_rate = parent * n_min /
++		   sun60i_a733_cpu_pll_divp[ARRAY_SIZE(sun60i_a733_cpu_pll_divp) - 1];
++	max_rate = parent * n_max;
++
++	for (i = 0; i < ARRAY_SIZE(sun60i_a733_cpu_clusters); i++)
++		clk_hw_set_rate_range(sun60i_a733_cpu_clusters[i].pll,
++				      min_rate, max_rate);
++
++	return 0;
++}
++
++/*
++ * Like devm_sunxi_ccu_probe(), but without the provider: that is added
++ * only after the notifiers, so no consumer can change a rate before the
++ * park is in place. The block has no resets.
++ */
++static int sun60i_a733_cpu_register_clks(struct device *dev, void __iomem *reg)
++{
++	struct ccu_common *cclk;
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < ARRAY_SIZE(sun60i_a733_cpu_ccu_clks); i++) {
++		cclk = sun60i_a733_cpu_ccu_clks[i];
++		cclk->base = reg;
++		cclk->lock = &sun60i_a733_cpu_ccu_lock;
++	}
++
++	for (i = 0; i < sun60i_a733_cpu_hw_clks.num; i++) {
++		if (!sun60i_a733_cpu_hw_clks.hws[i])
++			continue;
++
++		ret = devm_clk_hw_register(dev, sun60i_a733_cpu_hw_clks.hws[i]);
++		if (ret)
++			return ret;
++	}
++
++	return sun60i_a733_cpu_set_rate_ranges();
++}
++
++static int sun60i_a733_cpu_ccu_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	void __iomem *reg;
++	struct clk *hosc;
++	unsigned int i;
++	int ret;
++
++	reg = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(reg))
++		return PTR_ERR(reg);
++
++	hosc = devm_clk_get(dev, "hosc");
++	if (IS_ERR(hosc))
++		return dev_err_probe(dev, PTR_ERR(hosc), "cannot get hosc\n");
++
++	ret = sun60i_a733_cpu_check(dev, reg, clk_get_rate(hosc));
++	if (ret)
++		return ret;
++
++	ret = sun60i_a733_cpu_register_clks(dev, reg);
++	if (ret)
++		return dev_err_probe(dev, ret, "cannot register the clocks\n");
++
++	for (i = 0; i < ARRAY_SIZE(sun60i_a733_cpu_clusters); i++) {
++		ret = sun60i_a733_cpu_register_nb(dev,
++						  &sun60i_a733_cpu_clusters[i]);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "cannot register the notifiers\n");
++	}
++
++	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
++					   &sun60i_a733_cpu_hw_clks);
++}
++
++static const struct of_device_id sun60i_a733_cpu_ccu_ids[] = {
++	{ .compatible = "allwinner,sun60i-a733-cpu-ccu" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sun60i_a733_cpu_ccu_ids);
++
++static struct platform_driver sun60i_a733_cpu_ccu_driver = {
++	.probe	= sun60i_a733_cpu_ccu_probe,
++	.driver	= {
++		.name			= "sun60i-a733-cpu-ccu",
++		.suppress_bind_attrs	= true,
++		.of_match_table		= sun60i_a733_cpu_ccu_ids,
++	},
++};
++module_platform_driver(sun60i_a733_cpu_ccu_driver);
++
++MODULE_IMPORT_NS("SUNXI_CCU");
++MODULE_DESCRIPTION("Support for the Allwinner A733 CPU CCU");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.h b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.h
+new file mode 100644
+index 000000000000..2dab0950f1ee
+--- /dev/null
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.h
+@@ -0,0 +1,17 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++#ifndef _CCU_SUN60I_A733_CPU_H_
++#define _CCU_SUN60I_A733_CPU_H_
++
++#include <dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h>
++
++/* The PLLs and the slow clock are not exported. */
++#define CLK_PLL_CPU_BACK	4
++#define CLK_PLL_CPU_L		5
++#define CLK_PLL_CPU_B		6
++#define CLK_PLL_CPU_DSU		7
++#define CLK_CPU_SLOW		8
++
++#define CLK_NUMBER		(CLK_CPU_SLOW + 1)
++
++#endif /* _CCU_SUN60I_A733_CPU_H_ */

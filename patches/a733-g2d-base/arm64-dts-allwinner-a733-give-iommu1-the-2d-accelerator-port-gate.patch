@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 10:09:05 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Give IOMMU1 the 2D accelerator
+ port gate
+
+A master's register block in the IOMMU does not answer while the
+master's port on the MBUS matrix is gated, and the access stalls the
+bus. The IOMMU driver takes a reference on the port gate of a master,
+given as a "masterN" clock, for as long as the master translates. The
+A733 clock driver marks these gates CLK_IS_CRITICAL, so they stay
+enabled and the reference does not change their state.
+
+Name the port gate of the 2D accelerator, master 4 of the second IOMMU
+(manual chapter 10). It is in the display engine system (DE_SYS) and
+uses the same MBUS port as the display engine, DESYS, bit 11 of
+MBUS_MAT_CLK_GATING_REG (manual section 4.1.6.83).
+
+Nothing changes until a node lists the IOMMU in "iommus": the driver
+enables a master clock only for a master with a user.
+
+Tested on Radxa Cubie A7S: with the 2D accelerator enabled for a test,
+IOMMU1 holds the DE_SYS port gate for master 4 from boot on, one enable
+more than with the node disabled.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 0c0e96a99043..8ee1ba658c5e 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -1127,9 +1127,10 @@ iommu1: iommu@3910000 {
+ 				 <&ccu CLK_MBUS_IOMMU1>,
+ 				 <&ccu CLK_MBUS_VE_DEC0_GATE>,
+ 				 <&ccu CLK_MBUS_VE_DEC0_GATE>,
++				 <&ccu CLK_MBUS_DESYS>,
+ 				 <&ccu CLK_MBUS_DESYS>;
+ 			clock-names = "mclk", "pclk", "hclk", "mbus",
+-				      "master0", "master1", "master2";
++				      "master0", "master1", "master2", "master4";
+ 			resets = <&ccu RST_BUS_IOMMU1_SYS>;
+ 			#iommu-cells = <1>;
+ 		};

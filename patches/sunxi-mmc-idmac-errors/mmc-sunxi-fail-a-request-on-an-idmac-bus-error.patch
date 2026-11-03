@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 09:17:41 +0200
+Subject: [PATCH] mmc: sunxi: Fail a request on an IDMAC bus error
+
+The IDMAC reports a fatal bus error and an unavailable descriptor only
+in SMHC_IDST, and neither interrupt is enabled. After such an error the
+request waits for the data timeout, or forever.
+
+Enable both interrupts for every data request after the IDMAC reset,
+and on either one log the status and finalize the request with -EIO so
+that the core can retry it.
+
+Tested on Radxa Cubie A7S: booted on two boards; several GiB read from
+the SD card and the eMMC raise no IDMAC error. The error path itself was
+not triggered.
+
+Assisted-by: LLM
+---
+ drivers/mmc/host/sunxi-mmc.c | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index d5c8234ff9bc..9a2850710152 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -205,6 +205,8 @@
+ #define SDXC_IDMAC_FATAL_BUS_ERROR		BIT(2)
+ #define SDXC_IDMAC_DESTINATION_INVALID		BIT(4)
+ #define SDXC_IDMAC_CARD_ERROR_SUM		BIT(5)
++#define SDXC_IDMAC_ERROR_INT		(SDXC_IDMAC_FATAL_BUS_ERROR | \
++					 SDXC_IDMAC_DESTINATION_INVALID)
+ #define SDXC_IDMAC_NORMAL_INTERRUPT_SUM		BIT(8)
+ #define SDXC_IDMAC_ABNORMAL_INTERRUPT_SUM	BIT(9)
+ #define SDXC_IDMAC_HOST_ABORT_INTERRUPT		BIT(10)
+@@ -341,6 +343,7 @@ struct sunxi_mmc_host {
+ 	dma_addr_t	sg_dma;
+ 	void		*sg_cpu;
+ 	bool		wait_dma;
++	u32		idma_err;
+ 
+ 	struct mmc_request *mrq;
+ 	struct mmc_request *manual_stop_mrq;
+@@ -489,8 +492,11 @@ static void sunxi_mmc_start_dma(struct sunxi_mmc_host *host,
+ 
+ 	mmc_writel(host, REG_DMAC, SDXC_IDMAC_SOFT_RESET);
+ 
++	/* A bus error or a missing descriptor never shows up in RINTSTS */
++	rval = SDXC_IDMAC_ERROR_INT;
+ 	if (!(data->flags & MMC_DATA_WRITE))
+-		mmc_writel(host, REG_IDIE, SDXC_IDMAC_RECEIVE_INTERRUPT);
++		rval |= SDXC_IDMAC_RECEIVE_INTERRUPT;
++	mmc_writel(host, REG_IDIE, rval);
+ 
+ 	mmc_writel(host, REG_DMAC,
+ 		   SDXC_IDMAC_FIX_BURST | SDXC_IDMAC_IDMA_ON);
+@@ -586,12 +592,12 @@ static irqreturn_t sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
+ 	mmc_writel(host, REG_IMASK, host->sdio_imask);
+ 	mmc_writel(host, REG_IDIE, 0);
+ 
+-	if (host->int_sum & SDXC_INTERRUPT_ERROR_BIT) {
++	if ((host->int_sum & SDXC_INTERRUPT_ERROR_BIT) || host->idma_err) {
+ 		sunxi_mmc_dump_errinfo(host);
+ 		mrq->cmd->error = -ETIMEDOUT;
+ 
+ 		if (data) {
+-			data->error = -ETIMEDOUT;
++			data->error = host->idma_err ? -EIO : -ETIMEDOUT;
+ 			if (sunxi_mmc_needs_manual_stop(mrq))
+ 				host->manual_stop_mrq = mrq;
+ 		}
+@@ -633,6 +639,7 @@ static irqreturn_t sunxi_mmc_finalize_request(struct sunxi_mmc_host *host)
+ 
+ 	host->mrq = NULL;
+ 	host->int_sum = 0;
++	host->idma_err = 0;
+ 	host->wait_dma = false;
+ 
+ 	return host->manual_stop_mrq ? IRQ_WAKE_THREAD : IRQ_HANDLED;
+@@ -662,13 +669,22 @@ static irqreturn_t sunxi_mmc_irq(int irq, void *dev_id)
+ 
+ 		host->int_sum |= msk_int;
+ 
++		if (mrq->data && (idma_int & SDXC_IDMAC_ERROR_INT) &&
++		    !host->idma_err) {
++			host->idma_err = idma_int;
++			dev_err(mmc_dev(host->mmc),
++				"cmd %d: IDMAC error, status %08x\n",
++				mrq->cmd->opcode, idma_int);
++		}
++
+ 		/* Wait for COMMAND_DONE on RESPONSE_TIMEOUT before finalize */
+ 		if ((host->int_sum & SDXC_RESP_TIMEOUT) &&
+ 				!(host->int_sum & SDXC_COMMAND_DONE))
+ 			mmc_writel(host, REG_IMASK,
+ 				   host->sdio_imask | SDXC_COMMAND_DONE);
+ 		/* Don't wait for dma on error */
+-		else if (host->int_sum & SDXC_INTERRUPT_ERROR_BIT)
++		else if ((host->int_sum & SDXC_INTERRUPT_ERROR_BIT) ||
++			 host->idma_err)
+ 			finalize = true;
+ 		else if ((host->int_sum & SDXC_INTERRUPT_DONE_BIT) &&
+ 				!host->wait_dma)

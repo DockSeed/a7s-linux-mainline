@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:53:35 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the DisplayPort transmitter
+
+Add the nodes of the DisplayPort output of the A733: the transmitter,
+the AUX PHY beside the first combo PHY, and the video output 1 clock
+unit, which gives TCON TV1 its clock from the eDP side. Connect TCON
+TV1 to the transmitter and take its channel 1 clock from the clock unit.
+All of them stay disabled; a board enables them.
+
+The first combo PHY now selects its function with a cell: the USB3
+controller takes PHY_TYPE_USB3, the transmitter PHY_TYPE_DP. Its link
+register window ends where the AUX PHY's registers start (user manual
+section 18.2.5), so that both are mapped exclusively.
+
+The PHY also takes the PIPE clock select of the SERDES CCU, which it
+enables while the lanes carry DisplayPort, so that the USB3 controller
+can leave its core soft reset (user manual 18.2.6.2). The rate of
+usb2-u2-pipe behind it is set to 24 MHz: the manual names no rate for
+the PIPE clock of the controller, and 24 MHz is the reset state of the
+clock.
+
+The transmitter and the clock unit get power domain VO1, the domain of
+the TCON TVs in the manual's grouping; not measured for these two
+blocks.
+
+The cell changes the device tree ABI. A kernel from before it still
+gets the USB3 function, as its combo PHY driver ignores the cell; such a
+kernel ignores the clock as well.
+
+Tested on Radxa Cubie A7S: booted on one board with a DisplayPort
+monitor plugged in before power-on; the transmitter, its AUX PHY and the
+video output clock unit probe, the USB3 controller probes after the
+combo PHY has entered DisplayPort mode, and the CRC that the sink
+computes for a white picture is the one from before this change.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 78 +++++++++++++++++--
+ 1 file changed, 73 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 0aebbed28164..3e52b38f1c4f 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -6,7 +6,9 @@
+ #include <dt-bindings/clock/allwinner,sun60i-a733-de-top.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h>
++#include <dt-bindings/clock/allwinner,sun60i-a733-vo1-ccu.h>
+ #include <dt-bindings/clock/sun6i-rtc.h>
++#include <dt-bindings/phy/phy.h>
+ #include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
+ #include <dt-bindings/reset/allwinner,sun60i-a733-de-top.h>
+@@ -1043,11 +1045,27 @@ mixer0_out_de_top: endpoint {
+ 			};
+ 		};
+ 
++		vo1_ccu: clock-controller@5510000 {
++			compatible = "allwinner,sun60i-a733-vo1-ccu";
++			reg = <0x05510000 0x1000>;
++			clocks = <&ccu CLK_AHB_VID_COUT1>, <&ccu CLK_BUS_DPSS_TOP1>,
++				 <&ccu CLK_EDP_TV>;
++			clock-names = "ahb", "bus", "edp";
++			resets = <&ccu RST_BUS_DPSS_TOP1>;
++			/* the domain of the TCON TVs, by the manual's grouping */
++			power-domains = <&pck600 PD_VO1>;
++			#clock-cells = <1>;
++			/* TCON TV1 feeds the DisplayPort transmitter */
++			assigned-clocks = <&vo1_ccu CLK_VO1_TV1_SEL>;
++			assigned-clock-parents = <&ccu CLK_EDP_TV>;
++			status = "disabled";
++		};
++
+ 		tcon_tv1: lcd-controller@5731000 {
+ 			compatible = "allwinner,sun60i-a733-tcon-tv";
+ 			reg = <0x05731000 0x1000>;
+ 			interrupts = <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH 0>;
+-			clocks = <&ccu CLK_BUS_TCON_TV1>, <&ccu CLK_EDP_TV>;
++			clocks = <&ccu CLK_BUS_TCON_TV1>, <&vo1_ccu CLK_VO1_TV1>;
+ 			clock-names = "ahb", "tcon-ch1";
+ 			resets = <&ccu RST_BUS_TCON_TV1>;
+ 			reset-names = "lcd";
+@@ -1068,6 +1086,43 @@ tcon_tv1_in_de_top: endpoint {
+ 
+ 				tcon_tv1_out: port@1 {
+ 					reg = <1>;
++
++					tcon_tv1_out_dp: endpoint {
++						remote-endpoint = <&dp_in_tcon_tv1>;
++					};
++				};
++			};
++		};
++
++		dp: displayport@5740000 {
++			compatible = "allwinner,sun60i-a733-dp";
++			reg = <0x05740000 0x1000>,
++			      <0x05760000 0x1000>;
++			reg-names = "dp", "pad";
++			interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH 0>;
++			clocks = <&ccu CLK_BUS_EDP_TV>;
++			clock-names = "bus";
++			resets = <&ccu RST_BUS_EDP>;
++			phys = <&dp_aux_phy>, <&combophy0 PHY_TYPE_DP>;
++			phy-names = "aux", "dp";
++			/* the domain of the TCON TVs, by the manual's grouping */
++			power-domains = <&pck600 PD_VO1>;
++			status = "disabled";
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				dp_in: port@0 {
++					reg = <0>;
++
++					dp_in_tcon_tv1: endpoint {
++						remote-endpoint = <&tcon_tv1_out_dp>;
++					};
++				};
++
++				dp_out: port@1 {
++					reg = <1>;
+ 				};
+ 			};
+ 		};
+@@ -1139,7 +1194,7 @@ usb3: usb@6a00000 {
+ 			assigned-clock-rates = <24000000>;
+ 			resets = <&ccu RST_BUS_USB2>;
+ 			power-domains = <&pck600 PD_USB2>;
+-			phys = <&usb3_u2phy>, <&combophy0>;
++			phys = <&usb3_u2phy>, <&combophy0 PHY_TYPE_USB3>;
+ 			phy-names = "usb2-phy", "usb3-phy";
+ 			snps,dis_enblslpm_quirk;
+ 			snps,dis-u1-entry-quirk;
+@@ -1172,12 +1227,25 @@ serdes_ccu: clock-controller@6c00000 {
+ 
+ 		combophy0: phy@6c01000 {
+ 			compatible = "allwinner,sun60i-a733-usb3-combophy";
+-			reg = <0x06c01000 0x1000>,
++			reg = <0x06c01000 0xe00>,
+ 			      <0x06c80000 0x20000>;
+ 			reg-names = "link", "pma";
+ 			allwinner,serdes-top = <&serdes_top>;
+-			clocks = <&ccu CLK_SERDES_PHY>, <&rtc CLK_HOSC_SERDES0>;
+-			clock-names = "serdes", "hosc";
++			clocks = <&ccu CLK_SERDES_PHY>, <&rtc CLK_HOSC_SERDES0>,
++				 <&serdes_ccu CLK_USB3_PIPE_CCU>;
++			clock-names = "serdes", "hosc", "usb3-pipe";
++			assigned-clocks = <&ccu CLK_USB2_U2_PIPE>;
++			assigned-clock-rates = <24000000>;
++			resets = <&ccu RST_BUS_SERDES>;
++			#phy-cells = <1>;
++			status = "disabled";
++		};
++
++		dp_aux_phy: phy@6c01e00 {
++			compatible = "allwinner,sun60i-a733-dp-aux-phy";
++			reg = <0x06c01e00 0x200>;
++			clocks = <&ccu CLK_SERDES_PHY>;
++			clock-names = "serdes";
+ 			resets = <&ccu RST_BUS_SERDES>;
+ 			#phy-cells = <0>;
+ 			status = "disabled";

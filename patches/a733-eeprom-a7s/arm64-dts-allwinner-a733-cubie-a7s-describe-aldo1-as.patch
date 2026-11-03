@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 13 Oct 2026 07:39:26 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733-cubie-a7s: describe ALDO1 as
+ VCC-PL
+
+ALDO1 of the PMIC supplies the pin banks PL and PG and the EEPROM
+(schematic V1.10 p.4, p.7, p.16), but the board device tree does not
+describe it. Bank PG is the supply of the TWI0 pull-ups R97 and R98
+(2.2 kOhm, VCC-PG tied to VCC-PL through RA3, schematic V1.10 p.7) and
+has no supply property yet.
+
+Add ALDO1 as a fixed 3.3 V regulator named vcc-pl and set it as the
+bank PG supply of the pin controller. The voltage is read back from the
+PMIC (ALDO1 enabled, 3.3 V). It stays on: it feeds bank PL, and the PMIC
+sits on the bus of that bank.
+
+r_pio gets no vcc-pl-supply. The PMIC is on r_i2c0 on PL0 and PL1. The
+pin driver requests the supply of a bank when a device takes pins of that
+bank, so a supply from ALDO1 would defer r_i2c0 for ever and the PMIC
+that provides ALDO1 would never probe. The bank PG supply does not write
+a register: the A733 pin controller has no io_bias variant, so the driver
+only gets and enables the regulator.
+
+Not covered: the PMIC input AIN234, which ALDO1 feeds, stays undescribed
+as before.
+
+Tested on Radxa Cubie A7S: the PMIC probes without a bank PL supply, and
+bank PG takes ALDO1 as its supply.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts     | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index 61ecb941a82a..d7acd2fee254 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -334,6 +334,7 @@ &pio {
+ 	vcc-pb-supply = <&reg_swout2>;
+ 	vcc-pc-supply = <&reg_cldo5>;
+ 	vcc-pd-supply = <&reg_swout1>;
++	vcc-pg-supply = <&reg_aldo1>;
+ 	vcc-ph-supply = <&reg_swout2>;
+ };
+ 
+@@ -363,6 +364,22 @@ axp318: pmic@36 {
+ 		dldoin-supply = <&reg_vcc5v0_sys>;
+ 
+ 		regulators {
++			/*
++			 * VCC-PL: bank PL (the PMIC bus pins), bank PG, the
++			 * EEPROM and the TWI0 pull-ups. Always on: the PMIC bus
++			 * runs on bank PL. Bank PL has no vcc-pl-supply on
++			 * r_pio: the PMIC sits on r_i2c0 (PL0/PL1), and the pin
++			 * driver requests the bank supply when r_i2c0 gets its
++			 * pins, so the supply of ALDO1 would defer the pins
++			 * and the PMIC that provides ALDO1 would never probe.
++			 */
++			reg_aldo1: aldo1 {
++				regulator-name = "vcc-pl";
++				regulator-min-microvolt = <3300000>;
++				regulator-max-microvolt = <3300000>;
++				regulator-always-on;
++			};
++
+ 			reg_dcdc1: dcdc1 {
+ 				regulator-name = "vcc-3v3-sys";
+ 				regulator-min-microvolt = <3300000>;

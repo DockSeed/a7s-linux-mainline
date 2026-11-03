@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Thu, 15 Oct 2026 15:25:08 +0200
+Subject: [PATCH] drm/sun4i: hdmi: Let DRM manage the encoder and its memory
+
+sun4i_drv no longer calls drm_mode_config_cleanup() itself (drm/sun4i:
+drv: Do not call drm_mode_config_cleanup()). The managed release of
+drm_mode_config_init() destroys the mode objects at the last
+drm_dev_put() instead, after component_unbind_all(), and, while
+userspace still holds the device open, after the display engine device
+has released its devres.
+
+The HDMI encoder and connector live in devm memory of the HDMI device,
+which component_unbind_all() frees before that, so they are cleaned up
+on freed memory even without a file open. The connector is already
+managed (drmm_connector_hdmi_init()), the encoder is not.
+
+Allocate struct sun4i_hdmi with drmm_kzalloc() and initialise the
+encoder with drmm_encoder_init(); the managed actions clean up the
+connector and the encoder, in that order, before the memory is freed.
+The managed variant wants a NULL .destroy, so drop the hook, and the
+error path no longer cleans up the encoder by hand.
+
+Not covered: the HDMI DDC and TMDS clocks and the I2C adapter, which
+stay in the devres of the HDMI device and go with it.
+
+Tested on Radxa Cubie A7S: not tested; the board has no controller of
+this kind, the code is compiled only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_hdmi_enc.c | 12 ++++--------
+ 1 file changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_hdmi_enc.c b/drivers/gpu/drm/sun4i/sun4i_hdmi_enc.c
+index 97253d631b2b..565a534c4dea 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_hdmi_enc.c
++++ b/drivers/gpu/drm/sun4i/sun4i_hdmi_enc.c
+@@ -20,6 +20,7 @@
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_edid.h>
+ #include <drm/drm_encoder.h>
++#include <drm/drm_managed.h>
+ #include <drm/drm_of.h>
+ #include <drm/drm_panel.h>
+ #include <drm/drm_print.h>
+@@ -171,10 +172,6 @@ static void sun4i_hdmi_enable(struct drm_encoder *encoder,
+ 	writel(val, hdmi->base + SUN4I_HDMI_VID_CTRL_REG);
+ }
+ 
+-static const struct drm_encoder_funcs sun4i_hdmi_funcs = {
+-	.destroy = drm_encoder_cleanup,
+-};
+-
+ static const struct drm_encoder_helper_funcs sun4i_hdmi_helper_funcs = {
+ 	.atomic_disable	= sun4i_hdmi_disable,
+ 	.atomic_enable	= sun4i_hdmi_enable,
+@@ -514,7 +511,7 @@ static int sun4i_hdmi_bind(struct device *dev, struct device *master,
+ 	u32 reg;
+ 	int ret;
+ 
+-	hdmi = devm_kzalloc(dev, sizeof(*hdmi), GFP_KERNEL);
++	hdmi = drmm_kzalloc(drm, sizeof(*hdmi), GFP_KERNEL);
+ 	if (!hdmi)
+ 		return -ENOMEM;
+ 	dev_set_drvdata(dev, hdmi);
+@@ -627,8 +624,8 @@ static int sun4i_hdmi_bind(struct device *dev, struct device *master,
+ 
+ 	drm_encoder_helper_add(&hdmi->encoder,
+ 			       &sun4i_hdmi_helper_funcs);
+-	ret = drm_encoder_init(drm, &hdmi->encoder, &sun4i_hdmi_funcs,
+-			       DRM_MODE_ENCODER_TMDS, NULL);
++	ret = drmm_encoder_init(drm, &hdmi->encoder, NULL,
++				DRM_MODE_ENCODER_TMDS, NULL);
+ 	if (ret) {
+ 		dev_err(dev, "Couldn't initialise the HDMI encoder\n");
+ 		goto err_put_ddc_i2c;
+@@ -687,7 +684,6 @@ static int sun4i_hdmi_bind(struct device *dev, struct device *master,
+ 
+ err_cleanup_connector:
+ 	cec_delete_adapter(hdmi->cec_adap);
+-	drm_encoder_cleanup(&hdmi->encoder);
+ err_put_ddc_i2c:
+ 	i2c_put_adapter(hdmi->ddc_i2c);
+ err_del_i2c_adapter:

@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 05:56:10 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable the eMMC
+
+The Cubie A7S can carry an 8-bit eMMC on SMHC2, but the board file
+leaves the controller off, so the eMMC is not seen.
+
+Enable SMHC2 with an 8-bit bus, as non-removable, with its hardware reset
+line (PC1) and HS200 at 1.8 V. VCC comes from the 3.3 V supply that also
+feeds the SD slot (vcc-3v3), VCCQ from the PMIC's 1.8 V CLDO5 output,
+which is described as a fixed regulator that the boot firmware leaves on
+until the AXP318W has a driver. Add an mmc2 alias, so the eMMC keeps its
+index next to the SD card. Boards sold without eMMC get a controller that
+finds no card.
+
+Not covered: HS400, the PMIC rails, and vcc-pc-supply for the pin bank,
+whose bias setting the A733 pin controller driver does not model yet.
+
+Tested on Radxa Cubie A7S: booted on two boards; on the board with an eMMC
+it appears with its boot partitions, and reading 256 MiB gives no data
+error; on the board without one the controller finds no card.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index db942dc0123f..55e1dabb6c1f 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -14,6 +14,7 @@ / {
+ 	aliases {
+ 		serial0 = &uart0;
+ 		mmc0 = &mmc0;
++		mmc2 = &mmc2;
+ 	};
+ 
+ 	chosen {
+@@ -56,6 +57,15 @@ scp@48100000 {
+ 		};
+ 	};
+ 
++	/* CLDO5 of the PMIC: VCC-PC and with it the eMMC VCCQ */
++	reg_vcc1v8: vcc1v8 {
++		compatible = "regulator-fixed";
++		regulator-name = "vcc-1v8";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		regulator-always-on;
++	};
++
+ 	reg_vcc3v3: vcc3v3 {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "vcc-3v3";
+@@ -73,6 +83,16 @@ &mmc0 {
+ 	status = "okay";
+ };
+ 
++&mmc2 {
++	vmmc-supply = <&reg_vcc3v3>;
++	vqmmc-supply = <&reg_vcc1v8>;
++	bus-width = <8>;
++	non-removable;
++	cap-mmc-hw-reset;
++	mmc-hs200-1_8v;
++	status = "okay";
++};
++
+ &osc {
+ 	clock-frequency = <26000000>;
+ };

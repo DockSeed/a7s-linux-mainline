@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:58:05 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the USB3 combo PHY
+
+Add the node of the first combo PHY in the SERDES block, which carries
+the SuperSpeed lanes of the USB3 controller, and the SERDES top page it
+shares with the second combo PHY as a system controller.
+
+The top page has no reset or clock of its own in the node: its reset
+is the SERDES bus reset, which the PHYs and the SERDES CCU share, and
+the PHYs hold it deasserted before they touch the page.
+
+A kernel whose combo PHY driver still maps the top page as its own
+register region does not bind the PHY with this device tree.
+
+Tested on Radxa Cubie A7S: booted on two boards; the PHY node binds
+through the SERDES top syscon on both, and on one board the USB3
+controller enumerates a stick through it.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index 66f3532a1954..f1830bc73230 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -761,6 +761,24 @@ serdes_ccu: clock-controller@6c00000 {
+ 			#reset-cells = <1>;
+ 		};
+ 
++		combophy0: phy@6c01000 {
++			compatible = "allwinner,sun60i-a733-usb3-combophy";
++			reg = <0x06c01000 0x1000>,
++			      <0x06c80000 0x20000>;
++			reg-names = "link", "pma";
++			allwinner,serdes-top = <&serdes_top>;
++			clocks = <&ccu CLK_SERDES_PHY>, <&rtc CLK_HOSC_SERDES0>;
++			clock-names = "serdes", "hosc";
++			resets = <&ccu RST_BUS_SERDES>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
++
++		serdes_top: syscon@6c06000 {
++			compatible = "allwinner,sun60i-a733-serdes-top", "syscon";
++			reg = <0x06c06000 0x1000>;
++		};
++
+ 		r_ccu: clock-controller@7010000 {
+ 			compatible = "allwinner,sun60i-a733-r-ccu";
+ 			reg = <0x07010000 0x230>;

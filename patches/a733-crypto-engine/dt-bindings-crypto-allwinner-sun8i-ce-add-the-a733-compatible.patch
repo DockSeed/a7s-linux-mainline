@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 20:00:00 +0200
+Subject: [PATCH] dt-bindings: crypto: allwinner,sun8i-ce: Add the A733
+ compatible
+
+The A733 crypto engine takes the clocks of the H616 (bus, module, MBUS
+and the RC oscillator for the TRNG) and in addition the bus gate of its
+CE_SYS part, and it has two resets, CE and CE_SYS (A733 manual, section
+4.1.6.118). Its task descriptors and task load differ from those of the
+earlier engines, so the compatible has no fallback.
+
+Add the compatible with five clocks and two resets. The clock count
+conditions become one if block per group of SoCs, so that each group
+also limits the resets; the earlier SoCs keep one reset.
+
+Tested on Radxa Cubie A7S: the crypto engine probes with the clocks and
+resets this binding names.
+
+Assisted-by: LLM
+---
+ .../bindings/crypto/allwinner,sun8i-ce.yaml   | 101 ++++++++++++------
+ 1 file changed, 69 insertions(+), 32 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/crypto/allwinner,sun8i-ce.yaml b/Documentation/devicetree/bindings/crypto/allwinner,sun8i-ce.yaml
+index da47b601c165..304bc5838a01 100644
+--- a/Documentation/devicetree/bindings/crypto/allwinner,sun8i-ce.yaml
++++ b/Documentation/devicetree/bindings/crypto/allwinner,sun8i-ce.yaml
+@@ -19,6 +19,7 @@ properties:
+       - allwinner,sun50i-h5-crypto
+       - allwinner,sun50i-h6-crypto
+       - allwinner,sun50i-h616-crypto
++      - allwinner,sun60i-a733-crypto
+ 
+   reg:
+     maxItems: 1
+@@ -32,6 +33,7 @@ properties:
+       - description: Module clock
+       - description: MBus clock
+       - description: TRNG clock (RC oscillator)
++      - description: CE_SYS bus clock
+     minItems: 2
+ 
+   clock-names:
+@@ -40,42 +42,77 @@ properties:
+       - const: mod
+       - const: ram
+       - const: trng
++      - const: sys
+     minItems: 2
+ 
+   resets:
+-    maxItems: 1
++    minItems: 1
++    items:
++      - description: Bus reset
++      - description: CE_SYS reset
++
++allOf:
++  - if:
++      properties:
++        compatible:
++          enum:
++            - allwinner,sun20i-d1-crypto
++            - allwinner,sun50i-h616-crypto
++    then:
++      properties:
++        clocks:
++          minItems: 4
++          maxItems: 4
++        clock-names:
++          minItems: 4
++          maxItems: 4
++        resets:
++          maxItems: 1
++
++  - if:
++      properties:
++        compatible:
++          const: allwinner,sun50i-h6-crypto
++    then:
++      properties:
++        clocks:
++          minItems: 3
++          maxItems: 3
++        clock-names:
++          minItems: 3
++          maxItems: 3
++        resets:
++          maxItems: 1
++
++  - if:
++      properties:
++        compatible:
++          const: allwinner,sun60i-a733-crypto
++    then:
++      properties:
++        clocks:
++          minItems: 5
++        clock-names:
++          minItems: 5
++        resets:
++          minItems: 2
+ 
+-if:
+-  properties:
+-    compatible:
+-      enum:
+-        - allwinner,sun20i-d1-crypto
+-        - allwinner,sun50i-h616-crypto
+-then:
+-  properties:
+-    clocks:
+-      minItems: 4
+-    clock-names:
+-      minItems: 4
+-else:
+-  if:
+-    properties:
+-      compatible:
+-        const: allwinner,sun50i-h6-crypto
+-  then:
+-    properties:
+-      clocks:
+-        minItems: 3
+-        maxItems: 3
+-      clock-names:
+-        minItems: 3
+-        maxItems: 3
+-  else:
+-    properties:
+-      clocks:
+-        maxItems: 2
+-      clock-names:
+-        maxItems: 2
++  - if:
++      properties:
++        compatible:
++          enum:
++            - allwinner,sun8i-h3-crypto
++            - allwinner,sun8i-r40-crypto
++            - allwinner,sun50i-a64-crypto
++            - allwinner,sun50i-h5-crypto
++    then:
++      properties:
++        clocks:
++          maxItems: 2
++        clock-names:
++          maxItems: 2
++        resets:
++          maxItems: 1
+ 
+ required:
+   - compatible

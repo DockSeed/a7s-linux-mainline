@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:20 +0200
+Subject: [PATCH] drm/sun4i: mixer: Add the A733 mixer
+
+The A733 display engine uses the DE33 layout: its layers, top and
+display windows, the blender and the VI channel registers sit at the
+offsets of the H616 mixer.
+
+Add a configuration with one VI channel as primary plane, RGB only
+with the channel colour space converter at 0x800 of the channel window
+kept off, and the VI scaler of that channel. Further planes need the
+blender input mux in the top block, which is not supported. No module
+clock rate is forced: the user manual advises against retuning PLL_DE,
+which also clocks the interconnect, so DE0 runs at the PLL_DE rate the
+boot chain set up. The vendor kernel sets 600 MHz.
+
+Not covered: UI channels, more VI channels, YUV formats, the register
+command queue.
+
+Tested on Radxa Cubie A7S: booted on one board; the mixer scanned out
+the framebuffer, and the frame CRC reported by the sink changed with
+each colour written to it.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index b6cd7352e76c..3c7682bd09c5 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -879,6 +879,29 @@ static const struct sun8i_mixer_cfg sun50i_h616_mixer0_cfg = {
+ 	.map		= {0, 6, 7, 8},
+ };
+ 
++/*
++ * The A733 display engine follows the DE33 register layout. Only VI
++ * channel 0 is described: the blender input mux that a second plane
++ * needs is not supported. The channel colour space converter sits at
++ * 0x800 of each channel window; its coefficient layout is not supported,
++ * so it is written off and the layer takes RGB only. The module clock
++ * rate is not set: the user manual advises against changing PLL_DE,
++ * which also clocks the interconnect (section 4.1.4.3), so DE0 runs at
++ * the PLL_DE rate the boot chain set up. The vendor kernel sets 600 MHz.
++ */
++static const struct sun8i_mixer_cfg sun60i_a733_mixer0_cfg = {
++	.lay_cfg = {
++		.ccsc		= CCSC_DE33_CHANNEL_LAYOUT,
++		.de_type	= SUN8I_MIXER_DE33,
++		.scaler_mask	= 0x1,
++		.rgb_only	= 1,
++	},
++	.de_type	= SUN8I_MIXER_DE33,
++	.ui_num		= 0,
++	.vi_num		= 1,
++	.map		= {0},
++};
++
+ static const struct of_device_id sun8i_mixer_of_table[] = {
+ 	{
+ 		.compatible = "allwinner,sun8i-a83t-de2-mixer-0",
+@@ -928,6 +951,10 @@ static const struct of_device_id sun8i_mixer_of_table[] = {
+ 		.compatible = "allwinner,sun50i-h616-de33-mixer-0",
+ 		.data = &sun50i_h616_mixer0_cfg,
+ 	},
++	{
++		.compatible = "allwinner,sun60i-a733-de-mixer-0",
++		.data = &sun60i_a733_mixer0_cfg,
++	},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun8i_mixer_of_table);

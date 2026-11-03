@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 5 Oct 2026 17:05:27 +0200
+Subject: [PATCH] clk: sunxi-ng: a733-cpu: Park the core clusters on the backup
+ PLL
+
+While a core cluster's PLL relocks, its cores run from the 26 MHz
+oscillator. The clock framework's work around the change runs on those
+cores too, so every rate change takes longer than the relock itself.
+
+Park the core clusters on the backup PLL CPU_BACK instead, the clusters'
+mux encoding 101, which the manual names as one of their backup sources
+(5.1.4.1). It is used when the firmware runs it, enable and output gate
+set, at no more than 1014 MHz. The driver does not enable it: the manual
+advises against switching PLLs on and off during operation (5.1.4.2).
+probe() makes the choice once and says which source it took.
+
+The park must not run the cores faster than their supply allows. 1014
+MHz is an operating point that both clusters run at the lowest voltage
+of their supplies, so a park at or below it is safe in both directions
+of a change, whatever the old and the new rate.
+
+Not covered: the DSU, whose mux has no input from the backup PLL.
+
+Tested on Radxa Cubie A7S: booted on two boards; probe reports the park
+on the backup PLL that the boot firmware runs, and after rate changes in
+both directions over the operating points the cores run at the set rate,
+which the run time of a fixed loop shows on both clusters.
+
+Assisted-by: LLM
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c | 27 ++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+index 7a78ee2979b5..9a1e88cfdff3 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpu.c
+@@ -101,6 +101,7 @@
+ 
+ /* Mux indices are the encodings */
+ #define CPU_MUX_SLOW		0
++#define CPU_CORE_MUX_BACK	5
+ 
+ /*
+  * Operating points that the core clusters and the DSU run at the lowest
+@@ -759,6 +760,30 @@ static int sun60i_a733_cpu_register_clks(struct device *dev, void __iomem *reg)
+ 	return sun60i_a733_cpu_set_rate_ranges();
+ }
+ 
++/*
++ * Park the core clusters on the backup PLL instead of cpu-slow when the
++ * firmware runs it (enable and output gate set) at no more than
++ * CPU_CORE_LOW_VOLTAGE_RATE, so a park never runs the cores faster than
++ * their supply allows, in either direction of a change. The driver does
++ * not enable it: the manual advises against switching PLLs on and off
++ * during operation (5.1.4.2).
++ */
++static void sun60i_a733_cpu_park_on_back(struct device *dev)
++{
++	bool on = clk_hw_is_enabled(&pll_cpu_back_clk.hw);
++	unsigned long rate = clk_hw_get_rate(&pll_cpu_back_clk.hw);
++
++	if (!on || !rate || rate > CPU_CORE_LOW_VOLTAGE_RATE) {
++		dev_info(dev, "backup PLL %s at %lu Hz, core clusters park on cpu-slow\n",
++			 on ? "on" : "off", rate);
++		return;
++	}
++
++	cpu_l_mux_nb.bypass_index = CPU_CORE_MUX_BACK;
++	cpu_b_mux_nb.bypass_index = CPU_CORE_MUX_BACK;
++	dev_info(dev, "core clusters park on the backup PLL at %lu Hz\n", rate);
++}
++
+ static int sun60i_a733_cpu_ccu_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -783,6 +808,8 @@ static int sun60i_a733_cpu_ccu_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "cannot register the clocks\n");
+ 
++	sun60i_a733_cpu_park_on_back(dev);
++
+ 	for (i = 0; i < ARRAY_SIZE(sun60i_a733_cpu_clusters); i++) {
+ 		ret = sun60i_a733_cpu_register_nb(dev,
+ 						  &sun60i_a733_cpu_clusters[i]);

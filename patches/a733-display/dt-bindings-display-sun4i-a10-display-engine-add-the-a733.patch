@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 15:37:19 +0200
+Subject: [PATCH] dt-bindings: display: sun4i-a10-display-engine: Add the A733
+
+Add the A733 display engine compatible. It drives one pipeline per
+mixer; only mixer 0 is described, so it takes a single pipeline.
+
+Tested on Radxa Cubie A7S: booted on one board with a device tree that
+uses this binding; the display engine binds and dtbs_check reports
+nothing.
+
+Assisted-by: LLM
+---
+ .../bindings/display/allwinner,sun4i-a10-display-engine.yaml     | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-display-engine.yaml b/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-display-engine.yaml
+index e6088f379f70..e5102cc58728 100644
+--- a/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-display-engine.yaml
++++ b/Documentation/devicetree/bindings/display/allwinner,sun4i-a10-display-engine.yaml
+@@ -65,6 +65,7 @@ properties:
+       - allwinner,sun20i-d1-display-engine
+       - allwinner,sun50i-a64-display-engine
+       - allwinner,sun50i-h6-display-engine
++      - allwinner,sun60i-a733-display-engine
+ 
+   allwinner,pipelines:
+     $ref: /schemas/types.yaml#/definitions/phandle-array

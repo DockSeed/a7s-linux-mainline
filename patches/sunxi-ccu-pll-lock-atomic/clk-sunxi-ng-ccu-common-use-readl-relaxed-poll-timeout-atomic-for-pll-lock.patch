@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Wed, 16 Sep 2026 14:29:10 +1000
+Subject: [PATCH] clk: sunxi-ng: ccu_common: Use
+ readl_relaxed_poll_timeout_atomic for PLL lock
+
+The Allwinner sunxi-ng CCU driver currently uses
+readl_relaxed_poll_timeout() in ccu_helper_wait_for_lock() to wait for
+PLLs to lock.
+
+This non-atomic poll macro relies on ktime_get() and the kernel
+timekeeping infrastructure. During early boot or sensitive clock
+transitions (such as CPUfreq DVFS scaling) where timer interrupts or
+timekeeping may be suspended or unstable, ktime_get() fails to advance.
+This turns the timeout calculation into an infinite busy-wait loop,
+causing RCU stalls and system freezes if the PLL lock bit does not
+assert immediately.
+
+Switch to readl_relaxed_poll_timeout_atomic(). This atomic variant relies
+on udelay() rather than timekeeping, making it safe to execute even when
+timekeeping is suspended or uninitialized.
+
+Assisted-by: LLM
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Link: https://patch.msgid.link/20260916042910.382744-1-alastair@d-silva.org
+Signed-off-by: Chen-Yu Tsai <wens@kernel.org>
+---
+ drivers/clk/sunxi-ng/ccu_common.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu_common.c b/drivers/clk/sunxi-ng/ccu_common.c
+index 43d8eca6abee..248e58c9562d 100644
+--- a/drivers/clk/sunxi-ng/ccu_common.c
++++ b/drivers/clk/sunxi-ng/ccu_common.c
+@@ -35,7 +35,7 @@ void ccu_helper_wait_for_lock(struct ccu_common *common, u32 lock)
+ 	else
+ 		addr = common->base + common->reg;
+ 
+-	WARN_ON(readl_relaxed_poll_timeout(addr, reg, reg & lock, 100, 70000));
++	WARN_ON(readl_relaxed_poll_timeout_atomic(addr, reg, reg & lock, 100, 70000));
+ }
+ EXPORT_SYMBOL_NS_GPL(ccu_helper_wait_for_lock, "SUNXI_CCU");
+ 

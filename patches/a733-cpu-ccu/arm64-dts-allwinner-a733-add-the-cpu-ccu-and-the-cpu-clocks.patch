@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 18:59:49 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: Add the CPU CCU and the CPU
+ clocks
+
+The CPUs have no clocks in the device tree, so cpufreq cannot drive them
+and the topology code cannot scale their capacity by frequency.
+
+Add the CPU CCU at 0x08870000 and point every CPU at its cluster clock:
+cpu-l for the Cortex-A55 cores 0-5, cpu-b for the Cortex-A76 cores 6 and
+7. Those are the cluster muxes, not the PLLs, so the driver can park the
+cores while their PLL relocks. The node maps the four 4 KiB register
+groups of the block, which end with CPU_SLOW_CLK_SEL at 0x3034.
+
+Not covered: operating points; without them no CPU rate changes.
+
+Tested on Radxa Cubie A7S: booted on two boards; the node probes, all
+eight CPUs take the clock of their cluster, and cpufreq changes the
+rates through it.
+
+Assisted-by: LLM
+---
+ .../arm64/boot/dts/allwinner/sun60i-a733.dtsi | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+index a60c09a65be8..c1957cc85852 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
+@@ -2,6 +2,7 @@
+ 
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
++#include <dt-bindings/clock/allwinner,sun60i-a733-cpu-ccu.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
+ #include <dt-bindings/clock/allwinner,sun60i-a733-serdes-ccu.h>
+ #include <dt-bindings/clock/sun6i-rtc.h>
+@@ -59,6 +60,7 @@ cpu0: cpu@0 {
+ 			compatible = "arm,cortex-a55";
+ 			device_type = "cpu";
+ 			reg = <0x000>;
++			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+@@ -75,6 +77,7 @@ cpu1: cpu@100 {
+ 			compatible = "arm,cortex-a55";
+ 			device_type = "cpu";
+ 			reg = <0x100>;
++			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+@@ -91,6 +94,7 @@ cpu2: cpu@200 {
+ 			compatible = "arm,cortex-a55";
+ 			device_type = "cpu";
+ 			reg = <0x200>;
++			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+@@ -107,6 +111,7 @@ cpu3: cpu@300 {
+ 			compatible = "arm,cortex-a55";
+ 			device_type = "cpu";
+ 			reg = <0x300>;
++			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+@@ -123,6 +128,7 @@ cpu4: cpu@400 {
+ 			compatible = "arm,cortex-a55";
+ 			device_type = "cpu";
+ 			reg = <0x400>;
++			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+@@ -139,6 +145,7 @@ cpu5: cpu@500 {
+ 			compatible = "arm,cortex-a55";
+ 			device_type = "cpu";
+ 			reg = <0x500>;
++			clocks = <&cpu_ccu CLK_CPU_L>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <454>;
+ 			cpu-idle-states = <&cpu_sleep_a55>;
+@@ -155,6 +162,7 @@ cpu6: cpu@600 {
+ 			compatible = "arm,cortex-a76";
+ 			device_type = "cpu";
+ 			reg = <0x600>;
++			clocks = <&cpu_ccu CLK_CPU_B>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
+ 			cpu-idle-states = <&cpu_sleep_a76>;
+@@ -171,6 +179,7 @@ cpu7: cpu@700 {
+ 			compatible = "arm,cortex-a76";
+ 			device_type = "cpu";
+ 			reg = <0x700>;
++			clocks = <&cpu_ccu CLK_CPU_B>;
+ 			enable-method = "psci";
+ 			capacity-dmips-mhz = <1024>;
+ 			cpu-idle-states = <&cpu_sleep_a76>;
+@@ -1053,6 +1062,17 @@ rtc: rtc@7090000 {
+ 			clock-names = "bus", "hosc", "ahb";
+ 			#clock-cells = <1>;
+ 		};
++
++		cpu_ccu: clock-controller@8870000 {
++			compatible = "allwinner,sun60i-a733-cpu-ccu";
++			reg = <0x08870000 0x4000>;
++			clocks = <&osc>, <&rtc CLK_OSC32K>, <&rtc CLK_IOSC>,
++				 <&ccu CLK_PLL_PERIPH0_2X>,
++				 <&ccu CLK_PLL_PERIPH0_600M>;
++			clock-names = "hosc", "losc", "iosc", "pll-periph0-2x",
++				      "pll-periph0-600m";
++			#clock-cells = <1>;
++		};
+ 	};
+ 
+ 	thermal-zones {

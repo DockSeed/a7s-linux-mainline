@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 06:24:14 +0200
+Subject: [PATCH] arm64: dts: allwinner: a733: cubie-a7s: Enable Ethernet
+
+The Cubie A7S has one RJ45 port, driven by GMAC0 through a Maxio
+MAE0621A PHY at MDIO address 1. It has no network in Linux.
+
+Enable GMAC0 with the RGMII pins and describe the PHY, supplied by
+SWOUT1. The RGMII pins are in bank PH, whose I/O supply is SWOUT2 at
+3.3 V; name it, so that the pin controller sets the bank's voltage from
+the real rail.
+
+The PHY reset is PH16, active low. The pin rests low, so the PHY does not
+answer on MDIO until the reset is released. The reset is therefore on the
+MDIO bus, which releases it before the bus is scanned.
+
+The board has no delay lines, so the mode is rgmii-id. The PHY cannot
+add the delays: it has no delay register, and the RX delay strap in the
+schematic does not take effect on the silicon, as the RX window found
+from the MAC side is centred on the delay RGMII asks for. The MAC adds
+both delays instead.
+
+Not covered: a driver for the PHY, which runs on the generic one.
+
+Tested on Radxa Cubie A7S: booted on two boards; the generic PHY driver
+finds the PHY (0x7b744412) at address 1, the link comes up at 1000/full,
+also after a down and up, 20 of 20 pings return, and iperf3 runs in
+both directions without retransmissions or errors.
+
+Assisted-by: LLM
+---
+ .../dts/allwinner/sun60i-a733-cubie-a7s.dts   | 33 +++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+index dd6dec6411d6..0e5b82aec3dd 100644
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-cubie-a7s.dts
+@@ -12,6 +12,7 @@ / {
+ 	compatible = "radxa,cubie-a7s", "allwinner,sun60i-a733";
+ 
+ 	aliases {
++		ethernet0 = &gmac0;
+ 		serial0 = &uart0;
+ 		mmc0 = &mmc0;
+ 		mmc2 = &mmc2;
+@@ -75,6 +76,34 @@ reg_vcc3v3: vcc3v3 {
+ 	};
+ };
+ 
++&gmac0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&rgmii0_ph_pins>;
++	phy-handle = <&ext_rgmii_phy>;
++	/*
++	 * No delay lines on the board. The PHY adds no delay: it has no
++	 * delay register, and the RX delay strap in the schematic does not
++	 * take effect on the silicon. The MAC adds both delays.
++	 */
++	phy-mode = "rgmii-id";
++	phy-supply = <&reg_swout1>;
++	tx-internal-delay-ps = <1260>;
++	rx-internal-delay-ps = <1800>;
++	status = "okay";
++};
++
++&mdio0 {
++	/* PH16 rests low, so the PHY is held in reset until released */
++	reset-gpios = <&pio 7 16 GPIO_ACTIVE_LOW>;
++	reset-delay-us = <10000>;
++	reset-post-delay-us = <100000>;
++
++	ext_rgmii_phy: ethernet-phy@1 {
++		compatible = "ethernet-phy-ieee802.3-c22";
++		reg = <1>;
++	};
++};
++
+ &mmc0 {
+ 	vmmc-supply = <&reg_vcc3v3>;
+ 	cd-gpios = <&pio 5 6 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>; /* PF6 */
+@@ -100,6 +129,10 @@ &osc {
+ 	clock-frequency = <26000000>;
+ };
+ 
++&pio {
++	vcc-ph-supply = <&reg_swout2>;
++};
++
+ &r_i2c0 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&r_i2c0_pl_pins>;

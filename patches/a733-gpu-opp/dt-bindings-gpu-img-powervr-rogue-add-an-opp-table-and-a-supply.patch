@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 9 Oct 2026 16:57:56 +0200
+Subject: [PATCH] dt-bindings: gpu: img,powervr-rogue: Add an OPP table and a
+ supply
+
+The GPU of the Allwinner A733 needs its core supply at 960 mV before
+its clock runs at 1008 MHz. The board sets that voltage when the PMIC
+probes and the clock when the GPU probes, and nothing in the device
+tree orders the two. An operating point makes the pair a property of
+the node: the OPP core raises the voltage before it raises the clock.
+
+Add operating-points-v2 and gpu-supply, both optional, and require the
+table when a supply is given, as the supply is used with it only. The
+name follows the Mali bindings, which name the supply after the GPU
+(mali-supply). A generic name such as power-supply would also match
+chargers and batteries; this binding names no GPU rail
+so far.
+
+The properties are not limited to one compatible: the driver reads them
+from the node and ignores a node without them, so the other users of the
+binding keep their behaviour.
+
+Not covered: a dt_binding_check run, dt-schema was not available.
+
+Tested on Radxa Cubie A7S: booted on two boards with the GPU node
+carrying an OPP table and gpu-supply; the driver binds, takes the supply
+and sets the operating point.
+
+Assisted-by: LLM
+---
+ .../bindings/gpu/img,powervr-rogue.yaml           | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml b/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml
+index 3c658926300c..fedbd189a94c 100644
+--- a/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml
++++ b/Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml
+@@ -73,6 +73,18 @@ properties:
+   interrupts:
+     maxItems: 1
+ 
++  gpu-supply:
++    description:
++      Regulator that supplies the GPU core, used together with
++      operating-points-v2; the OPP core sets its voltage before it raises
++      the core clock.
++
++  operating-points-v2:
++    description:
++      Operating points of the GPU core clock. The driver sets the highest
++      one once at probe, before the firmware reads the clock rate, and
++      does not change it afterwards.
++
+   power-domains:
+     minItems: 1
+     maxItems: 2
+@@ -95,6 +107,9 @@ required:
+   - clock-names
+   - interrupts
+ 
++dependencies:
++  gpu-supply: [ operating-points-v2 ]
++
+ additionalProperties: false
+ 
+ allOf:

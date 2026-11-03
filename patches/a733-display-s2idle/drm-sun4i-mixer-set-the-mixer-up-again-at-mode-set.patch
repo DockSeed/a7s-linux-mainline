@@ -1,0 +1,162 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Fri, 16 Oct 2026 09:59:48 +0200
+Subject: [PATCH] drm/sun4i: mixer: Set the mixer up again at mode set
+
+sun8i_mixer_init() enables the mixer and sets the blender to its
+defaults (background and bottom fill colour, blend mode of every pipe)
+only when the mixer binds. Apart from the pipe control word, which the
+plane commit writes, nothing writes them again. On the A733 the display
+engine sits in the DE_SYS power domain, which genpd powers off in system
+suspend. Without this, the display stays dark after resume, because the
+DRM resume commits the planes, routes and mode again, but not the init.
+Seen on the Radxa Cubie A7S: after s2idle the mixer enable and the
+blender mode words read zero and the DisplayPort sink shows no picture.
+
+Run the init from the mode_set callback of the engine, before the size
+and interlace settings it already writes. The CRTC calls it from
+mode_set_nofb when a commit changes the mode of an enabled CRTC, which
+the atomic helpers do with the CRTC off; drm_atomic_helper_resume()
+always does so, as the suspend left the CRTC disabled. The plane commit
+that follows sets the routes and pipe enables again. Setting up the
+global state of the display controller each time the CRTC is enabled is
+what the Rockchip VOP2 driver does in vop2_enable(). It keeps the fix in
+the driver that owns these registers. System sleep PM ops on the mixer
+device would not do, because its driver data is set at bind and freed
+with the bind resources at unbind. Apart from the pipe control word,
+which the following plane commit rebuilds from all planes of the CRTC,
+the init writes registers that only it writes, so on a display engine
+that stays powered it repeats the values they already hold.
+
+Not covered: the DE2 and DE3 registers the bind clears before the init.
+The DE33 mixer of the A733 has no such step.
+
+Tested on Radxa Cubie A7S: after an s2idle cycle that powered the
+DE_SYS domain off, the mixer enable and blender words read as before and
+the sink saw the same picture again, second plane included.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c | 95 ++++++++++++++++-------------
+ 1 file changed, 51 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index a9549b530aa9..d973d56cbd11 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -381,6 +381,50 @@ static struct drm_plane **sun8i_layers_init(struct drm_device *drm,
+ 	return planes;
+ }
+ 
++static void sun8i_mixer_init(struct sun8i_mixer *mixer)
++{
++	struct regmap *top_regs, *disp_regs;
++	unsigned int base = sun8i_blender_base(mixer);
++	int plane_cnt, i;
++
++	if (mixer->cfg->de_type == SUN8I_MIXER_DE33) {
++		top_regs = mixer->top_regs;
++		disp_regs = mixer->disp_regs;
++	} else {
++		top_regs = mixer->engine.regs;
++		disp_regs = mixer->engine.regs;
++	}
++
++	/* Enable the mixer */
++	regmap_write(top_regs, SUN8I_MIXER_GLOBAL_CTL,
++		     SUN8I_MIXER_GLOBAL_CTL_RT_EN);
++
++	if (mixer->cfg->de_type == SUN8I_MIXER_DE33)
++		regmap_write(top_regs, SUN50I_MIXER_GLOBAL_CLK, 1);
++
++	/* Set background color to black */
++	regmap_write(disp_regs, SUN8I_MIXER_BLEND_BKCOLOR(base),
++		     SUN8I_MIXER_BLEND_COLOR_BLACK);
++
++	/*
++	 * Set fill color of bottom plane to black. Generally not needed
++	 * except when VI plane is at bottom (zpos = 0) and enabled.
++	 */
++	regmap_write(disp_regs, SUN8I_MIXER_BLEND_PIPE_CTL(base),
++		     SUN8I_MIXER_BLEND_PIPE_CTL_FC_EN(0));
++	regmap_write(disp_regs, SUN8I_MIXER_BLEND_ATTR_FCOLOR(base, 0),
++		     SUN8I_MIXER_BLEND_COLOR_BLACK);
++
++	plane_cnt = mixer->cfg->vi_num + mixer->cfg->ui_num;
++	for (i = 0; i < plane_cnt; i++)
++		regmap_write(disp_regs,
++			     SUN8I_MIXER_BLEND_MODE(base, i),
++			     SUN8I_MIXER_BLEND_MODE_DEF);
++
++	regmap_update_bits(disp_regs, SUN8I_MIXER_BLEND_PIPE_CTL(base),
++			   SUN8I_MIXER_BLEND_PIPE_CTL_EN_MSK, 0);
++}
++
+ static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
+ 				 const struct drm_display_mode *mode)
+ {
+@@ -389,6 +433,13 @@ static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
+ 	u32 bld_base, size, val;
+ 	bool interlaced;
+ 
++	/*
++	 * The display engine can lose its registers while the CRTC is off,
++	 * for example when its power domain goes off in system suspend, so
++	 * set the mixer up again before the new mode.
++	 */
++	sun8i_mixer_init(mixer);
++
+ 	bld_base = sun8i_blender_base(mixer);
+ 	bld_regs = sun8i_blender_regmap(mixer);
+ 	interlaced = !!(mode->flags & DRM_MODE_FLAG_INTERLACE);
+@@ -466,50 +517,6 @@ static int sun8i_mixer_of_get_id(struct device_node *node)
+ 	return of_ep.id;
+ }
+ 
+-static void sun8i_mixer_init(struct sun8i_mixer *mixer)
+-{
+-	struct regmap *top_regs, *disp_regs;
+-	unsigned int base = sun8i_blender_base(mixer);
+-	int plane_cnt, i;
+-
+-	if (mixer->cfg->de_type == SUN8I_MIXER_DE33) {
+-		top_regs = mixer->top_regs;
+-		disp_regs = mixer->disp_regs;
+-	} else {
+-		top_regs = mixer->engine.regs;
+-		disp_regs = mixer->engine.regs;
+-	}
+-
+-	/* Enable the mixer */
+-	regmap_write(top_regs, SUN8I_MIXER_GLOBAL_CTL,
+-		     SUN8I_MIXER_GLOBAL_CTL_RT_EN);
+-
+-	if (mixer->cfg->de_type == SUN8I_MIXER_DE33)
+-		regmap_write(top_regs, SUN50I_MIXER_GLOBAL_CLK, 1);
+-
+-	/* Set background color to black */
+-	regmap_write(disp_regs, SUN8I_MIXER_BLEND_BKCOLOR(base),
+-		     SUN8I_MIXER_BLEND_COLOR_BLACK);
+-
+-	/*
+-	 * Set fill color of bottom plane to black. Generally not needed
+-	 * except when VI plane is at bottom (zpos = 0) and enabled.
+-	 */
+-	regmap_write(disp_regs, SUN8I_MIXER_BLEND_PIPE_CTL(base),
+-		     SUN8I_MIXER_BLEND_PIPE_CTL_FC_EN(0));
+-	regmap_write(disp_regs, SUN8I_MIXER_BLEND_ATTR_FCOLOR(base, 0),
+-		     SUN8I_MIXER_BLEND_COLOR_BLACK);
+-
+-	plane_cnt = mixer->cfg->vi_num + mixer->cfg->ui_num;
+-	for (i = 0; i < plane_cnt; i++)
+-		regmap_write(disp_regs,
+-			     SUN8I_MIXER_BLEND_MODE(base, i),
+-			     SUN8I_MIXER_BLEND_MODE_DEF);
+-
+-	regmap_update_bits(disp_regs, SUN8I_MIXER_BLEND_PIPE_CTL(base),
+-			   SUN8I_MIXER_BLEND_PIPE_CTL_EN_MSK, 0);
+-}
+-
+ static int sun8i_mixer_bind(struct device *dev, struct device *master,
+ 			      void *data)
+ {

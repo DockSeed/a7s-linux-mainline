@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 4 Oct 2026 21:19:59 +0200
+Subject: [PATCH] dt-bindings: usb: snps,dwc3-common: Add
+ snps,inv-sync-hdr-quirk
+
+Bit 30 of the DWC_usb31 LLUCTL register makes the link layer detect Gen2
+receiver polarity from the data block sync header. On the Allwinner A733
+some Gen2 devices link at Gen1 unless it is set. Add a quirk property for
+it.
+
+Tested on Radxa Cubie A7S: booted on two boards; the property is
+accepted on the controller node and read back in the device tree
+(snps,inv-sync-hdr-quirk present).
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/usb/snps,dwc3-common.yaml          | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml b/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
+index 6c0b8b653824..35f2d0949871 100644
+--- a/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
++++ b/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
+@@ -207,6 +207,13 @@ properties:
+       avoid -EPROTO errors with usbhid on some devices (Hikey 970).
+     type: boolean
+ 
++  snps,inv-sync-hdr-quirk:
++    description:
++      When set, the link layer detects Gen2 receiver polarity from the data
++      block sync header (DWC_usb31 LLUCTL bit 30). Without it some Gen2
++      devices link at Gen1 on Allwinner A733.
++    type: boolean
++
+   snps,gfladj-refclk-lpm-sel-quirk:
+     description:
+       When set, run the SOF/ITP counter based on ref_clk.

@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sat, 17 Oct 2026 08:18:56 +0200
+Subject: [PATCH] drm/sun4i: crtc: Let the engine stop its planes when the CRTC
+ is disabled
+
+sun4i-drm commits with drm_atomic_helper_commit_tail_rpm(), which
+commits planes on active CRTCs only. A plane that is disabled while its
+CRTC is inactive, for example because its framebuffer is removed after a
+DPMS off, is not written to the hardware, and its buffer can be freed.
+When the CRTC is enabled again, the helper enables the CRTC and the
+encoder before it commits the planes, so the engine fetches from the
+freed buffer until the plane commit. Seen on the Radxa Cubie A7S: after
+DPMS off and the close of the DRM master, the fbdev restore enables the
+DisplayPort output again, and the IOMMU of the display engine reports
+faults on the address of the freed buffer until the planes are written.
+
+Add an optional disable callback to the engine operations and call it
+from the CRTC atomic_disable hook, before the TCON stops, so the engine
+stops fetching while the CRTC is off. Disabling the planes in the CRTC
+disable hook is what drivers with ACTIVE_ONLY plane commits do, such as
+Rockchip VOP2 and i.MX DCSS, which call
+drm_atomic_helper_disable_planes_on_crtc(). That helper calls the plane
+atomic_disable hooks without an atomic state, which the sun4i backend
+layers dereference, so the engine does it instead. When the CRTC is
+enabled again, the atomic helpers add its planes to the commit, and
+their atomic_update writes the layers again.
+
+Not covered: engines without the callback behave as before; the sun8i
+mixer implements it in the next patch.
+
+Tested on Radxa Cubie A7S: on its DE33, after the display was blanked
+and its framebuffer freed, enabling the CRTC again raises no IOMMU
+fault; not tested on DE2 or DE3.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_crtc.c   |  2 ++
+ drivers/gpu/drm/sun4i/sunxi_engine.h | 26 ++++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_crtc.c b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+index 8219ccb710cd..a7488b6077af 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_crtc.c
++++ b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+@@ -126,6 +126,8 @@ static void sun4i_crtc_atomic_disable(struct drm_crtc *crtc,
+ 
+ 	drm_crtc_vblank_off(crtc);
+ 
++	sunxi_engine_disable(scrtc->engine, crtc);
++
+ 	sun4i_tcon_set_status(scrtc->tcon, encoder, false);
+ 
+ 	if (crtc->state->event && !crtc->state->active) {
+diff --git a/drivers/gpu/drm/sun4i/sunxi_engine.h b/drivers/gpu/drm/sun4i/sunxi_engine.h
+index 1711c274a41b..37dd4a95d878 100644
+--- a/drivers/gpu/drm/sun4i/sunxi_engine.h
++++ b/drivers/gpu/drm/sun4i/sunxi_engine.h
+@@ -123,6 +123,20 @@ struct sunxi_engine_ops {
+ 	 */
+ 	void (*mode_set)(struct sunxi_engine *engine,
+ 			 const struct drm_display_mode *mode);
++
++	/**
++	 * @disable:
++	 *
++	 * This callback is run when the CRTC is disabled, before its
++	 * timing controller stops. The engine has to stop fetching from
++	 * the framebuffers of its planes: the atomic helpers do not
++	 * commit plane changes while the CRTC is inactive, so a buffer
++	 * can be freed before the CRTC is enabled again, and the CRTC is
++	 * enabled before its planes are committed.
++	 *
++	 * This function is optional.
++	 */
++	void (*disable)(struct sunxi_engine *engine, struct drm_crtc *crtc);
+ };
+ 
+ /**
+@@ -218,4 +232,16 @@ sunxi_engine_mode_set(struct sunxi_engine *engine,
+ 	if (engine->ops && engine->ops->mode_set)
+ 		engine->ops->mode_set(engine, mode);
+ }
++
++/**
++ * sunxi_engine_disable - Stop the engine's planes when the CRTC is disabled
++ * @engine:	pointer to the engine
++ * @crtc:	pointer to the crtc the engine is associated with
++ */
++static inline void
++sunxi_engine_disable(struct sunxi_engine *engine, struct drm_crtc *crtc)
++{
++	if (engine->ops && engine->ops->disable)
++		engine->ops->disable(engine, crtc);
++}
+ #endif /* _SUNXI_ENGINE_H_ */

@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Wed, 14 Oct 2026 21:26:30 +0200
+Subject: [PATCH] drm/sun4i: vi_layer: Blend alpha formats pre-multiplied
+
+The VI layers of the DE3 and DE33 mixers offer formats with alpha but
+no pixel blend mode property, so the DRM core warns that the blend mode
+is not set up, and userspace assumes the default, pre-multiplied alpha.
+The layers are not programmed for it: the premultiply field [17:16] of
+the attribute word stays 0 and the blender premultiply register is never
+written.
+
+Seen on the Radxa Cubie A7S, one VI layer as primary plane over the
+black background: without this, ARGB8888 red shows full red at every
+alpha from 0x01 to 0xff, but black at alpha 0, where pre-multiplied
+blending gives full red as well. With the layer taking the plane alpha
+only, red at alpha 0 shows full red and red 0x80 at alpha 0x80 shows
+0x80. With the premultiply field at 2 and the premultiply bit set
+instead, the bottom plane shows red 0x80 at alpha 0x80 as 0xfe.
+
+Offer "Pre-multiplied" as the only blend mode and program it. Over the
+opaque black background a pre-multiplied pixel shows its own colour
+scaled by the plane alpha, so the bottom plane takes the plane alpha
+alone. A plane above it gets the premultiply field set to 2 and the
+premultiply bit of its blender pipe.
+
+Not covered: the UI layers, and the "Coverage" and "None" modes.
+
+Tested on Radxa Cubie A7S: an ARGB8888 primary plane blends pre-multiplied
+over the black background without the blend mode warning; the A733 mixer
+has one plane, so the words for a plane above it were checked by register
+writes only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c    |  6 ++++-
+ drivers/gpu/drm/sun4i/sun8i_mixer.h    |  2 ++
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.c | 37 +++++++++++++++++++++++---
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.h |  3 +++
+ 4 files changed, 44 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 3c7682bd09c5..90ddda052c9f 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -260,7 +260,7 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 	struct regmap *bld_regs = sun8i_blender_regmap(mixer);
+ 	struct drm_plane_state *plane_state;
+ 	struct drm_plane *plane;
+-	u32 route = 0, pipe_en = 0;
++	u32 route = 0, pipe_en = 0, premul = 0;
+ 
+ 	DRM_DEBUG_DRIVER("Committing changes\n");
+ 
+@@ -293,6 +293,9 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 		/* Route layer to pipe based on zpos */
+ 		route |= layer->index << SUN8I_MIXER_BLEND_ROUTE_PIPE_SHIFT(zpos);
+ 		pipe_en |= SUN8I_MIXER_BLEND_PIPE_CTL_EN(zpos);
++		if (layer->type == SUN8I_LAYER_TYPE_VI &&
++		    sun8i_vi_layer_premultiplied(layer, plane_state))
++			premul |= SUN8I_MIXER_BLEND_PREMULTIPLY_EN(zpos);
+ 
+ 		regmap_write(bld_regs,
+ 			     SUN8I_MIXER_BLEND_ATTR_COORD(bld_base, zpos),
+@@ -303,6 +306,7 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 	}
+ 
+ 	regmap_write(bld_regs, SUN8I_MIXER_BLEND_ROUTE(bld_base), route);
++	regmap_write(bld_regs, SUN8I_MIXER_BLEND_PREMULTIPLY(bld_base), premul);
+ 	regmap_write(bld_regs, SUN8I_MIXER_BLEND_PIPE_CTL(bld_base),
+ 		     pipe_en | SUN8I_MIXER_BLEND_PIPE_CTL_FC_EN(0));
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.h b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+index b8aac975d9b5..8d991ca41fb9 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+@@ -72,6 +72,8 @@
+ #define SUN8I_MIXER_BLEND_ROUTE_PIPE_MSK(n)	(0xf << ((n) << 2))
+ #define SUN8I_MIXER_BLEND_ROUTE_PIPE_SHIFT(n)	((n) << 2)
+ 
++#define SUN8I_MIXER_BLEND_PREMULTIPLY_EN(pipe)	BIT(pipe)
++
+ #define SUN8I_MIXER_BLEND_OUTCTL_INTERLACED	BIT(1)
+ 
+ #define SUN50I_MIXER_BLEND_CSC_CTL_EN(ch)	BIT(ch)
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+index 809d1d501322..8711f8a1b6c6 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+@@ -31,6 +31,18 @@ static void sun8i_vi_layer_disable(struct sun8i_layer *layer)
+ 		     SUN8I_MIXER_CHAN_VI_LAYER_ATTR(ch_base, layer->overlay), 0);
+ }
+ 
++/*
++ * Pixels with alpha are pre-multiplied, the only blend mode offered. A
++ * plane above the bottom one blends them as such: the attribute word and
++ * the premultiply bit of its blender pipe say so (sun8i_mixer_commit()).
++ */
++bool sun8i_vi_layer_premultiplied(const struct sun8i_layer *layer,
++				  const struct drm_plane_state *state)
++{
++	return layer->cfg->de_type >= SUN8I_MIXER_DE3 &&
++	       state->fb->format->has_alpha && state->normalized_zpos;
++}
++
+ static void sun8i_vi_layer_update_attributes(struct sun8i_layer *layer,
+ 					     struct drm_plane *plane)
+ {
+@@ -48,9 +60,19 @@ static void sun8i_vi_layer_update_attributes(struct sun8i_layer *layer,
+ 	val |= SUN8I_MIXER_CHAN_VI_LAYER_ATTR_EN;
+ 	if (layer->cfg->de_type >= SUN8I_MIXER_DE3) {
+ 		val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA(state->alpha >> 8);
+-		val |= (state->alpha == DRM_BLEND_ALPHA_OPAQUE) ?
+-			SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_PIXEL :
+-			SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_COMBINED;
++		/*
++		 * Over the opaque black background a pre-multiplied pixel
++		 * shows its own colour, scaled by the plane alpha alone, so
++		 * the bottom plane does not read the pixel alpha.
++		 */
++		if (!state->normalized_zpos)
++			val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_LAYER;
++		else if (state->alpha == DRM_BLEND_ALPHA_OPAQUE)
++			val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_PIXEL;
++		else
++			val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_COMBINED;
++		if (sun8i_vi_layer_premultiplied(layer, state))
++			val |= SUN50I_MIXER_CHAN_VI_LAYER_ATTR_BLEND_PREMULTI;
+ 	}
+ 
+ 	regmap_write(layer->regs,
+@@ -472,6 +494,15 @@ struct sun8i_layer *sun8i_vi_layer_init_one(struct drm_device *drm,
+ 		}
+ 	}
+ 
++	if (layer->cfg->de_type >= SUN8I_MIXER_DE3) {
++		ret = drm_plane_create_blend_mode_property(&layer->plane,
++							   BIT(DRM_MODE_BLEND_PREMULTI));
++		if (ret) {
++			dev_err(drm->dev, "Couldn't add blend mode property\n");
++			return ERR_PTR(ret);
++		}
++	}
++
+ 	ret = drm_plane_create_zpos_property(&layer->plane, index,
+ 					     0, plane_cnt - 1);
+ 	if (ret) {
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.h b/drivers/gpu/drm/sun4i/sun8i_vi_layer.h
+index 29cc5573691f..3c600c4a51c0 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.h
+@@ -47,6 +47,7 @@
+ #define SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_PIXEL	((0) << 1)
+ #define SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_LAYER	((1) << 1)
+ #define SUN50I_MIXER_CHAN_VI_LAYER_ATTR_ALPHA_MODE_COMBINED	((2) << 1)
++#define SUN50I_MIXER_CHAN_VI_LAYER_ATTR_BLEND_PREMULTI	((2) << 16)
+ 
+ #define SUN8I_MIXER_CHAN_VI_DS_N(x)			((x) << 16)
+ #define SUN8I_MIXER_CHAN_VI_DS_M(x)			((x) << 0)
+@@ -54,6 +55,8 @@
+ struct sun8i_mixer;
+ struct sun8i_layer;
+ 
++bool sun8i_vi_layer_premultiplied(const struct sun8i_layer *layer,
++				  const struct drm_plane_state *state);
+ struct sun8i_layer *sun8i_vi_layer_init_one(struct drm_device *drm,
+ 					    enum drm_plane_type type,
+ 					    struct regmap *regs,

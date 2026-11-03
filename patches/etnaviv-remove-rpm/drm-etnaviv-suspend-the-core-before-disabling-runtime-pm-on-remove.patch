@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Mon, 12 Oct 2026 19:28:36 +0200
+Subject: [PATCH] drm/etnaviv: suspend the core before disabling runtime PM on
+ remove
+
+When the etnaviv-gpu driver is unbound after the master has been
+unbound, as at rmmod, the driver core resumes the device before
+remove() and drops its reference with pm_runtime_put_sync() before
+calling it. etnaviv uses autosuspend with a 200 ms delay, and the
+resume has just updated the last busy time, so the put only arms the
+autosuspend timer. etnaviv_gpu_platform_remove() then disables runtime
+PM, which cancels the timer, and the driver core marks the device
+suspended without calling the suspend callback. The clock enable done by
+etnaviv_gpu_rpm_resume() is never undone.
+
+Without this, every such unbind leaves the register, bus and core clocks of
+the core enabled for good, because the enable count lives in the clock
+framework and survives the driver. Seen on the Radxa Cubie A7S
+(Allwinner A733 NPU): after rmmod and modprobe of etnaviv, the NPU
+module clock and its bus and memory bus gates stay on while the core is
+runtime suspended.
+
+Stop using autosuspend before disabling runtime PM, as
+devm_pm_runtime_enable() does on teardown, so the device is suspended
+right away through the driver's own callback.
+
+Tested on Radxa Cubie A7S: after each rmmod etnaviv the NPU clocks are
+released and their gates are off.
+
+Fixes: a8c21a5451d8 ("drm/etnaviv: add initial etnaviv DRM driver")
+Assisted-by: LLM
+---
+ drivers/gpu/drm/etnaviv/etnaviv_gpu.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_gpu.c b/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
+index c4375859dfe9..73ce773e734c 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
++++ b/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
+@@ -1992,6 +1992,12 @@ static void etnaviv_gpu_platform_remove(struct platform_device *pdev)
+ 	struct etnaviv_gpu *gpu = dev_get_drvdata(&pdev->dev);
+ 
+ 	component_del(&pdev->dev, &gpu_ops);
++	/*
++	 * The driver core resumed the device for the unbind, and with
++	 * autosuspend its put only armed the timer that disabling runtime
++	 * PM cancels. Suspend now, so the clocks are released.
++	 */
++	pm_runtime_dont_use_autosuspend(&pdev->dev);
+ 	pm_runtime_disable(&pdev->dev);
+ 
+ 	mutex_destroy(&gpu->lock);

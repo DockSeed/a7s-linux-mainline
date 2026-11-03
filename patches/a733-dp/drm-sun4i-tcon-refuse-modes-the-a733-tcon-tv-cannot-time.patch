@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 20 Oct 2026 16:31:40 +0200
+Subject: [PATCH] drm/sun4i: tcon: Refuse modes the A733 TCON TV cannot time
+
+The A733 TCON TV writes each timing of a mode into a field of fixed
+width, and it times video formats up to 4096x2160 (user manual section
+15.2.1, PDF page 723). A mode beyond either limit passes the CRTC, and
+the registers take its timings modulo the width of their fields, so the
+TCON times another picture than the one the display engine and the
+DisplayPort transmitter work on.
+
+Refuse such a mode in the mode_valid hook of the CRTC, for the A733 TCON
+TV only: a width above 4096, a height above 2160, and a sync width or
+back porch that TV_BASIC3 to TV_BASIC5 cannot hold (sections 15.2.10.9
+to 15.2.10.11, PDF pages 747 and 748). The size fields are wider than
+the format limits, and the total fields hold every total that a mode can
+have, so they need no check. The main stream registers of the
+transmitter are wider than the TCON fields (sections 15.4.7.44 to
+15.4.7.52, PDF pages 786 to 788) and add no limit.
+
+Not covered: the other TCONs, interlaced modes, which the transmitter
+refuses, a limit on the pixel clock, which stays with the output, and
+the output size of the display engine. The manual gives it as 4096x2048
+(section 14.3, PDF page 662), less than the 2160 lines of the TCON TV.
+That limit belongs to the mixer and has not been measured.
+
+Tested on Radxa Cubie A7S: booted on one board with a DisplayPort
+monitor and a mode wider than 4096 pixels forced on the kernel command
+line; the mode was refused with MODE_BAD_HVALUE, and the picture came up
+in the preferred mode of the monitor.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/sun4i/sun4i_tcon.c | 44 ++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.c b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+index bf45edc6a37a..e992df5bceb2 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+@@ -760,6 +760,43 @@ static void sun4i_tcon1_mode_set(struct sun4i_tcon *tcon,
+ 			   SUN4I_TCON_GCTL_IOMAP_TCON1);
+ }
+ 
++/* The largest video format of the A733 TCON TV (section 15.2.1) */
++#define SUN60I_TCON_TV_MAX_WIDTH	4096
++#define SUN60I_TCON_TV_MAX_HEIGHT	2160
++
++/* The timing fields of the A733 TCON TV hold the timing less one */
++static bool sun60i_tcon_tv_fits(unsigned long mask, unsigned int timing)
++{
++	return timing - 1 <= mask;
++}
++
++/*
++ * The A733 TCON TV cuts a timing off at the width of its field (sections
++ * 15.2.10.8 to 15.2.10.11) and times video formats up to 4096x2160. The
++ * fields of the sizes are wider than that and those of the totals hold
++ * every total a mode can have, so only the size, the sync widths and the
++ * back porches are left to check.
++ */
++static enum drm_mode_status
++sun60i_tcon_tv_mode_valid(const struct drm_display_mode *mode)
++{
++	if (mode->hdisplay > SUN60I_TCON_TV_MAX_WIDTH ||
++	    !sun60i_tcon_tv_fits(SUN60I_TCON1_BASIC5_H_SYNC_MASK,
++				 mode->hsync_end - mode->hsync_start) ||
++	    !sun60i_tcon_tv_fits(SUN60I_TCON1_BASIC3_H_BACKPORCH_MASK,
++				 mode->htotal - mode->hsync_start))
++		return MODE_BAD_HVALUE;
++
++	if (mode->vdisplay > SUN60I_TCON_TV_MAX_HEIGHT ||
++	    !sun60i_tcon_tv_fits(SUN60I_TCON1_BASIC5_V_SYNC_MASK,
++				 mode->vsync_end - mode->vsync_start) ||
++	    !sun60i_tcon_tv_fits(SUN60I_TCON1_BASIC4_V_BACKPORCH_MASK,
++				 mode->vtotal - mode->vsync_start))
++		return MODE_BAD_VVALUE;
++
++	return MODE_OK;
++}
++
+ /*
+  * Channel 1 is the pixel clock of the TCON. Where the clock tree cannot
+  * make the rate of a mode to within the 0.5 % that VESA DMT allows, refuse
+@@ -769,8 +806,15 @@ enum drm_mode_status sun4i_tcon_mode_valid(struct sun4i_tcon *tcon,
+ 					   const struct drm_display_mode *mode)
+ {
+ 	unsigned long clock = mode->clock * HZ_PER_KHZ;
++	enum drm_mode_status status;
+ 	long rounded;
+ 
++	if (tcon->quirks->has_tv_layout) {
++		status = sun60i_tcon_tv_mode_valid(mode);
++		if (status != MODE_OK)
++			return status;
++	}
++
+ 	if (!tcon->quirks->checks_ch1_rate)
+ 		return MODE_OK;
+ 

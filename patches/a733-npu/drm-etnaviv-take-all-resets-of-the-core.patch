@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Sun, 11 Oct 2026 16:30:35 +0200
+Subject: [PATCH] drm/etnaviv: Take all resets of the core
+
+The driver gets the first reset of the node only. A core that has more
+than one reset line stays partly in reset, and its registers read as
+zero.
+
+Use the reset control array helper, which asserts and deasserts all
+resets of the node together, as panfrost does. A node with one reset or
+none is handled as before.
+
+Tested on Radxa Cubie A7S: booted on two boards; the driver releases
+all four resets of the NPU and the core identifies itself, where it read
+as model 0 with the first reset only.
+
+Assisted-by: LLM
+---
+ drivers/gpu/drm/etnaviv/etnaviv_gpu.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_gpu.c b/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
+index 5c23182f4d33..c4375859dfe9 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
++++ b/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
+@@ -1922,7 +1922,7 @@ static int etnaviv_gpu_platform_probe(struct platform_device *pdev)
+ 
+ 
+ 	/* Get Reset: */
+-	gpu->rst = devm_reset_control_get_optional_exclusive(&pdev->dev, NULL);
++	gpu->rst = devm_reset_control_array_get_optional_exclusive(&pdev->dev);
+ 	if (IS_ERR(gpu->rst))
+ 		return dev_err_probe(dev, PTR_ERR(gpu->rst),
+ 				     "failed to get reset\n");
