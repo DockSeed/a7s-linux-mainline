@@ -36,6 +36,14 @@ Checks, all findings collected (no fail-fast):
      bindings an earlier series adds. checkpatch.pl and its data files are
      the pristine tarball's, copied before any patch is applied; it does not
      run while the series has changed a script it would run from the tree.
+  e) upstream commits our own patches name (Fixes: and 'commit <id>
+     ("<subject>")'): the tree has no git history, so checkpatch reports
+     each id as UNKNOWN_COMMIT_ID and cannot compare the subject. Every
+     such id is looked up in torvalds/linux on git.kernel.org instead; it
+     must name exactly one commit, and a quoted subject must be that
+     commit's subject, as checkpatch asks with a git tree. Verified ids
+     satisfy UNKNOWN_COMMIT_ID. Needs network access; when git.kernel.org
+     cannot be reached, the check cannot run (exit 2).
 
 --workdir keeps the pristine git tree between runs (worth it when the check
 runs many times); it is reset to the pristine commit before every use.
@@ -56,6 +64,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 
 OWN_FROM = "Norman Herms <dockseed@proton.me>"
 SERIES = "patches/series"
@@ -101,6 +112,23 @@ DIFF_GIT_RE = re.compile(r"^diff --git a/(\S+) b/(\S+)$")
 ENTRY_RE = re.compile(r"^([a-z0-9][a-z0-9._-]*)/[^/]+\.patch$")
 CHECKPATCH_LINE = re.compile(
     r"^(?:.*?:(\d+): )?(ERROR|WARNING|CHECK):([A-Za-z0-9_]+): (.*)$")
+
+# e) upstream commits. checkpatch looks for '(^fixes:|\bcommit)\s+<id>' on
+# each line of the message; a subject follows as ("<subject>"), possibly
+# wrapped over lines (joined with one space before it is compared).
+UNKNOWN_COMMIT_ID = "UNKNOWN_COMMIT_ID"
+UNKNOWN_ID_RE = re.compile(r"^Unknown commit id '([0-9a-f]+)'")
+COMMIT_REF_RE = re.compile(
+    r'(?:^fixes:|\bcommit)\s+([0-9a-f]{6,40})\b(?:\s+\("(.+?)"\))?',
+    re.I | re.M | re.S)
+# The tree our kernel builds on; cgit resolves an abbreviated id (redirect
+# to the full one) and answers 404 for an unknown or ambiguous one.
+UPSTREAM_PATCH_URL = ("https://git.kernel.org/pub/scm/linux/kernel/git/"
+                      "torvalds/linux.git/patch/?id={}")
+UPSTREAM_NAME = "torvalds/linux on git.kernel.org"
+FETCH_TRIES = 4
+FETCH_TIMEOUT = 30   # seconds per try
+FETCH_BACKOFF = 10   # seconds, doubled after each failed try
 
 # Deterministic git: no user or system configuration, fixed identity.
 # gc.auto=0: the pristine commit leaves ~90,000 loose objects, so git would
@@ -412,8 +440,9 @@ def checkpatch_copy(tree, scratch):
     return os.path.join(d, "checkpatch.pl")
 
 
-def checkpatch(script, tree, repo, rel, allowed, scratch):
-    """checkpatch on one patch, against the tree as it stands."""
+def checkpatch(script, tree, repo, rel, allowed, scratch, unknown):
+    """checkpatch on one patch, against the tree as it stands. The ids of its
+    UNKNOWN_COMMIT_ID warnings go to <unknown> as (rel, id), for e)."""
     changed = git(tree, "diff", "--name-only", "pristine", "HEAD", "--",
                   *CHECKPATCH_RUNS).stdout.decode().split()
     if changed:
@@ -443,7 +472,10 @@ def checkpatch(script, tree, repo, rel, allowed, scratch):
         line, level, typ, msg = m.groups()
         reported += 1
         where = f"checkpatch {level} {typ}" + (f" (line {line})" if line else "")
-        if level == "ERROR":
+        u = UNKNOWN_ID_RE.match(msg)
+        if level == "WARNING" and typ == UNKNOWN_COMMIT_ID and u:
+            unknown.append((rel, u.group(1)))
+        elif level == "ERROR":
             finding(rel, f"{where}: {msg}")
         elif level == "WARNING" and typ not in allowed:
             finding(rel, f"{where}: {msg}")
@@ -463,7 +495,8 @@ def mark_trailing(line):
     return head + body + "~" * (len(text) - len(body))
 
 
-def apply_and_compare(tree, repo, kernel, own, allowed, scratch, script):
+def apply_and_compare(tree, repo, kernel, own, allowed, scratch, script,
+                      unknown):
     """git am every kernel patch in order, checkpatch each of ours against the
     tree before it; compare the canonical export."""
     applied = []   # (rel, commit)
@@ -471,7 +504,7 @@ def apply_and_compare(tree, repo, kernel, own, allowed, scratch, script):
     head = git(tree, "rev-parse", "HEAD").stdout.decode().strip()
     for rel in kernel:
         if rel in unchecked:
-            checkpatch(script, tree, repo, rel, allowed, scratch)
+            checkpatch(script, tree, repo, rel, allowed, scratch, unknown)
             unchecked.remove(rel)
         r = git(tree, "am", "--no-3way", "--committer-date-is-author-date",
                 os.path.join(repo, rel), check=False)
@@ -494,7 +527,7 @@ def apply_and_compare(tree, repo, kernel, own, allowed, scratch, script):
     # Ours after a patch that does not apply: against the tree as far as the
     # series applies, so that none of them goes unchecked.
     for rel in unchecked:
-        checkpatch(script, tree, repo, rel, allowed, scratch)
+        checkpatch(script, tree, repo, rel, allowed, scratch, unknown)
 
     for rel, commit in applied:
         want = git(tree, *FORMAT_PATCH, commit).stdout
@@ -508,6 +541,98 @@ def apply_and_compare(tree, repo, kernel, own, allowed, scratch, script):
             finding(rel, "not in canonical form (git "
                     + " ".join(FORMAT_PATCH) + ")",
                     [mark_trailing(d) for d in diff[:20]])
+
+
+# --- e) upstream commits -----------------------------------------------------
+
+def commit_refs(path):
+    """[(id, subject or None)] that the message of a patch file names."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().split("\n")
+    start = lines.index("") if "" in lines else 0
+    end = lines.index("---", start) if "---" in lines[start:] else len(lines)
+    text = "\n".join(lines[start + 1:end])
+    refs = []
+    for m in COMMIT_REF_RE.finditer(text):
+        subject = m.group(2)
+        if subject is not None:
+            if "\n\n" in subject:   # ran into the next paragraph
+                subject = None
+            else:
+                subject = re.sub(r"\s*\n\s*", " ", subject)
+        refs.append((m.group(1).lower(), subject))
+    return refs
+
+
+def upstream_commit(cid):
+    """(full id, subject) of <cid> upstream, or None when it names no commit
+    or more than one."""
+    url = UPSTREAM_PATCH_URL.format(cid)
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "a7s-linux-mainline patch-check"})
+    wait, last = FETCH_BACKOFF, None
+    for attempt in range(1, FETCH_TRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as r:
+                body = r.read().decode("utf-8", errors="replace")
+            lines = body.split("\n")
+            m = FROM_LINE_RE.match(lines[0]) and re.match(r"^From (\S+) ",
+                                                          lines[0])
+            if not m:
+                raise ValueError("the answer is not a patch: "
+                                 + repr(lines[0][:80]))
+            subject, i = None, 1
+            while i < len(lines) and lines[i] != "":
+                if lines[i].startswith("Subject: "):
+                    subject = lines[i][len("Subject: "):]
+                    while i + 1 < len(lines) and lines[i + 1][:1] in (" ", "\t"):
+                        i += 1
+                        subject += lines[i]   # unfold: drop the line break
+                i += 1
+            if subject is None:
+                raise ValueError("the patch has no Subject:")
+            return m.group(1), subject
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            last = f"HTTP {e.code}"
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            last = str(getattr(e, "reason", e))
+        if attempt < FETCH_TRIES:
+            print(f"{url}: {last}; try {attempt + 1} of {FETCH_TRIES} "
+                  f"in {wait} s")
+            time.sleep(wait)
+            wait *= 2
+    raise Broken(f"cannot look up commit {cid} in {UPSTREAM_NAME} "
+                 f"({url}): {last}")
+
+
+def verify_commits(repo, own, unknown):
+    """Every upstream commit our patches name exists, with the quoted
+    subject; checkpatch's UNKNOWN_COMMIT_ID for it is then satisfied."""
+    wanted = {}   # (rel, id) -> [subjects quoted for it]
+    for rel in own:
+        for cid, subject in commit_refs(os.path.join(repo, rel)):
+            wanted.setdefault((rel, cid), [])
+            if subject is not None:
+                wanted[(rel, cid)].append(subject)
+    for rel, cid in unknown:
+        wanted.setdefault((rel, cid.lower()), [])
+    found = {}
+    for rel, cid in sorted(wanted):
+        if cid not in found:
+            found[cid] = upstream_commit(cid)
+        commit = found[cid]
+        if commit is None:
+            finding(rel, f"commit {cid} is not a commit of {UPSTREAM_NAME} "
+                    "(unknown, or the id is ambiguous)")
+            continue
+        for subject in wanted[(rel, cid)]:
+            if subject != commit[1]:
+                finding(rel, f"commit {cid} is (\"{commit[1]}\") upstream, "
+                        f"not (\"{subject}\")")
+    print(f"upstream commits: {len(found)} named by our patches, looked up in "
+          f"{UPSTREAM_NAME}")
 
 
 # -----------------------------------------------------------------------------
@@ -536,8 +661,10 @@ def run(args):
         tree = pristine_tree(tarball, args.workdir
                              or os.path.join(scratch, "tree"))
         script = checkpatch_copy(tree, scratch)
+        unknown = []
         apply_and_compare(tree, repo, kernel, set(own_kernel),
-                          allowed, scratch, script)
+                          allowed, scratch, script, unknown)
+        verify_commits(repo, own_kernel, unknown)
         print(f"kernel series: {len(kernel)} patch(es), "
               f"{len(own_kernel)} of them ours (checkpatch)")
     finally:

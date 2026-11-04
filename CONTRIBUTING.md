@@ -99,5 +99,7 @@ git format-patch -1 --stdout --zero-commit --no-signature --abbrev=12 <commit>
 
 `scripts/patch-check.py` applies the series to the pristine tarball,
 exports each commit again and reports any byte that differs. It also
-checks the tag rules and runs `checkpatch.pl --strict` on our patches.
-See the README for how to run it.
+checks the tag rules, runs `checkpatch.pl --strict` on our patches and
+looks up every upstream commit they name in torvalds/linux on
+git.kernel.org: the id must name one commit, and a quoted subject must
+be its subject. See the README for how to run it.

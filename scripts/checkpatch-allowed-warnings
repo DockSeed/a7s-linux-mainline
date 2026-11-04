@@ -5,4 +5,6 @@
 # Every entry is a decision against the kernel's own style rules and needs a
 # reason that holds for every patch, not just the one that raised it.
 # ERRORs cannot be allowed here; CHECKs never fail.
-UNKNOWN_COMMIT_ID  the check tree is the kernel.org tarball plus the series, with no git history, so checkpatch can resolve no commit id; a Fixes: tag naming the upstream commit it fixes is what upstream asks for
+
+# UNKNOWN_COMMIT_ID is not listed: the check tree has no git history, so
+# patch-check.py looks each commit id up upstream itself (see its check e).

@@ -153,8 +153,11 @@ the host (see `stage_config` in `scripts/build.sh`).
 
 Applies the series with `git am`, checks `patches/series`, the tags and
 the format from [CONTRIBUTING.md](CONTRIBUTING.md), and runs
-`checkpatch.pl --strict` on our patches. GitHub Actions runs this and a
-full build on pull requests and pushes to `main`. It uploads nothing.
+`checkpatch.pl --strict` on our patches. Each upstream commit our
+patches name (`Fixes:`, `commit <id> ("<subject>")`) must exist in
+torvalds/linux on git.kernel.org with that subject; this needs network
+access. GitHub Actions runs this and a full build on pull requests and
+pushes to `main`. It uploads nothing.
 
 ## Signing keys
 
