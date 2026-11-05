@@ -6,8 +6,9 @@
 # bash, coreutils and podman or docker; no root and no other host package.
 # The build steps are scripts/build.sh, which runs inside the container.
 #
-#   ./build.sh [<stage>...]       version | fetch | verify | prepare | config |
-#                                 build | package (default: all but version)
+#   ./build.sh [<stage>...]       version | tag-version | fetch | verify |
+#                                 prepare | config | savedefconfig | build |
+#                                 package | release (default: fetch to package)
 #   ./build.sh shell [<cmd>...]   a shell (or one command) in the builder
 #   ./build.sh clean              remove what the build left behind (see below)
 #   ./build.sh --help
@@ -25,8 +26,9 @@ BASE="$(sed -n 's/^FROM //p' "${REPO}/build-env/Containerfile")"
 WORK_MARK=".a7s-linux-mainline-work"
 PULLED_MARK=".a7s-linux-mainline-pulled-base"
 # What scripts/build.sh and this script put into a work directory.
-WORK_ENTRIES=(dl src obj modroot verify home pc src.treehash source-date-epoch
-              config-fragment build.stderr warnings.txt "${PULLED_MARK}" "${WORK_MARK}")
+WORK_ENTRIES=(dl src obj obj-defconfig modroot develroot verify home pc src.treehash source-date-epoch
+              config-fragment a7s_defconfig release-stage build.stderr warnings.txt
+              "${PULLED_MARK}" "${WORK_MARK}")
 
 die() { printf 'build.sh: error: %s\n' "$*" >&2; exit 1; }
 log() { printf '=== %s\n' "$*" >&2; }
@@ -44,8 +46,9 @@ Usage:
                                    (use the same A7S_WORK as for the build)
   ./build.sh --help                this text
 
-Stages (scripts/build.sh): version, fetch, verify, prepare, config, build,
-package.
+Stages (scripts/build.sh): version, tag-version, fetch, verify, prepare,
+config, savedefconfig, build, package, release (after package, with
+A7S_KERNEL_REVISION: the files of a release in out/release/).
 
 Environment read by this script:
   A7S_ENGINE           podman or docker (default: podman if installed, else docker)
@@ -54,7 +57,7 @@ Environment read by this script:
   A7S_CONFIG_FRAGMENT  a config fragment file on the host, merged after the
                        defconfig (see README.md)
 Passed into the container when set: A7S_KERNEL_MIRROR, A7S_W1,
-A7S_LOCALVERSION, JOBS, SOURCE_DATE_EPOCH.
+A7S_LOCALVERSION, A7S_KERNEL_REVISION, JOBS, SOURCE_DATE_EPOCH.
 
 The first run builds the builder image from build-env/.
 USAGE
@@ -208,7 +211,7 @@ main() {
   fi
   if [ -t 0 ] && [ -t 1 ]; then run+=(-it); elif [ "${1:-}" = shell ]; then run+=(-i); fi
   local name
-  for name in A7S_KERNEL_MIRROR A7S_W1 A7S_LOCALVERSION JOBS SOURCE_DATE_EPOCH; do
+  for name in A7S_KERNEL_MIRROR A7S_W1 A7S_LOCALVERSION A7S_KERNEL_REVISION JOBS SOURCE_DATE_EPOCH; do
     [ -z "${!name+x}" ] || run+=(-e "${name}=${!name}")
   done
   mkdir -p "${work}/home"

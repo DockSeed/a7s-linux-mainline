@@ -1,0 +1,153 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# What the configuration of this kernel must say, and why.
+#
+#   y SYMBOL      CONFIG_SYMBOL is built in (=y)
+#   m SYMBOL      CONFIG_SYMBOL is a module (=m); =y means something selects
+#                 it built in, which needs a decision, not a guess
+#   line TEXT     this exact line is in .config (strings, numbers and
+#                 "is not set", which y and m cannot express)
+#
+# The config stage of scripts/build.sh sets every entry on top of the
+# configuration, runs olddefconfig and then checks each one: Kconfig drops a
+# setting whose dependencies are not met without a word. The same entries on
+# top of the arm64 defconfig of the patched tree must give exactly the
+# configuration of config/a7s_defconfig, so that file is that defconfig plus
+# this list and nothing else (README.md, "Configuration").
+
+# --- The board ---------------------------------------------------------------
+# Needed before any module can load: clocks, pins, the PMIC and its
+# regulators, the SD and eMMC controller, the RTC, the IOMMU of the display
+# engine, PCIe, cpufreq with its speed-bin fuses, the power domains, ext4.
+y SUN60I_A733_CCU
+y SUN60I_A733_R_CCU
+y SUN60I_A733_CPU_CCU
+y SUN60I_A733_SERDES_CCU
+y PINCTRL_SUN60I_A733
+y PINCTRL_SUN55I_A523_R
+y MFD_AXP20X_I2C
+y REGULATOR_AXP20X
+y MMC_SUNXI
+y RTC_DRV_SUN6I
+y SUN60I_IOMMU
+y PCIE_SUN60I_A733
+y NVMEM_SUNXI_SID
+y ARM_ALLWINNER_SUN50I_CPUFREQ_NVMEM
+y SUN55I_PCK600
+y EXT4_FS
+# The rest of the board, as modules from the initramfs or the root file
+# system: USB 2 and 3 PHYs, the PCIe PHY and NVMe, Ethernet, DisplayPort,
+# the GPU, the DSU devfreq driver, audio, the power key, the ADC, PWM, the
+# hardware spinlock, USB storage, and the watchdog the boot chain starts.
+m PHY_SUN60I_A733_USB2
+m PHY_SUN60I_A733_COMBO
+m PHY_SUN60I_A733_PCIE_COMBO
+m PHY_SUN60I_A733_DP_AUX
+m BLK_DEV_NVME
+m DWMAC_SUN55I
+m DRM_SUN60I_DP
+m DRM_POWERVR
+m ARM_SUN60I_A733_DSU_DEVFREQ
+m SND_SUN50I_DMIC
+m INPUT_AXP20X_PEK
+m SUN20I_GPADC
+m PWM_SUN8I
+m HWSPINLOCK_SUN6I
+m USB_UAS
+m SUNXI_WATCHDOG
+# Suspend resets the board.
+line # CONFIG_SUSPEND is not set
+
+# --- What the release may contain ----------------------------------------------
+# No firmware built into the kernel: the release carries no firmware.
+line CONFIG_EXTRA_FIRMWARE=""
+# The Lockdown LSM selects MODULE_SIG, which signs with a key generated at
+# build time: two builds would differ.
+line # CONFIG_SECURITY_LOCKDOWN_LSM is not set
+
+# --- Fedora ----------------------------------------------------------------------
+# Fedora boots the kernel through grub, an EFI application that U-Boot
+# starts, and from an initramfs that dracut builds.
+y EFI
+y BLK_DEV_INITRD
+
+# Swap on zram: zram-generator sets up /dev/zram0 at boot and waits for it.
+# lzo-rle is Fedora's default compressor.
+m ZRAM
+y ZRAM_BACKEND_LZO
+y ZRAM_BACKEND_ZSTD
+y ZRAM_DEF_COMP_LZORLE
+
+# Pressure stall information: systemd-oomd starts only with it.
+y PSI
+
+# CPU bandwidth control (cgroup cpu.max): CPUQuota= and podman --cpus.
+y CFS_BANDWIDTH
+
+# nftables: firewalld builds its rules with it.
+m NF_TABLES
+y NF_TABLES_INET
+y NF_TABLES_NETDEV
+y NF_TABLES_IPV4
+y NF_TABLES_IPV6
+m NF_NAT
+m NFT_CT
+m NFT_LOG
+m NFT_LIMIT
+m NFT_MASQ
+m NFT_REDIR
+m NFT_NAT
+m NFT_REJECT
+m NFT_FIB_INET
+m NFT_FIB_IPV4
+m NFT_FIB_IPV6
+m NFT_COMPAT
+
+# Firmware files: linux-firmware ships them compressed.
+y FW_LOADER_COMPRESS
+y FW_LOADER_COMPRESS_XZ
+y FW_LOADER_COMPRESS_ZSTD
+
+# SELinux, the default LSM: Fedora runs it enforcing and labels its file
+# systems for it. The LSM order is Fedora's; without it SELinux would be
+# built but not started. Names of LSMs that are not built are skipped.
+y SECURITY_NETWORK
+y SECURITY_SELINUX
+y DEFAULT_SECURITY_SELINUX
+y AUDIT
+line CONFIG_LSM="lockdown,yama,integrity,selinux,bpf,landlock,ipe"
+
+# Bluetooth for bluez: LE with credit-based L2CAP (EATT), RFCOMM (serial
+# ports, HFP), BNEP (PAN), HIDP (classic HID), uhid (LE HID) and uinput
+# (AVRCP keys).
+y BT_LE
+y BT_LE_L2CAP_ECRED
+m BT_RFCOMM
+y BT_RFCOMM_TTY
+m BT_BNEP
+y BT_BNEP_MC_FILTER
+y BT_BNEP_PROTO_FILTER
+m BT_HIDP
+m UHID
+m INPUT_UINPUT
+
+# SCSI device handlers: device-mapper-multipath loads scsi_dh_alua, _emc and
+# _rdac at every boot.
+y SCSI_DH
+m SCSI_DH_ALUA
+m SCSI_DH_EMC
+m SCSI_DH_HP_SW
+m SCSI_DH_RDAC
+
+# Kernel crypto from user space (AF_ALG): cryptsetup checks and benchmarks
+# ciphers through it, iwd does all of its crypto through it.
+y CRYPTO_USER_API_HASH
+y CRYPTO_USER_API_SKCIPHER
+y CRYPTO_USER_API_AEAD
+
+# ALSA sequencer: alsa-lib's modprobe rule loads snd-seq after every snd-pcm
+# and fails at boot without it.
+m SND_SEQUENCER
+
+# Thermal events over netlink: irqbalance subscribes to them at start.
+y THERMAL_NETLINK

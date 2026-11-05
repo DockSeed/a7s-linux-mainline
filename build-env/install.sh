@@ -31,7 +31,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ARCH=$(dpkg --print-architecture)
 LOCK="$HERE/packages-$ARCH.lock"
 case "$ARCH" in
-  amd64) CROSS=gcc-aarch64-linux-gnu ;;   # the kernel is cross compiled
+  # The kernel is cross compiled; the libc is for the arm64 build tools in
+  # kernel-a7s-devel.
+  amd64) CROSS="gcc-aarch64-linux-gnu libc6-dev-arm64-cross" ;;
   arm64) CROSS= ;;                        # the native gcc builds it
   *) echo "install.sh: no lock for architecture $ARCH (amd64 or arm64)" >&2; exit 1 ;;
 esac
@@ -90,7 +92,7 @@ check_inrelease "archive_debian-security_${SNAPSHOT}_dists_trixie-security" \
 
 apt-get install -y -qq --no-install-recommends \
   build-essential $CROSS bc bison flex libssl-dev libelf-dev \
-  kmod cpio xz-utils gnupg curl ca-certificates git patch file python3
+  kmod cpio xz-utils gnupg curl ca-certificates git patch file python3 rpm
 
 # The installed set must be exactly the locked one.
 dpkg-query -W -f '${Package}=${Version}:${Architecture}\n' | sort > /etc/a7s-linux-mainline-build-env.lock

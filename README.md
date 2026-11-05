@@ -44,11 +44,14 @@ Log in again after installing it, otherwise `podman build` fails with
 | `Image` | the kernel |
 | `dtbs-<release>.tar.gz` | device trees, incl. `allwinner/sun60i-a733-cubie-a7s.dtb` |
 | `modules-<release>.tar.gz` | `lib/modules/<release>/` |
+| `devel-<release>.tar.gz` | `src/kernels/<release>/`: headers, configuration, `Module.symvers` and build tools for modules outside the kernel tree; the tools are built for arm64 |
 | `config-<release>` | kernel config |
-| `MANIFEST` | inputs: kernel, tarball sha256, series sha256, toolchain |
+| `System.map-<release>` | kernel symbol table |
+| `MANIFEST` | inputs: kernel, tarball sha256, series, patches and config sha256, commit, toolchain |
 | `SHA256SUMS` | checksums of the files above |
 
-`<release>` is `7.3.0-a7s` by default.
+`<release>` is `7.3.0-a7s` by default, `7.3.0-a7s-r1` for the release
+`v7.3.0-R1`. Releases also come ready built, see [Releases](#releases).
 
 ## Install
 
@@ -126,7 +129,8 @@ docker alone. Use the same `A7S_WORK` as for the build.
 | `A7S_ENGINE` | `podman` or `docker`, default podman if installed |
 | `A7S_WORK`, `A7S_OUT` | work and output directories, relative to the repository |
 | `A7S_CONFIG_FRAGMENT` | your own config fragment, merged after defconfig |
-| `A7S_LOCALVERSION` | default `-a7s` |
+| `A7S_LOCALVERSION` | default `-a7s`; not together with `A7S_KERNEL_REVISION` |
+| `A7S_KERNEL_REVISION` | `r<n>` or `t<n>`: build the release `R<n>` or test build `T<n>` (see [Releases](#releases)) |
 | `A7S_KERNEL_MIRROR` | kernel.org mirror, verified the same way |
 | `JOBS` | parallel jobs, default all CPUs |
 | `SOURCE_DATE_EPOCH` | default: mtime of the tarball's `Makefile` |
@@ -137,11 +141,73 @@ the output.
 
 ## Configuration
 
-The build uses the arm64 `defconfig` of the patched tree. A defconfig
-patch in the series enables the A7S drivers. Put your own options in
-`A7S_CONFIG_FRAGMENT`; the build stops if one does not take. Apart from
+The kernel is configured for Fedora on the board.
+[config/a7s_defconfig](config/a7s_defconfig) is the arm64 `defconfig` of
+the patched tree (the defconfig patches in the series enable the A7S
+drivers) plus what Fedora needs from the kernel, among it SELinux as the
+default LSM, nftables for firewalld, zram swap and pressure stall
+information. [config/kernel-config.assert](config/kernel-config.assert)
+lists these additions and what the board needs, each block with its reason.
+
+The config stage checks that the file is exactly that defconfig plus the
+list, in the minimal form of `make savedefconfig`, and that every entry of
+the list is in the final configuration. After a change of the list or of a
+defconfig patch, write the file again:
+
+```
+./build.sh prepare savedefconfig
+cp work/a7s_defconfig config/a7s_defconfig
+```
+
+Put your own options in `A7S_CONFIG_FRAGMENT`; the build stops if one does
+not take, and the fragment decides for the symbols it names. Apart from
 that, the build only switches off options that make the output depend on
 the host (see `stage_config` in `scripts/build.sh`).
+
+## Releases
+
+A release is named `v<version>-R<n>` (`v7.3.0-R1`), a test build
+`v<version>-T<n>`; `<version>` is the kernel version as `uname -r` begins.
+GitHub Actions ([release.yml](.github/workflows/release.yml)) builds the
+tagged commit with `./build.sh` and `./build.sh release` in the same pinned
+builder container, on an x86_64 runner, and creates a draft release whose
+text is the tag's section in [CHANGELOG.md](CHANGELOG.md). The maintainer
+publishes it by hand; a test build is marked as a pre-release.
+
+New releases follow new mainline kernels and fixes to the series as they
+become ready. They come without a fixed schedule, and offering them is not
+a promise to do so forever.
+
+Attached to a release:
+
+| File | What it is |
+|---|---|
+| `kernel-a7s-<version>-<n>.aarch64.rpm` | the kernel for Fedora: `/usr/lib/modules/<release>/` with `vmlinuz`, `config`, the modules and the device trees; `kernel-install` puts it into `/boot`. It installs beside an older `kernel-a7s`, and dnf leaves Fedora's own kernel packages out, which do not boot the board. A test build is `0.t<n>` and sorts before the release |
+| `kernel-a7s-devel-<version>-<n>.aarch64.rpm` | the headers and build tools of that kernel in `/usr/src/kernels/<release>/`, linked from `/usr/lib/modules/<release>/build`. With it, modules outside the kernel tree can be built on the board, also with DKMS. The tools are built for arm64. It needs the same `kernel-a7s` |
+| `Image`, `sun60i-a733-cubie-a7s.dtb`, `config`, `System.map` | the kernel as built |
+| `a7s-linux-mainline-<release>-modules.tar.gz` | `lib/modules/<release>/`, as `modules-<release>.tar.gz` in `out/` |
+| `KERNEL-ID` | `MANIFEST` of the build, the revision, the names of both RPMs and the sha256 of the four loose kernel files |
+| `linux-<kernel>.tar.xz`, `.tar.sign` | the unchanged kernel tarball from kernel.org and its signature |
+| `SHA256SUMS` | the sha256 of every file above |
+
+No firmware is part of a release, and `./build.sh release` stops if the
+module tarball holds anything but modules, if a module's licence is not
+GPL-compatible, if an RPM is not this build, if a build tool in
+`kernel-a7s-devel` is not an arm64 program, or if `out/` was built from
+other patches or another commit than the checkout. The kernel tarball and the
+source archive of the tag, which GitHub adds to every release, are the
+corresponding source (GPL-2.0).
+
+To check a release: `sha256sum -c SHA256SUMS`, then build the tagged
+commit on x86_64 and compare:
+
+```
+A7S_KERNEL_REVISION=r1 ./build.sh
+A7S_KERNEL_REVISION=r1 ./build.sh release
+```
+
+`out/release/` holds the same files, the RPMs included: the build time is
+the tarball's, and the RPM is built with it as `SOURCE_DATE_EPOCH`.
 
 ## Checking the patches
 
@@ -181,12 +247,14 @@ so the kernel skips them.
 
 Not supported yet:
 
-- WLAN and Bluetooth: the module is powered, but there is no driver.
+- WLAN: the AIC8800 WLAN driver (`aic_load_fw`, `aic8800_fdrv`) and its
+  firmware are not part of this kernel or of a release. Its Bluetooth
+  runs on `btusb` (`CONFIG_BT_HCIBTUSB`) from this kernel.
 - Video decoding, 2D accelerator (G2D), deinterlacer, camera input:
   device tree only, no driver.
 - The GPU needs firmware that is not in linux-firmware yet
   (`rogue_36.56.104.183_v1.fw`).
-- Suspend: any system sleep resets the board, so the series switches
+- Suspend: it resets the board, so the configuration switches
   `CONFIG_SUSPEND` off.
 
 Our patches are written with an AI assistant. Patches by other authors

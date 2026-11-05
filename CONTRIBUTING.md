@@ -69,7 +69,9 @@ Each series that needs an option ends with a patch
 `arm64: defconfig: Enable <what>`. Options are modules
 (`=m`) unless the board cannot boot without them or the driver has no
 device that would load a module. Distribution options (firewall, zram,
-debug tools) do not belong here.
+debug tools) do not belong here: they go into
+`config/kernel-config.assert`, with their reason. After either change,
+write `config/a7s_defconfig` again (README, "Configuration").
 
 ## Mainline rules
 

@@ -1,0 +1,188 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Build the kernel with ./build.sh and attach it to a release.
+#
+#   git tag v7.3.0-R1 && git push origin v7.3.0-R1
+#
+# builds the tagged commit (kernel release 7.3.0-a7s-r1 for -R1, 7.3.0-a7s-t1
+# for -T1) and creates a DRAFT release named after the tag, with the
+# CHANGELOG.md section of that tag as its text. A person reads the draft and
+# publishes it. A -T<n> draft is marked as a pre-release. A manual run
+# (workflow_dispatch) builds revision t1 and keeps the files as a workflow
+# artifact for 14 days; it creates no release.
+#
+# The tag must name the kernel version of scripts/build.sh (7.3 is v7.3.0-...),
+# and CHANGELOG.md must have a section for it; both are checked before the
+# build. What is attached: README.md, "Releases".
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+-[TR][0-9]+']
+  workflow_dispatch:
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # x86_64 with Docker on the runner; the build runs in the pinned builder
+    # container of ./build.sh and cross compiles for arm64.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    env:
+      A7S_ENGINE: docker
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refuse a release candidate
+        # Releases are for finished kernels (7.3, 7.3.1), not for -rc.
+        run: |
+          set -euo pipefail
+          version="$(bash scripts/build.sh tag-version)"
+          case "${version}" in
+            *-rc*) echo "::error::kernel ${version} is a release candidate; releases are for finished kernels"; exit 1 ;;
+          esac
+
+      - name: Check the tag and the changelog
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(bash scripts/build.sh tag-version)"
+          case "${TAG}" in
+            "v${version}-"[TR][0-9]*) ;;
+            *) echo "::error::tag ${TAG} does not name the kernel version of this commit; expected v${version}-T<n> or v${version}-R<n>"; exit 1 ;;
+          esac
+          scripts/release-notes.sh "${TAG}" > /dev/null
+
+      - name: Name the revision
+        # v7.3.0-R1 builds revision r1, v7.3.0-T1 builds t1; a manual run is t1.
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          set -euo pipefail
+          rev="t1"
+          [ -z "${TAG}" ] || rev="$(printf '%s' "${TAG##*-}" | tr 'TR' 'tr')"
+          echo "A7S_KERNEL_REVISION=${rev}" >> "${GITHUB_ENV}"
+
+      - name: Disk and CPU
+        run: |
+          nproc
+          df -h .
+          ${A7S_ENGINE} --version
+
+      - name: Fetch and verify the kernel source
+        run: ./build.sh fetch verify
+
+      - name: Check the patch series
+        run: |
+          ./build.sh shell sh -c 'python3 scripts/patch-check.py --repo . --tarball /work/dl/linux-$(scripts/build.sh version).tar.xz --workdir /work/pc'
+
+      - name: Build the kernel
+        run: ./build.sh
+
+      - name: Make the release files
+        run: ./build.sh release
+
+      - name: Check the release files
+        working-directory: out/release
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          ls -l
+
+      - name: Keep the release files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-files
+          path: out/release/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: dist
+
+      - name: Check them again
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+
+      - name: Write the release text
+        run: |
+          set -euo pipefail
+          tarball="$(cd dist && ls linux-*.tar.xz)"
+          tarball_sha="$(sed -n 's/^tarball.sha256=//p' dist/KERNEL-ID)"
+          signature="$(cd dist && ls linux-*.tar.sign)"
+          rpm="$(sed -n 's/^rpm=//p' dist/KERNEL-ID)"
+          devel="$(sed -n 's/^rpm.devel=//p' dist/KERNEL-ID)"
+          {
+            scripts/release-notes.sh "${TAG}"
+            sed -e "s/@TARBALL@/${tarball}/g" -e "s/@TARBALL_SHA256@/${tarball_sha}/g" \
+                -e "s/@RPM@/${rpm}/g" -e "s/@DEVEL@/${devel}/g" \
+                -e "s/@SIGNATURE@/${signature}/g" -e "s/@COMMIT@/${GITHUB_SHA}/g" <<'TEXT'
+
+          ## Files
+
+          Built by GitHub Actions from commit `@COMMIT@` with `./build.sh` and `./build.sh release`. `KERNEL-ID` has the build identity, `SHA256SUMS` the checksums of every file.
+
+          - `@RPM@`: the kernel for Fedora on the board, with its modules and device trees. It installs beside an older `kernel-a7s`, and `kernel-install` adds it to `/boot`. Fedora's own kernel packages do not boot the board; with this package installed, dnf leaves them out.
+          - `@DEVEL@`: the headers and build tools of that kernel, for building modules outside the kernel tree on the board, also with DKMS. It needs the same `kernel-a7s`.
+          - `Image`, the device tree blob, `config` and `System.map`: the kernel as built.
+          - `a7s-linux-mainline-*-modules.tar.gz`: the kernel modules (`lib/modules/<release>/`).
+
+          ## Corresponding source
+
+          - The recipe (patches, configuration, build scripts, RPM spec) is the source archive of this tag that GitHub attaches to the release, commit `@COMMIT@`.
+          - `@TARBALL@`: the unchanged kernel tarball from cdn.kernel.org, sha256 `@TARBALL_SHA256@`, and its signature `@SIGNATURE@` from kernel.org, unchanged (made over the uncompressed tar). `./build.sh verify` has checked it against the kernel.org keys in `keys/`.
+
+          The same build from the source, `./build.sh` and `./build.sh release` in the tagged checkout with the revision of the tag on x86_64, gives the same files.
+
+          ## Not included
+
+          Firmware of any kind. The AIC8800 WLAN driver (`aic_load_fw`, `aic8800_fdrv`) and its firmware are not included; its Bluetooth runs on `btusb` from this kernel. The GPU firmware is not in linux-firmware yet.
+          TEXT
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create the draft release
+        run: |
+          set -euo pipefail
+          release="$(sed -n 's/^kernel.release=//p' dist/KERNEL-ID)"
+          extra=()
+          case "${TAG}" in *-T[0-9]*) extra+=(--prerelease) ;; esac
+          gh release create "${TAG}" dist/* \
+            --verify-tag \
+            --draft \
+            "${extra[@]}" \
+            --title "Linux ${release} for the Radxa Cubie A7S (${TAG})" \
+            --notes-file release-notes.md

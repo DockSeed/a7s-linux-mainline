@@ -10,13 +10,20 @@
 #
 # Stages:
 #   version   print the pinned kernel version and exit
+#   tag-version  print the version a release tag names (7.3 -> 7.3.0)
 #   fetch     download the kernel.org tarball and its signature
 #   verify    check the pinned sha256 and the kernel.org signature (a
 #             release candidate: Linus' tag and the tree, see below)
 #   prepare   unpack the pristine tarball and apply patches/series
-#   config    configure the kernel: the arm64 defconfig of the patched tree
+#   config    configure the kernel: config/a7s_defconfig, checked against
+#             the arm64 defconfig of the patched tree (see below)
+#   savedefconfig  write work/a7s_defconfig: the arm64 defconfig of the
+#             patched tree plus config/kernel-config.assert, in minimal form
 #   build     build Image, device trees and modules
 #   package   collect the results in out/ with MANIFEST and SHA256SUMS
+#   release   after package, with A7S_KERNEL_REVISION: the files of a
+#             release in out/release/, the RPMs kernel-a7s and
+#             kernel-a7s-devel among them
 #
 # The source is the unmodified kernel.org tarball plus patches/series,
 # applied at fuzz 0. The build runs out of tree (O=); the source tree is
@@ -26,9 +33,11 @@
 # signature on the tag in source/, that the tag names the commit there,
 # and that kernel.org's snapshot tarball holds exactly that commit's tree.
 #
-# Config: the arm64 defconfig of the patched tree, plus an optional
-# A7S_CONFIG_FRAGMENT. Options that make the output depend on the host
-# are switched off or refused (see stage_config).
+# Config: config/a7s_defconfig, plus an optional A7S_CONFIG_FRAGMENT. The
+# file is the arm64 defconfig of the patched tree with the entries of
+# config/kernel-config.assert on top, in minimal form; the config stage
+# refuses it when it is not. Options that make the output depend on the
+# host are switched off or refused (see stage_config).
 #
 # Environment (all optional):
 #   A7S_KERNEL_MIRROR  base URL serving the same files as kernel.org; they
@@ -38,6 +47,9 @@
 #   A7S_W1=1           build with W=1 and write the warnings to
 #                      $A7S_WORK/warnings.txt
 #   A7S_LOCALVERSION   kernel local version (default: -a7s)
+#   A7S_KERNEL_REVISION  r<n> or t<n>: the release being built, from its
+#                      tag (v7.3.0-R1 is r1); the kernel release becomes
+#                      7.3.0-a7s-r1. Not together with A7S_LOCALVERSION
 #   A7S_CONFIG_FRAGMENT  config fragment (CONFIG_ lines) merged after the
 #                      defconfig; see above
 #   JOBS               parallel jobs (default: all CPUs)
@@ -80,8 +92,14 @@ case "$KERNEL_VERSION" in
     KERNEL_URL="${A7S_KERNEL_MIRROR:-https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION%%.*}.x}"
     ;;
 esac
-# make target of the configuration (see the top of this file)
-DEFCONFIG="defconfig"
+# The configuration and what it must say (see the top of this file)
+DEFCONFIG_FILE="config/a7s_defconfig"
+ASSERT_FILE="config/kernel-config.assert"
+# The board's device tree, shipped on its own in a release.
+BOARD_DTB="allwinner/sun60i-a733-cubie-a7s.dtb"
+# What a release carries besides the kernel: the RPM is built from this.
+RPM_SPEC="rpm/kernel-a7s.spec"
+REVISION="${A7S_KERNEL_REVISION:-}"
 LOCALVERSION="${A7S_LOCALVERSION--a7s}"
 
 if [ "$(uname -m)" = aarch64 ]; then
@@ -98,8 +116,12 @@ JOBS="${JOBS:-$(nproc)}"
 # clone, a shallow clone or an unpacked archive; no git is needed.
 export KBUILD_BUILD_USER="builder"
 export KBUILD_BUILD_HOST="a7s-linux-mainline"
-# Without it every relink bumps the "#N" build counter in the version string.
-export KBUILD_BUILD_VERSION=1
+# Without it every relink bumps the "#N" build counter in the version
+# string. A release r<n> has n there.
+case "$REVISION" in
+  r*) export KBUILD_BUILD_VERSION="${REVISION#r}" ;;
+  *)  export KBUILD_BUILD_VERSION=1 ;;
+esac
 export LC_ALL=C TZ=UTC
 umask 022
 # Options whose presence depends on the host toolchain, not on the input:
@@ -112,15 +134,30 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [[ "$KERNEL_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+|-rc[0-9]+)?$ ]] \
   || die "KERNEL_VERSION is not X.Y, X.Y.Z or X.Y-rcN: '$KERNEL_VERSION'"
 
-# The release string make derives from the Makefile: a release candidate
-# and a first release carry SUBLEVEL 0 (7.3-rc5 -> 7.3.0-rc5, 7.3 -> 7.3.0).
-kernel_release() {
+# A release build: the revision from the tag goes into the local version,
+# so that two releases of one kernel version install side by side, and its
+# number into the "#N" of the version string (1 for a test build).
+if [ -n "$REVISION" ]; then
+  [[ "$REVISION" =~ ^[rt][1-9][0-9]*$ ]] \
+    || die "A7S_KERNEL_REVISION must look like r1 or t1, not '$REVISION'"
+  [ -z "${A7S_LOCALVERSION:-}" ] \
+    || die "A7S_KERNEL_REVISION and A7S_LOCALVERSION are exclusive"
+  LOCALVERSION="-a7s-$REVISION"
+fi
+
+# The version make derives from the Makefile: a release candidate and a
+# first release carry SUBLEVEL 0 (7.3-rc5 -> 7.3.0-rc5, 7.3 -> 7.3.0). A
+# release tag names it: v7.3.0-R1.
+kernel_base() {
   case "$KERNEL_VERSION" in
-    *-rc*)   echo "${KERNEL_VERSION%-rc*}.0-rc${KERNEL_VERSION##*-rc}$LOCALVERSION" ;;
-    *.*.*)   echo "$KERNEL_VERSION$LOCALVERSION" ;;
-    *)       echo "$KERNEL_VERSION.0$LOCALVERSION" ;;
+    *-rc*)   echo "${KERNEL_VERSION%-rc*}.0-rc${KERNEL_VERSION##*-rc}" ;;
+    *.*.*)   echo "$KERNEL_VERSION" ;;
+    *)       echo "$KERNEL_VERSION.0" ;;
   esac
 }
+
+# The release string: the version plus the local version.
+kernel_release() { echo "$(kernel_base)$LOCALVERSION"; }
 
 # git, and nothing that could change a file while git hashes it: no system
 # or user configuration, no line-ending conversion, and attributes read from
@@ -149,9 +186,9 @@ set_build_time() {  # after prepare
   export KBUILD_BUILD_TIMESTAMP="$(LC_ALL=C date -u -d "@$SOURCE_DATE_EPOCH")"
 }
 
-kmake() {
+kmake() {  # O= is $OBJ, or $KOBJ when set
   set_build_time
-  make -C "$SRC" O="$OBJ" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
+  make -C "$SRC" O="${KOBJ:-$OBJ}" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
     LOCALVERSION="$LOCALVERSION" \
     KCFLAGS="-fdebug-prefix-map=$SRC= -fdebug-prefix-map=$OBJ=." \
     KAFLAGS="-fdebug-prefix-map=$SRC= -fdebug-prefix-map=$OBJ=." \
@@ -178,8 +215,9 @@ stage_tools() {  # <stage>
     fetch)        echo curl ;;
     verify)       if [ "$RC" = 1 ]; then echo gpg git sha256sum tar gzip; else echo gpg xz sha256sum; fi ;;
     prepare)      if [ "$RC" = 1 ]; then echo tar gzip patch; else echo tar xz patch; fi ;;
-    config|build) echo make "${CROSS_COMPILE}gcc" flex bison bc perl ;;
-    package)      echo make "${CROSS_COMPILE}gcc" tar gzip ;;
+    config|savedefconfig|build) echo make "${CROSS_COMPILE}gcc" flex bison bc perl ;;
+    package)      echo make "${CROSS_COMPILE}gcc" tar gzip find readelf ;;
+    release)      echo rpmbuild rpm git tar gzip modinfo sha256sum find readelf ;;
   esac
 }
 
@@ -199,7 +237,20 @@ series_entries() {  # the patch paths from patches/series, in order
   awk '{ sub(/[[:space:]]*#.*/, "") } /[^[:space:]]/' "$TOP/patches/series"
 }
 
+# sha256 over the content of the patches, in the order of patches/series.
+patches_sha256() {
+  local p
+  while IFS= read -r p; do cat "$TOP/patches/$p"; done < <(series_entries) \
+    | sha256sum | cut -d' ' -f1
+}
+
+# The commit of the checkout, or nothing when it is no git checkout.
+checkout_commit() {
+  git -C "$TOP" -c safe.directory="$TOP" rev-parse -q --verify HEAD 2>/dev/null || true
+}
+
 stage_version() { echo "$KERNEL_VERSION"; }
+stage_tag_version() { kernel_base; }
 
 stage_fetch() {
   mkdir -p "$DL"
@@ -330,10 +381,106 @@ stage_prepare() {
   tree_hash "$SRC" > "$WORK/src.treehash"
 }
 
+# The entries of the assert file, one per line: <kind> <argument>.
+assert_entries() {
+  sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d' "$TOP/$ASSERT_FILE"
+}
+
+assert_symbol() {  # <kind> <argument>: the CONFIG_ symbol of an entry
+  case "$1" in
+    y|m) echo "CONFIG_$2" ;;
+    line)
+      case "$2" in
+        'CONFIG_'*=*) echo "${2%%=*}" ;;
+        '# CONFIG_'*' is not set') local n=${2#\# }; echo "${n% is not set}" ;;
+        *) return 1 ;;
+      esac ;;
+    *) return 1 ;;
+  esac
+}
+
+assert_line() {  # <kind> <argument>: the line .config must hold
+  case "$1" in y|m) echo "CONFIG_$2=$1" ;; line) echo "$2" ;; esac
+}
+
+apply_asserts() {  # <obj dir>: set every entry in its .config
+  local kind arg sym args=()
+  while read -r kind arg; do
+    sym=$(assert_symbol "$kind" "$arg") || die "$ASSERT_FILE: cannot read '$kind $arg'"
+    sym=${sym#CONFIG_}
+    case "$kind:$arg" in
+      y:*)        args+=(--enable "$sym") ;;
+      m:*)        args+=(--module "$sym") ;;
+      'line:# '*) args+=(--disable "$sym") ;;
+      line:*)     args+=(--set-val "$sym" "${arg#*=}") ;;
+    esac
+  done < <(assert_entries)
+  "$SRC/scripts/config" --file "$1/.config" "${args[@]}"
+}
+
+# Every entry must be in the configuration as written. A fragment decides
+# for the symbols it names (A7S_CONFIG_FRAGMENT, README.md).
+check_asserts() {  # <.config> [<fragment>]
+  local kind arg sym bad=""
+  while read -r kind arg; do
+    sym=$(assert_symbol "$kind" "$arg") || die "$ASSERT_FILE: cannot read '$kind $arg'"
+    if [ -n "${2:-}" ] && grep -Eq "^(# )?${sym}[= ]" "$2"; then continue; fi
+    grep -qxF -- "$(assert_line "$kind" "$arg")" "$1" || bad="$bad"$'\n'"  $kind $arg"
+  done < <(assert_entries)
+  [ -z "$bad" ] || die "$ASSERT_FILE entries that did not take:$bad"
+}
+
+# A configuration in <obj dir>, from config/a7s_defconfig ("a7s") or from
+# the arm64 defconfig of the patched tree ("arm64"): the assert entries on
+# top, the host-dependent options off, olddefconfig.
+configure() {  # <obj dir> a7s|arm64
+  local o off=()
+  mkdir -p "$1"
+  case "$2" in
+    a7s)   cp "$TOP/$DEFCONFIG_FILE" "$1/.config" ;;
+    arm64) KOBJ=$1 kmake defconfig >/dev/null ;;
+    *)     die "configure: no base '$2'" ;;
+  esac
+  apply_asserts "$1"
+  for o in "${HOST_DEPENDENT_OPTIONS[@]}"; do off+=(-d "$o"); done
+  "$SRC/scripts/config" --file "$1/.config" "${off[@]}"
+  KOBJ=$1 kmake olddefconfig >/dev/null
+}
+
+# The settings of a defconfig file, and the comment above them.
+defconfig_body() { awk '/^# CONFIG_[A-Za-z0-9_]+ is not set$/ || (!/^#/ && NF)' "$1"; }
+defconfig_header() {
+  awk '/^# CONFIG_[A-Za-z0-9_]+ is not set$/ || (!/^#/ && NF) { exit } { print }' "$1"
+}
+
+# config/a7s_defconfig must give the configuration that the arm64
+# defconfig of the patched tree plus the assert entries give, and be in the
+# minimal form savedefconfig writes: then it is that and nothing else. A
+# new "arm64: defconfig" patch in the series fails here until the file is
+# written again (stage savedefconfig).
+check_defconfig() {
+  local d="$WORK/obj-defconfig"
+  rm -rf "$d"
+  configure "$d" arm64
+  if ! cmp -s "$d/.config" "$OBJ/.config"; then
+    diff -u --label "arm64 defconfig + $ASSERT_FILE" --label "$DEFCONFIG_FILE" \
+      "$d/.config" "$OBJ/.config" >&2 || true
+    die "$DEFCONFIG_FILE is not the arm64 defconfig plus $ASSERT_FILE -- ./build.sh prepare savedefconfig writes the file it should be"
+  fi
+  rm -rf "$d"
+  KOBJ=$OBJ kmake savedefconfig >/dev/null
+  if ! diff -u --label "$DEFCONFIG_FILE" --label "savedefconfig" \
+         <(defconfig_body "$TOP/$DEFCONFIG_FILE") "$OBJ/defconfig" >&2; then
+    die "$DEFCONFIG_FILE is not in minimal form -- ./build.sh prepare savedefconfig writes it"
+  fi
+  rm -f "$OBJ/defconfig"
+}
+
 stage_config() {
-  mkdir -p "$OBJ"
-  log "config: arm64 $DEFCONFIG"
-  kmake "$DEFCONFIG" >/dev/null
+  [ -f "$TOP/$DEFCONFIG_FILE" ] || die "no $DEFCONFIG_FILE"
+  log "config: $DEFCONFIG_FILE + $ASSERT_FILE"
+  configure "$OBJ" a7s
+  check_defconfig
   # The fragment is kept in the work directory, so that the package stage
   # names the one this configuration was made with.
   rm -f "$WORK/config-fragment"
@@ -342,13 +489,28 @@ stage_config() {
     log "config: + fragment $A7S_CONFIG_FRAGMENT"
     cp "$A7S_CONFIG_FRAGMENT" "$WORK/config-fragment"
     "$SRC/scripts/kconfig/merge_config.sh" -m -O "$OBJ" "$OBJ/.config" "$WORK/config-fragment" >/dev/null
+    local o off=()
+    for o in "${HOST_DEPENDENT_OPTIONS[@]}"; do off+=(-d "$o"); done
+    "$SRC/scripts/config" --file "$OBJ/.config" "${off[@]}"
+    kmake olddefconfig >/dev/null
+    check_config_fragment "$WORK/config-fragment"
   fi
-  local o off=()
-  for o in "${HOST_DEPENDENT_OPTIONS[@]}"; do off+=(-d "$o"); done
-  "$SRC/scripts/config" --file "$OBJ/.config" "${off[@]}"
-  kmake olddefconfig >/dev/null
-  [ ! -f "$WORK/config-fragment" ] || check_config_fragment "$WORK/config-fragment"
+  check_asserts "$OBJ/.config" ${A7S_CONFIG_FRAGMENT:+"$WORK/config-fragment"}
   check_reproducible_config
+}
+
+# Write config/a7s_defconfig as it should be, to work/a7s_defconfig: the
+# arm64 defconfig of the patched tree plus the assert entries, in minimal
+# form, under the comment of the file in the repository.
+stage_savedefconfig() {
+  local d="$WORK/obj-defconfig"
+  rm -rf "$d"
+  configure "$d" arm64
+  KOBJ=$d kmake savedefconfig >/dev/null
+  { [ ! -f "$TOP/$DEFCONFIG_FILE" ] || defconfig_header "$TOP/$DEFCONFIG_FILE"
+    cat "$d/defconfig"; } > "$WORK/a7s_defconfig"
+  rm -rf "$d"
+  log "wrote a7s_defconfig in the work directory: copy it to $DEFCONFIG_FILE"
 }
 
 # Every setting of a fragment must be in the configuration as written:
@@ -413,6 +575,45 @@ stage_build() {
     || die "kernel.release is '$rel', expected '$(kernel_release)'"
 }
 
+# The tree for building modules outside the kernel tree, as
+# /usr/src/kernels/<release>/ of kernel-a7s-devel: the kernel's own
+# install-extmod-build, which also rebuilds the programs that modpost and
+# the build need (fixdep, modpost, genksyms and others) for arm64 when the
+# builder is not an arm64 host. The result is src/kernels/<release>/ in
+# <dest>/devel-<release>.tar.gz.
+package_devel() {  # <release> <destination directory>
+  local rel=$1 root="$WORK/develroot" tree
+  tree="$root/src/kernels/$rel"
+  rm -rf "$root"
+  kmake run-command KBUILD_RUN_COMMAND="\$(srctree)/scripts/package/install-extmod-build $tree" >/dev/null
+  # The rebuild of the programs leaves an assembler file with the build path.
+  find "$tree/scripts" -name '*.s' -delete
+  cp "$OBJ/.config" "$tree/.config"
+  check_devel_tree "$tree"
+  tar -C "$root" --format=gnu --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
+    --owner=0 --group=0 --numeric-owner -cf - src | gzip -n -9 > "$2/devel-$rel.tar.gz"
+}
+
+# Everything the board's make runs from scripts/ and tools/ must be an arm64
+# program, not one of the builder; and no link may point out of the tree.
+check_devel_tree() {  # <tree>
+  local f n=0 bad=""
+  while IFS= read -r -d '' f; do
+    [ "$(head -c4 "$f")" = $'\177ELF' ] || continue
+    n=$((n + 1))
+    readelf -h "$f" | grep -q 'Machine:.*AArch64' || bad="$bad"$'\n'"  ${f#"$1/"}"
+  done < <(find "$1" -type f \( -path '*/scripts/*' -o -path '*/tools/*' \) -print0 | sort -z)
+  [ "$n" -gt 0 ] || die "devel: no program in scripts/ of the headers tree"
+  [ -z "$bad" ] || die "devel: programs not built for arm64:$bad"
+  bad=$(find "$1" -type l -lname '/*' -printf '  %P -> %l\n')
+  [ -z "$bad" ] || die "devel: links to absolute paths:"$'\n'"$bad"
+  for f in .config Module.symvers include/generated/utsrelease.h include/config/auto.conf \
+           arch/arm64/include/generated scripts/mod/modpost; do
+    [ -e "$1/$f" ] || die "devel: $f is missing in the headers tree"
+  done
+  log "devel: $n programs in scripts/ and tools/, all arm64"
+}
+
 stage_package() {
   set_build_time
   local rel mod
@@ -424,6 +625,7 @@ stage_package() {
   rm -rf "${OUT:?}"/* "$WORK/modroot"
   cp "$OBJ/arch/arm64/boot/Image" "$OUT/Image"
   cp "$OBJ/.config" "$OUT/config-$rel"
+  cp "$OBJ/System.map" "$OUT/System.map-$rel"
   # Every result is a single file, so SHA256SUMS covers exactly what out/
   # holds.
   (cd "$OBJ/arch/arm64/boot/dts" && find allwinner -name '*.dtb' -print0 | sort -z \
@@ -435,6 +637,7 @@ stage_package() {
   rm -f "$mod/build" "$mod/source"
   tar -C "$WORK/modroot" --format=gnu --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
     --owner=0 --group=0 --numeric-owner -cf - lib | gzip -n -9 > "$OUT/modules-$rel.tar.gz"
+  package_devel "$rel" "$OUT"
 
   {
     echo "kernel=$KERNEL_VERSION"
@@ -447,8 +650,13 @@ stage_package() {
       echo "tarball.signer=$KERNEL_SIGNER_FPR"
     fi
     echo "series.sha256=$(sha256sum < "$TOP/patches/series" | cut -d' ' -f1)"
+    echo "patches.sha256=$(patches_sha256)"
+    [ -z "$(checkout_commit)" ] || echo "commit=$(checkout_commit)"
     echo "patches=$(series_entries | wc -l)"
-    echo "config=arm64 $DEFCONFIG"
+    echo "config=$DEFCONFIG_FILE"
+    echo "config.sha256=$(sha256sum < "$TOP/$DEFCONFIG_FILE" | cut -d' ' -f1)"
+    echo "config.assert.sha256=$(sha256sum < "$TOP/$ASSERT_FILE" | cut -d' ' -f1)"
+    [ -z "$REVISION" ] || echo "revision=$REVISION"
     [ ! -f "$WORK/config-fragment" ] \
       || echo "config.fragment.sha256=$(sha256sum < "$WORK/config-fragment" | cut -d' ' -f1)"
     echo "source_date_epoch=$SOURCE_DATE_EPOCH"
@@ -467,12 +675,181 @@ stage_package() {
   # names something below $WORK, so the pattern ends in a slash: bare "/work"
   # also matches kernel strings such as "mm/workingset.c".
   local leak
-  leak=$(grep -rlaF "$WORK/" "$OUT" "$WORK/modroot" "$OBJ/vmlinux" || true)
+  leak=$(grep -rlaF "$WORK/" "$OUT" "$WORK/modroot" "$WORK/develroot" "$OBJ/vmlinux" || true)
   [ -z "$leak" ] || die "build paths leak into: $leak"
   check_source_unchanged
-  # The modules are in the tarball now.
-  rm -rf "$WORK/modroot"
+  # The modules and the headers tree are in their tarballs now.
+  rm -rf "$WORK/modroot" "$WORK/develroot"
   log "out: $(wc -l < "$OUT/SHA256SUMS") files, kernel $rel"
+}
+
+# --- release ----------------------------------------------------------------
+# A release is made from a finished build (stages up to package) of a
+# committed checkout, with A7S_KERNEL_REVISION from the tag. It writes
+# out/release/: Image, the board's device tree, config, System.map, the
+# modules, KERNEL-ID, the RPMs kernel-a7s and kernel-a7s-devel, the
+# kernel.org tarball and its signature, and SHA256SUMS. Nothing in it is
+# compiled again, and nothing in it is firmware.
+
+# MODULE_LICENSE strings that are GPL-compatible (include/linux/license.h).
+GPL_LICENSES='GPL|GPL v2|GPL and additional rights|Dual BSD/GPL|Dual MIT/GPL|Dual MPL/GPL'
+
+manifest_get() { sed -n "s/^$1=//p" "$OUT/MANIFEST"; }
+file_sha256() { sha256sum < "$1" | cut -d' ' -f1; }
+
+# The RPM's release: r<n> is <n>; a test build t<n> is 0.t<n>, which sorts
+# before release 1 of the same kernel version.
+rpm_release() {
+  case "$REVISION" in r*) echo "${REVISION#r}" ;; t*) echo "0.$REVISION" ;; esac
+}
+
+# out/ must be the build of this checkout as committed, with no switch
+# that changes the output.
+release_check_build() {
+  [ -n "$REVISION" ] || die "release: set A7S_KERNEL_REVISION (r<n> or t<n>)"
+  [ "$RC" = 0 ] || die "release: a release candidate is not released"
+  [ -f "$OUT/MANIFEST" ] || die "release: no $OUT/MANIFEST -- run the build first"
+  (cd "$OUT" && sha256sum -c --quiet SHA256SUMS) || die "release: $OUT does not match its SHA256SUMS"
+  [ "$(manifest_get kernel.release)" = "$(kernel_release)" ] \
+    || die "release: out/ holds $(manifest_get kernel.release), not $(kernel_release)"
+  [ "$(manifest_get revision)" = "$REVISION" ] || die "release: out/ was built without revision $REVISION"
+  [ -z "$(manifest_get config.fragment.sha256)" ] || die "release: a build with A7S_CONFIG_FRAGMENT is no release"
+  [ "$(manifest_get config.sha256)" = "$(file_sha256 "$TOP/$DEFCONFIG_FILE")" ] \
+    && [ "$(manifest_get config.assert.sha256)" = "$(file_sha256 "$TOP/$ASSERT_FILE")" ] \
+    && [ "$(manifest_get series.sha256)" = "$(file_sha256 "$TOP/patches/series")" ] \
+    || die "release: out/ was built from another config or series than this checkout"
+  [ "$(manifest_get patches.sha256)" = "$(patches_sha256)" ] \
+    || die "release: out/ was built from other patches than this checkout"
+  [ "$(manifest_get source_date_epoch)" = "$(cat "$WORK/source-date-epoch")" ] \
+    || die "release: out/ was built with another SOURCE_DATE_EPOCH than the tarball's"
+  git -C "$TOP" -c safe.directory="$TOP" rev-parse -q --verify HEAD >/dev/null \
+    || die "release: $TOP is not a git checkout"
+  [ -z "$(git -C "$TOP" -c safe.directory="$TOP" status --porcelain)" ] \
+    || die "release: the checkout has uncommitted changes; a release is built from a commit"
+  [ "$(manifest_get commit)" = "$(checkout_commit)" ] \
+    || die "release: out/ was built from commit '$(manifest_get commit)', this checkout is at $(checkout_commit)"
+}
+
+# The modules of the tarball, unpacked to <dir>: nothing but modules and
+# depmod's files, each module with a GPL-compatible licence.
+release_check_modules() {  # <dir> <release>
+  local d=$1 rel=$2 bad n=0 ko lic
+  tar -C "$d" -xzf "$OUT/modules-$rel.tar.gz"
+  bad=$(cd "$d" && find . ! -type d ! -path "./lib/modules/$rel/*.ko" ! -path "./lib/modules/$rel/modules.*")
+  [ -z "$bad" ] || die "release: the module tarball holds more than modules:"$'\n'"$bad"
+  bad=""
+  while IFS= read -r -d '' ko; do
+    lic=$(modinfo -F license "$ko" | head -n1)
+    printf '%s\n' "$lic" | grep -qxE "$GPL_LICENSES" || bad="$bad"$'\n'"  ${ko#"$d/"}: '$lic'"
+    n=$((n + 1))
+  done < <(find "$d" -name '*.ko' -print0 | sort -z)
+  [ "$n" -gt 0 ] || die "release: no module in the tarball"
+  [ -z "$bad" ] || die "release: modules without a GPL-compatible licence:$bad"
+  log "release: $n modules, all GPL-compatible"
+}
+
+# kernel-a7s and kernel-a7s-devel from out/, by rpm/kernel-a7s.spec. Same
+# input, same bytes: the build time is SOURCE_DATE_EPOCH, file times are
+# clamped to it, the build host is fixed and the payload is compressed by
+# one thread.
+release_build_rpm() {  # <rpm top dir> <release>
+  rm -rf "$1"
+  rpmbuild -bb --quiet --target aarch64 \
+    --define "_topdir $1" --define "_sourcedir $OUT" --define "_rpmdir $1/RPMS" \
+    --define "_rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
+    --define "kver $2" --define "rpmver $(kernel_base)" --define "rpmrel $(rpm_release)" \
+    --define "_buildhost $KBUILD_BUILD_HOST" \
+    --define "source_date_epoch_from_changelog 0" \
+    --define "use_source_date_epoch_as_buildtime 1" \
+    --define "build_mtime_policy clamp_to_source_date_epoch" \
+    --define "_binary_payload w19.zstdio" \
+    "$TOP/$RPM_SPEC" >/dev/null || die "release: rpmbuild failed"
+}
+
+# The RPM must be this build: its kernel the Image, its modules those of
+# the tarball (unpacked in <dir>), and no file outside the kernel's paths.
+release_check_rpm() {  # <rpm> <dir> <release>
+  local r=$1 d=$2 rel=$3 bad
+  [ "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$r")" = "$(kernel_base)-$(rpm_release).aarch64" ] \
+    || die "release: $r has the wrong version or architecture"
+  bad=$(rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -vE \
+    "^(/usr/lib/modules/$rel(/.*)?|/boot/(vmlinuz|config|initramfs|dtb)-$rel(\\.img)?|/usr/share/dnf5/libdnf.conf.d/80-kernel-a7s.conf|/usr/lib/kernel/install.d/25-a7s-dtb-to-esp.install)$" || true)
+  [ -z "$bad" ] || die "release: $r holds files outside the kernel's paths:"$'\n'"$bad"
+  ! rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -qxF "/usr/lib/modules/$rel/build" \
+    || die "release: $r holds the link to the headers, which belongs to kernel-a7s-devel"
+  rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" \
+    | grep -qxF "$(file_sha256 "$OUT/Image") /usr/lib/modules/$rel/vmlinuz" \
+    || die "release: the kernel in $r is not out/Image"
+  cmp -s <(rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" | grep '\.ko$' | sed 's# /usr/# /#' | sort -k2) \
+         <(cd "$d" && find . -name '*.ko' -print0 | xargs -0 sha256sum | sed 's#  \./# /#' | sort -k2) \
+    || die "release: the modules in $r are not those of the module tarball"
+}
+
+# kernel-a7s-devel must be this build too: the headers tree of the tarball
+# (unpacked in <dir>, checked as when it was made) with nothing else, the
+# link to it, and a Requires on the kernel it belongs to.
+release_check_devel() {  # <rpm> <dir> <release>
+  local r=$1 d=$2 rel=$3 bad
+  tar -C "$d" -xzf "$OUT/devel-$rel.tar.gz"
+  check_devel_tree "$d/src/kernels/$rel"
+  [ -z "$(grep -rlaF "$WORK/" "$d" || true)" ] || die "release: build paths leak into the headers tree"
+  [ "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$r")" = "$(kernel_base)-$(rpm_release).aarch64" ] \
+    || die "release: $r has the wrong version or architecture"
+  rpm -qp --requires "$r" | grep -qxF "kernel-a7s = $(kernel_base)-$(rpm_release)" \
+    || die "release: $r does not require kernel-a7s of the same version and release"
+  bad=$(rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -vE \
+    "^(/usr/src/kernels/$rel(/.*)?|/usr/lib/modules/$rel/build)$" || true)
+  [ -z "$bad" ] || die "release: $r holds files outside the headers tree:"$'\n'"$bad"
+  [ "$(rpm -qp --qf '[%{FILENAMES} %{FILELINKTOS}\n]' "$r" | sed -n "s#^/usr/lib/modules/$rel/build ##p")" = "/usr/src/kernels/$rel" ] \
+    || die "release: $r does not link /usr/lib/modules/$rel/build to /usr/src/kernels/$rel"
+  cmp -s <(rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" | grep -E '^[0-9a-f]{64} ' | sed 's# /usr/# /#' | sort -k2) \
+         <(cd "$d" && find src -type f -print0 | xargs -0 sha256sum | sed 's#  src/# /src/#' | sort -k2) \
+    || die "release: the files in $r are not those of the headers tarball"
+}
+
+# What the release is: the MANIFEST of the build, the revision, the RPMs and
+# the sha256 of the loose kernel files.
+release_kernel_id() {  # <dest> <release>
+  local f
+  cat "$OUT/MANIFEST"
+  echo "rpm=$(cd "$1" && ls kernel-a7s-[0-9]*.rpm)"
+  echo "rpm.devel=$(cd "$1" && ls kernel-a7s-devel-*.rpm)"
+  for f in Image "${BOARD_DTB##*/}" config System.map; do
+    echo "sha256_$f=$(file_sha256 "$1/$f")"
+  done
+}
+
+stage_release() {
+  release_check_build
+  set_build_time
+  local rel dest stage rpm devel
+  rel=$(kernel_release)
+  dest="$OUT/release"
+  stage="$WORK/release-stage"
+  rm -rf "$dest" "$stage"
+  mkdir -p "$dest" "$stage/modules" "$stage/devel"
+  release_check_modules "$stage/modules" "$rel"
+  release_build_rpm "$stage/rpmbuild" "$rel"
+  rpm="$stage/rpmbuild/RPMS/kernel-a7s-$(kernel_base)-$(rpm_release).aarch64.rpm"
+  [ -f "$rpm" ] || die "release: rpmbuild made no ${rpm##*/}"
+  release_check_rpm "$rpm" "$stage/modules" "$rel"
+  devel="$stage/rpmbuild/RPMS/kernel-a7s-devel-$(kernel_base)-$(rpm_release).aarch64.rpm"
+  [ -f "$devel" ] || die "release: rpmbuild made no ${devel##*/}"
+  release_check_devel "$devel" "$stage/devel" "$rel"
+
+  cp "$OUT/Image" "$rpm" "$devel" "$dest/"
+  cp "$OUT/config-$rel" "$dest/config"
+  cp "$OUT/System.map-$rel" "$dest/System.map"
+  cp "$OUT/modules-$rel.tar.gz" "$dest/a7s-linux-mainline-$rel-modules.tar.gz"
+  tar -xzOf "$OUT/dtbs-$rel.tar.gz" "$BOARD_DTB" > "$dest/${BOARD_DTB##*/}"
+  # The corresponding source: the kernel.org tarball unchanged, with its
+  # signature. The patches, config and scripts are the tag's source archive.
+  echo "$KERNEL_SHA256  $DL/$TARBALL" | sha256sum -c --quiet - || die "release: $TARBALL does not match the pinned sha256"
+  cp "$DL/$TARBALL" "$DL/$SIGNATURE" "$dest/"
+  release_kernel_id "$dest" "$rel" > "$dest/KERNEL-ID"
+  (cd "$dest" && find . -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS)
+  rm -rf "$stage"
+  log "release: $(wc -l < "$dest/SHA256SUMS") files in $dest"
 }
 
 # Sourced: the settings and functions only, no stage.
@@ -483,7 +860,8 @@ stages=("$@")
 preflight "${stages[@]}"
 for s in "${stages[@]}"; do
   case "$s" in
-    version|fetch|verify|prepare|config|build|package) "stage_$s" ;;
+    version|tag-version|fetch|verify|prepare|config|savedefconfig|build|package|release)
+      "stage_${s//-/_}" ;;
     *) die "unknown stage: $s" ;;
   esac
 done

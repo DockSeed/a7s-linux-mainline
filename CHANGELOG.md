@@ -1,0 +1,43 @@
+<!--
+SPDX-License-Identifier: GPL-2.0-only
+-->
+# Changelog
+
+Notable changes, one section per release. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+A tag is named `v<kernel version>-T<n>` for a test build or
+`v<kernel version>-R<n>` for a release, for example `v7.3.0-R1`: the
+version of the mainline kernel the recipe builds, as `uname -r` begins
+(7.3 is `7.3.0`), a letter and a counter that starts again at 1 with each
+new kernel version. Pushing such a tag builds it; the text of the draft
+release is the section below with the same name.
+
+## [Unreleased]
+
+### Added
+
+- Releases: a tag builds the kernel on GitHub Actions and attaches it to a
+  draft release, as loose files and as the RPM `kernel-a7s` for Fedora
+  (README.md, "Releases").
+- The RPM `kernel-a7s-devel` with the headers, configuration,
+  `Module.symvers` and build tools (built for arm64) of the kernel, in
+  `/usr/src/kernels/<release>/`. With it, modules outside the kernel tree
+  can be built on the board, also with DKMS.
+- `config/a7s_defconfig`: the configuration of the kernel, the arm64
+  defconfig of the patched tree plus what Fedora needs (SELinux as the
+  default LSM, nftables, zram, pressure stall information and others),
+  with the reasons in `config/kernel-config.assert`.
+- `./build.sh savedefconfig` writes `config/a7s_defconfig` again, and
+  `./build.sh release` makes the files of a release.
+
+### Changed
+
+- The build uses `config/a7s_defconfig` instead of the arm64 defconfig. The
+  config stage stops when the file is not that defconfig plus the assert
+  list, or when an entry of the list did not take.
+- `out/` also holds `System.map-<release>` and `devel-<release>.tar.gz`, and
+  `MANIFEST` names the configuration, the patches and the commit by their
+  sha256 or id. `./build.sh release` stops if they are not those of the
+  checkout.
+- The builder image has `rpm` for `rpmbuild`.
