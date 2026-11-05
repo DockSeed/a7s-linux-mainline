@@ -590,8 +590,12 @@ package_devel() {  # <release> <destination directory>
   find "$tree/scripts" -name '*.s' -delete
   cp "$OBJ/.config" "$tree/.config"
   check_devel_tree "$tree"
+  # install-extmod-build keeps the modes of the source tree, which are those
+  # of the kernel.org tarball (664/775) or less, depending on how the
+  # container engine unpacked it. The modes here do not depend on it.
   tar -C "$root" --format=gnu --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
-    --owner=0 --group=0 --numeric-owner -cf - src | gzip -n -9 > "$2/devel-$rel.tar.gz"
+    --owner=0 --group=0 --numeric-owner --mode=u+rwX,go=rX \
+    -cf - src | gzip -n -9 > "$2/devel-$rel.tar.gz"
 }
 
 # Everything the board's make runs from scripts/ and tools/ must be an arm64
