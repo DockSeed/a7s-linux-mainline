@@ -15,6 +15,12 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [7.3.0-T1] - 2026-11-05
+
+Test build.
+
 ### Added
 
 - Releases: a tag builds the kernel on GitHub Actions and attaches it to a
