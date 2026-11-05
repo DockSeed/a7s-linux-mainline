@@ -144,18 +144,20 @@ jobs:
           tarball_sha="$(sed -n 's/^tarball.sha256=//p' dist/KERNEL-ID)"
           signature="$(cd dist && ls linux-*.tar.sign)"
           rpm="$(sed -n 's/^rpm=//p' dist/KERNEL-ID)"
+          common="$(sed -n 's/^rpm.common=//p' dist/KERNEL-ID)"
           devel="$(sed -n 's/^rpm.devel=//p' dist/KERNEL-ID)"
           {
             scripts/release-notes.sh "${TAG}"
             sed -e "s/@TARBALL@/${tarball}/g" -e "s/@TARBALL_SHA256@/${tarball_sha}/g" \
-                -e "s/@RPM@/${rpm}/g" -e "s/@DEVEL@/${devel}/g" \
+                -e "s/@RPM@/${rpm}/g" -e "s/@COMMON@/${common}/g" -e "s/@DEVEL@/${devel}/g" \
                 -e "s/@SIGNATURE@/${signature}/g" -e "s/@COMMIT@/${GITHUB_SHA}/g" <<'TEXT'
 
           ## Files
 
           Built by GitHub Actions from commit `@COMMIT@` with `./build.sh` and `./build.sh release`. `KERNEL-ID` has the build identity, `SHA256SUMS` the checksums of every file.
 
-          - `@RPM@`: the kernel for Fedora on the board, with its modules and device trees. It installs beside an older `kernel-a7s`, and `kernel-install` adds it to `/boot`. Fedora's own kernel packages do not boot the board; with this package installed, dnf leaves them out.
+          - `@RPM@`: the kernel for Fedora on the board, with its modules and device trees. It installs beside an older `kernel-a7s`, and `kernel-install` adds it to `/boot`. Fedora's own kernel packages do not boot the board; with this package installed, dnf leaves them out. It needs `@COMMON@`.
+          - `@COMMON@`: the kernel-install plugin that copies the device trees to the ESP and the dnf configuration that leaves Fedora's kernel packages out. They belong to no single kernel, so this package is updated and not installed beside an older one; dnf installs it with `kernel-a7s`.
           - `@DEVEL@`: the headers and build tools of that kernel, for building modules outside the kernel tree on the board, also with DKMS. It needs the same `kernel-a7s`.
           - `Image`, the device tree blob, `config` and `System.map`: the kernel as built.
           - `a7s-linux-mainline-*-modules.tar.gz`: the kernel modules (`lib/modules/<release>/`).

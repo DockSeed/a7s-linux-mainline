@@ -183,10 +183,11 @@ Attached to a release:
 | File | What it is |
 |---|---|
 | `kernel-a7s-<version>-<n>.aarch64.rpm` | the kernel for Fedora: `/usr/lib/modules/<release>/` with `vmlinuz`, `config`, the modules and the device trees; `kernel-install` puts it into `/boot`. It installs beside an older `kernel-a7s`, and dnf leaves Fedora's own kernel packages out, which do not boot the board. A test build is `0.t<n>` and sorts before the release |
+| `kernel-a7s-common-<version>-<n>.noarch.rpm` | the kernel-install plugin that copies the device trees to the ESP and the dnf configuration that leaves Fedora's kernel packages out: the two files that belong to no single kernel. Not installed beside an older one but updated; `kernel-a7s` needs it, so dnf installs it with the kernel |
 | `kernel-a7s-devel-<version>-<n>.aarch64.rpm` | the headers and build tools of that kernel in `/usr/src/kernels/<release>/`, linked from `/usr/lib/modules/<release>/build`. With it, modules outside the kernel tree can be built on the board, also with DKMS. The tools are built for arm64. It needs the same `kernel-a7s` |
 | `Image`, `sun60i-a733-cubie-a7s.dtb`, `config`, `System.map` | the kernel as built |
 | `a7s-linux-mainline-<release>-modules.tar.gz` | `lib/modules/<release>/`, as `modules-<release>.tar.gz` in `out/` |
-| `KERNEL-ID` | `MANIFEST` of the build, the revision, the names of both RPMs and the sha256 of the four loose kernel files |
+| `KERNEL-ID` | `MANIFEST` of the build, the revision, the names of the three RPMs and the sha256 of the four loose kernel files |
 | `linux-<kernel>.tar.xz`, `.tar.sign` | the unchanged kernel tarball from kernel.org and its signature |
 | `SHA256SUMS` | the sha256 of every file above |
 

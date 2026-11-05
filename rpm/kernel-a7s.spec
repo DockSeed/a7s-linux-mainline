@@ -6,6 +6,9 @@
 # kernel-install. Nothing is compiled here. `./build.sh release` builds it and
 # defines kver (the kernel release), rpmver and rpmrel. The subpackage devel
 # holds what builds modules outside the kernel tree, as Fedora's kernel-devel.
+# The subpackage common holds the two files without a kernel release in their
+# path: kernel-a7s is installonly, several of its versions are installed side
+# by side, and a file they share would be a file conflict as soon as it differs.
 
 %global debug_package %{nil}
 %global __os_install_post %{nil}
@@ -33,6 +36,9 @@ Provides:       kernel-core = %{version}-%{release}
 Provides:       kernel-modules = %{version}-%{release}
 Provides:       kernel-modules-core = %{version}-%{release}
 Provides:       installonlypkg(kernel)
+# The files of every kernel-a7s that carry no release in their path. Not
+# bound to this build: a newer one is as good, and dnf updates it normally.
+Requires:       kernel-a7s-common >= %{version}-%{release}
 Requires(pre):  coreutils systemd
 Requires(posttrans): systemd-udev dracut kmod
 
@@ -40,6 +46,16 @@ Requires(posttrans): systemd-udev dracut kmod
 Mainline Linux with the patch series of a7s-linux-mainline for the Radxa
 Cubie A7S (Allwinner A733), configured with config/a7s_defconfig: the arm64
 defconfig plus what Fedora needs. No firmware is included.
+
+%package common
+Summary:        What all installed kernels for the Radxa Cubie A7S share
+BuildArch:      noarch
+
+%description common
+The kernel-install plugin that copies the device trees to the ESP and the dnf
+configuration that leaves Fedora's kernel packages out. Not installonly: the
+files belong to no single kernel, so this package is updated, not added to,
+and kernel-a7s needs it.
 
 %package devel
 Summary:        Headers and build tools for modules of the Linux kernel for the Radxa Cubie A7S
@@ -135,6 +151,8 @@ chmod 0755 %{buildroot}/usr/lib/kernel/install.d/25-a7s-dtb-to-esp.install
 %ghost /boot/dtb-%{kver}
 %ghost %attr(0600, root, root) /boot/initramfs-%{kver}.img
 %ghost %attr(0644, root, root) /boot/config-%{kver}
+
+%files common
 /usr/share/dnf5/libdnf.conf.d/80-kernel-a7s.conf
 /usr/lib/kernel/install.d/25-a7s-dtb-to-esp.install
 

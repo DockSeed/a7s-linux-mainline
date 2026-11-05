@@ -15,7 +15,13 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- A second `kernel-a7s` could not be installed beside the first once the
+  kernel-install plugin or the dnf configuration differed between them
+  (file conflict): both now live in the new RPM `kernel-a7s-common`, which is
+  updated and not installed beside an older one, and `kernel-a7s` holds only
+  paths with the kernel release in their name. `./build.sh release` checks that.
 
 ## [7.3.0-T1] - 2026-11-05
 

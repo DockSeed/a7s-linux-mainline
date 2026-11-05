@@ -22,8 +22,8 @@
 #   build     build Image, device trees and modules
 #   package   collect the results in out/ with MANIFEST and SHA256SUMS
 #   release   after package, with A7S_KERNEL_REVISION: the files of a
-#             release in out/release/, the RPMs kernel-a7s and
-#             kernel-a7s-devel among them
+#             release in out/release/, the RPMs kernel-a7s,
+#             kernel-a7s-common and kernel-a7s-devel among them
 #
 # The source is the unmodified kernel.org tarball plus patches/series,
 # applied at fuzz 0. The build runs out of tree (O=); the source tree is
@@ -691,8 +691,8 @@ stage_package() {
 # A release is made from a finished build (stages up to package) of a
 # committed checkout, with A7S_KERNEL_REVISION from the tag. It writes
 # out/release/: Image, the board's device tree, config, System.map, the
-# modules, KERNEL-ID, the RPMs kernel-a7s and kernel-a7s-devel, the
-# kernel.org tarball and its signature, and SHA256SUMS. Nothing in it is
+# modules, KERNEL-ID, the RPMs kernel-a7s, kernel-a7s-common and
+# kernel-a7s-devel, the kernel.org tarball and its signature, and SHA256SUMS. Nothing in it is
 # compiled again, and nothing in it is firmware.
 
 # MODULE_LICENSE strings that are GPL-compatible (include/linux/license.h).
@@ -752,7 +752,7 @@ release_check_modules() {  # <dir> <release>
   log "release: $n modules, all GPL-compatible"
 }
 
-# kernel-a7s and kernel-a7s-devel from out/, by rpm/kernel-a7s.spec. Same
+# kernel-a7s, kernel-a7s-common and kernel-a7s-devel from out/, by rpm/kernel-a7s.spec. Same
 # input, same bytes: the build time is SOURCE_DATE_EPOCH, file times are
 # clamped to it, the build host is fixed and the payload is compressed by
 # one thread.
@@ -772,13 +772,17 @@ release_build_rpm() {  # <rpm top dir> <release>
 
 # The RPM must be this build: its kernel the Image, its modules those of
 # the tarball (unpacked in <dir>), and no file outside the kernel's paths.
+# kernel-a7s is installonly: every path in it carries the kernel release, or
+# two versions installed side by side would conflict.
 release_check_rpm() {  # <rpm> <dir> <release>
   local r=$1 d=$2 rel=$3 bad
   [ "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$r")" = "$(kernel_base)-$(rpm_release).aarch64" ] \
     || die "release: $r has the wrong version or architecture"
   bad=$(rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -vE \
-    "^(/usr/lib/modules/$rel(/.*)?|/boot/(vmlinuz|config|initramfs|dtb)-$rel(\\.img)?|/usr/share/dnf5/libdnf.conf.d/80-kernel-a7s.conf|/usr/lib/kernel/install.d/25-a7s-dtb-to-esp.install)$" || true)
-  [ -z "$bad" ] || die "release: $r holds files outside the kernel's paths:"$'\n'"$bad"
+    "^(/usr/lib/modules/$rel(/.*)?|/boot/(vmlinuz|config|initramfs|dtb)-$rel(\\.img)?)$" || true)
+  [ -z "$bad" ] || die "release: $r holds files outside the paths of its kernel release (installonly):"$'\n'"$bad"
+  rpm -qp --requires "$r" | grep -qxF "kernel-a7s-common >= $(kernel_base)-$(rpm_release)" \
+    || die "release: $r does not require kernel-a7s-common"
   ! rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -qxF "/usr/lib/modules/$rel/build" \
     || die "release: $r holds the link to the headers, which belongs to kernel-a7s-devel"
   rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" \
@@ -787,6 +791,21 @@ release_check_rpm() {  # <rpm> <dir> <release>
   cmp -s <(rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" | grep '\.ko$' | sed 's# /usr/# /#' | sort -k2) \
          <(cd "$d" && find . -name '*.ko' -print0 | xargs -0 sha256sum | sed 's#  \./# /#' | sort -k2) \
     || die "release: the modules in $r are not those of the module tarball"
+}
+
+# kernel-a7s-common: noarch, these two files and no other, the contents of
+# the spec, and not installonly.
+release_check_common() {  # <rpm>
+  local r=$1 want got
+  [ "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$r")" = "$(kernel_base)-$(rpm_release).noarch" ] \
+    || die "release: $r has the wrong version or architecture"
+  want=$'/usr/lib/kernel/install.d/25-a7s-dtb-to-esp.install\n/usr/share/dnf5/libdnf.conf.d/80-kernel-a7s.conf'
+  got=$(rpm -qp --qf '[%{FILENAMES}\n]' "$r" | sort)
+  [ "$got" = "$want" ] || die "release: $r does not hold exactly its two files:"$'\n'"$got"
+  ! rpm -qp --provides "$r" | grep -q installonlypkg \
+    || die "release: $r is installonly, which its files must not be"
+  [ "$(rpm -qp --qf '[%{FILEMODES:perms} %{FILENAMES}\n]' "$r" | sed -n 's# /usr/lib/kernel/.*##p')" = "-rwxr-xr-x" ] \
+    || die "release: the kernel-install plugin in $r is not executable"
 }
 
 # kernel-a7s-devel must be this build too: the headers tree of the tarball
@@ -817,6 +836,7 @@ release_kernel_id() {  # <dest> <release>
   local f
   cat "$OUT/MANIFEST"
   echo "rpm=$(cd "$1" && ls kernel-a7s-[0-9]*.rpm)"
+  echo "rpm.common=$(cd "$1" && ls kernel-a7s-common-*.rpm)"
   echo "rpm.devel=$(cd "$1" && ls kernel-a7s-devel-*.rpm)"
   for f in Image "${BOARD_DTB##*/}" config System.map; do
     echo "sha256_$f=$(file_sha256 "$1/$f")"
@@ -826,7 +846,7 @@ release_kernel_id() {  # <dest> <release>
 stage_release() {
   release_check_build
   set_build_time
-  local rel dest stage rpm devel
+  local rel dest stage rpm common devel
   rel=$(kernel_release)
   dest="$OUT/release"
   stage="$WORK/release-stage"
@@ -837,11 +857,14 @@ stage_release() {
   rpm="$stage/rpmbuild/RPMS/kernel-a7s-$(kernel_base)-$(rpm_release).aarch64.rpm"
   [ -f "$rpm" ] || die "release: rpmbuild made no ${rpm##*/}"
   release_check_rpm "$rpm" "$stage/modules" "$rel"
+  common="$stage/rpmbuild/RPMS/kernel-a7s-common-$(kernel_base)-$(rpm_release).noarch.rpm"
+  [ -f "$common" ] || die "release: rpmbuild made no ${common##*/}"
+  release_check_common "$common"
   devel="$stage/rpmbuild/RPMS/kernel-a7s-devel-$(kernel_base)-$(rpm_release).aarch64.rpm"
   [ -f "$devel" ] || die "release: rpmbuild made no ${devel##*/}"
   release_check_devel "$devel" "$stage/devel" "$rel"
 
-  cp "$OUT/Image" "$rpm" "$devel" "$dest/"
+  cp "$OUT/Image" "$rpm" "$common" "$devel" "$dest/"
   cp "$OUT/config-$rel" "$dest/config"
   cp "$OUT/System.map-$rel" "$dest/System.map"
   cp "$OUT/modules-$rel.tar.gz" "$dest/a7s-linux-mainline-$rel-modules.tar.gz"
