@@ -15,6 +15,13 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [7.3.0-R1] - 2026-11-06
+
+First release: the recipe of the test build 7.3.0-T2 with the fixes below;
+the sections of T2 and T1 list what it contains.
+
 ### Fixed
 
 - `rpmbuild` warned "File listed twice" for depmod's files (`modules.dep`,
