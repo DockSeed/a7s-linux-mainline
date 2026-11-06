@@ -84,8 +84,11 @@ tar -C %{buildroot}/usr -xzf %{SOURCE4}
 ln -s /usr/src/kernels/%{kver} "$d/build"
 # depmod's output, owned as %ghost as Fedora's kernel owns it: kernel-install
 # writes it at install (50-depmod.install) and removes it at removal. The
-# same names as %ghost in %files.
-rm -f "$d"/modules.{alias,alias.bin,builtin.alias.bin,builtin.bin,dep,dep.bin,devname,softdep,symbols,symbols.bin,weakdep}
+# same names as %ghost in %files. A plain list: %install runs in /bin/sh,
+# which need not know brace expansion.
+for n in alias alias.bin builtin.alias.bin builtin.bin dep dep.bin devname softdep symbols symbols.bin weakdep; do
+  rm -f "$d/modules.$n"
+done
 install -m 0755 %{SOURCE0} "$d/vmlinuz"
 install -m 0644 %{SOURCE1} "$d/config"
 tar -C "$d/dtb" -xzf %{SOURCE2}

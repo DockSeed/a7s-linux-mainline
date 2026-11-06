@@ -15,7 +15,13 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- `rpmbuild` warned "File listed twice" for depmod's files (`modules.dep`,
+  `modules.alias`, ...) in `kernel-a7s`: the spec removed them with a brace
+  expansion, which `/bin/sh` of the builder (dash) does not know, so they
+  stayed in the build root. They are removed now and listed once, as
+  `%ghost`. The contents of the package do not change.
 
 ## [7.3.0-T2] - 2026-11-06
 
