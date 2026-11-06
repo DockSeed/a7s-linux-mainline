@@ -59,6 +59,15 @@ You need a working system on the board and the boot chain from
 [a733-bootchain](https://github.com/DockSeed/a733-bootchain). Keep your
 current kernel: install this one next to it.
 
+On Fedora, a [release](#releases) also comes as RPMs. There is no package
+repository, so dnf does not find `kernel-a7s-common` by itself: install the
+downloaded files together,
+`sudo dnf install ./kernel-a7s-<version>-<n>.aarch64.rpm ./kernel-a7s-common-<version>-<n>.noarch.rpm`,
+plus `./kernel-a7s-devel-<version>-<n>.aarch64.rpm` to build modules on the
+board. The RPMs are not signed; plain `rpm -i` needs `--nosignature`.
+
+On any other system, install the files of a build by hand:
+
 1. Copy `Image` to `/boot/vmlinuz-7.3.0-a7s` and unpack the device trees:
    `sudo mkdir -p /boot/dtbs/7.3.0-a7s` and
    `sudo tar -C /boot/dtbs/7.3.0-a7s -xzf dtbs-7.3.0-a7s.tar.gz`.
@@ -183,7 +192,7 @@ Attached to a release:
 | File | What it is |
 |---|---|
 | `kernel-a7s-<version>-<n>.aarch64.rpm` | the kernel for Fedora: `/usr/lib/modules/<release>/` with `vmlinuz`, `config`, the modules and the device trees; `kernel-install` puts it into `/boot`. It installs beside an older `kernel-a7s`, and dnf leaves Fedora's own kernel packages out, which do not boot the board. A test build is `0.t<n>` and sorts before the release |
-| `kernel-a7s-common-<version>-<n>.noarch.rpm` | the kernel-install plugin that copies the device trees to the ESP and the dnf configuration that leaves Fedora's kernel packages out: the two files that belong to no single kernel. Not installed beside an older one but updated; `kernel-a7s` needs it, so dnf installs it with the kernel |
+| `kernel-a7s-common-<version>-<n>.noarch.rpm` | the kernel-install plugin that copies the device trees to the ESP and the dnf configuration that leaves Fedora's kernel packages out: the two files that belong to no single kernel. Not installed beside an older one but updated; `kernel-a7s` needs it, so name both when installing from downloaded files |
 | `kernel-a7s-devel-<version>-<n>.aarch64.rpm` | the headers and build tools of that kernel in `/usr/src/kernels/<release>/`, linked from `/usr/lib/modules/<release>/build`. With it, modules outside the kernel tree can be built on the board, also with DKMS. The tools are built for arm64. It needs the same `kernel-a7s` |
 | `Image`, `sun60i-a733-cubie-a7s.dtb`, `config`, `System.map` | the kernel as built |
 | `a7s-linux-mainline-<release>-modules.tar.gz` | `lib/modules/<release>/`, as `modules-<release>.tar.gz` in `out/` |

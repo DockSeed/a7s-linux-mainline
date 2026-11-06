@@ -157,7 +157,7 @@ jobs:
           Built by GitHub Actions from commit `@COMMIT@` with `./build.sh` and `./build.sh release`. `KERNEL-ID` has the build identity, `SHA256SUMS` the checksums of every file.
 
           - `@RPM@`: the kernel for Fedora on the board, with its modules and device trees. It installs beside an older `kernel-a7s`, and `kernel-install` adds it to `/boot`. Fedora's own kernel packages do not boot the board; with this package installed, dnf leaves them out. It needs `@COMMON@`.
-          - `@COMMON@`: the kernel-install plugin that copies the device trees to the ESP and the dnf configuration that leaves Fedora's kernel packages out. They belong to no single kernel, so this package is updated and not installed beside an older one; dnf installs it with `kernel-a7s`.
+          - `@COMMON@`: the kernel-install plugin that copies the device trees to the ESP and the dnf configuration that leaves Fedora's kernel packages out. They belong to no single kernel, so this package is updated and not installed beside an older one; there is no package repository, so install both downloaded files together: `dnf install ./@RPM@ ./@COMMON@`.
           - `@DEVEL@`: the headers and build tools of that kernel, for building modules outside the kernel tree on the board, also with DKMS. It needs the same `kernel-a7s`.
           - `Image`, the device tree blob, `config` and `System.map`: the kernel as built.
           - `a7s-linux-mainline-*-modules.tar.gz`: the kernel modules (`lib/modules/<release>/`).
