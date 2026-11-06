@@ -15,6 +15,12 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [7.3.0-T2] - 2026-11-06
+
+Test build.
+
 ### Fixed
 
 - A second `kernel-a7s` could not be installed beside the first once the
