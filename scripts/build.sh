@@ -581,9 +581,10 @@ stage_build() {
 kernel_tarball() { echo "$TAR_PREFIX-$1.tar.gz"; }           # <release>
 headers_tarball() { echo "$TAR_PREFIX-$1-headers.tar.gz"; }  # <release>
 
-# A tarball of <dir>/<entry>: the same bytes for the same input. Names
-# sorted, times SOURCE_DATE_EPOCH, owner root, and modes that do not depend
-# on how the container engine unpacked the kernel tarball (664/775 there).
+# A tarball of <dir>/<entry>, made so that the same input gives the same
+# bytes: names sorted, times SOURCE_DATE_EPOCH, owner root, and modes that
+# do not depend on how the container engine unpacked the kernel tarball
+# (664/775 there).
 tar_reproducible() {  # <dir> <entry> <tarball>
   tar -C "$1" --format=gnu --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
     --owner=0 --group=0 --numeric-owner --mode=u+rwX,go=rX \

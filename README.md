@@ -54,9 +54,11 @@ Both tarballs have the one top directory `a7s-linux-mainline-<release>/`.
 
 You need a working system on the board and the boot chain from
 [a733-bootchain](https://github.com/DockSeed/a733-bootchain). The kernel
-is not tied to a distribution: [INSTALL.md](INSTALL.md) says how to
-install it with U-Boot and extlinux, next to your current kernel, and how
-to go back. The tarball holds the same guide with the release filled in.
+is meant for a distribution that boots the board with U-Boot and extlinux:
+[INSTALL.md](INSTALL.md) says how to install it next to your current
+kernel, and how to go back. Its steps are generic and not tried out on
+every distribution. The tarball holds the same guide with the release
+filled in.
 
 The defconfig builds the NVMe driver, the PCIe PHY and the watchdog as
 modules. With an initramfs that is fine. Without one, for example with
@@ -70,10 +72,12 @@ A7S_CONFIG_FRAGMENT=my.config ./build.sh
 ## Reproducible
 
 The builder image is pinned: base image by digest, packages from a fixed
-Debian snapshot (`build-env/packages-<arch>.lock`). Two builds of the same
-tree give the same `SHA256SUMS`, checked twice on each architecture.
-x86_64 (cross compiler) and arm64 (native compiler) hosts give different
-results: the compiler name ends up in the kernel config.
+Debian snapshot (`build-env/packages-<arch>.lock`). The build time comes
+from the kernel.org tarball, and the tarballs are written with sorted
+names, fixed times, owners and modes, so that two builds of the same tree
+give the same `SHA256SUMS`; compare them to check. x86_64 (cross compiler)
+and arm64 (native compiler) hosts give different results: the compiler
+name ends up in the kernel config.
 
 ## Clean up
 
@@ -155,7 +159,7 @@ Attached to a release:
 
 | File | What it is |
 |---|---|
-| `a7s-linux-mainline-<release>.tar.gz` | the kernel for any distribution, as in `out/` (see [Output](#output)); [INSTALL.md](INSTALL.md) in it says how to install it |
+| `a7s-linux-mainline-<release>.tar.gz` | the kernel for a distribution that boots the board with U-Boot and extlinux, as in `out/` (see [Output](#output)); [INSTALL.md](INSTALL.md) in it says how to install it |
 | `a7s-linux-mainline-<release>-headers.tar.gz` | the headers tree of the same build, as in `out/`, for modules outside the kernel tree, also with DKMS |
 | `Image`, `sun60i-a733-cubie-a7s.dtb`, `config`, `System.map` | the same files as in the kernel tarball |
 | `KERNEL-ID` | `MANIFEST` of the build, the revision, the names of the two tarballs and the sha256 of the four loose kernel files |
@@ -180,8 +184,8 @@ A7S_KERNEL_REVISION=t1 ./build.sh
 A7S_KERNEL_REVISION=t1 ./build.sh release
 ```
 
-`out/release/` holds the same files: the build time is the kernel.org
-tarball's.
+`out/release/` should then hold the same files: the build time is the
+kernel.org tarball's.
 
 ## Checking the patches
 

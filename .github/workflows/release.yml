@@ -155,7 +155,7 @@ jobs:
 
           Built by GitHub Actions from commit `@COMMIT@` with `./build.sh` and `./build.sh release`. `KERNEL-ID` has the build identity, `SHA256SUMS` the checksums of every file.
 
-          - `@KERNEL@`: the kernel for any distribution that boots the board with U-Boot and extlinux: `Image`, the device trees, the modules (`lib/modules/<release>/`), `config`, `System.map` and `INSTALL.md`, which says how to install it.
+          - `@KERNEL@`: the kernel for a distribution that boots the board with U-Boot and extlinux: `Image`, the device trees, the modules (`lib/modules/<release>/`), `config`, `System.map` and `INSTALL.md`, which says how to install it.
           - `@HEADERS@`: the headers, configuration, `Module.symvers` and build tools of the same build, as `lib/modules/<release>/build/`, for building modules outside the kernel tree on the board, also with DKMS. The tools are built for arm64.
           - `Image`, the device tree blob, `config` and `System.map`: the same files as in the tarball.
 
@@ -164,7 +164,7 @@ jobs:
           - The recipe (patches, configuration, build scripts) is the source archive of this tag that GitHub attaches to the release, commit `@COMMIT@`.
           - `@TARBALL@`: the unchanged kernel tarball from cdn.kernel.org, sha256 `@TARBALL_SHA256@`, and its signature `@SIGNATURE@` from kernel.org, unchanged (made over the uncompressed tar). `./build.sh verify` has checked it against the kernel.org keys in `keys/`.
 
-          The same build from the source, `./build.sh` and `./build.sh release` in the tagged checkout with the revision of the tag on x86_64, gives the same files.
+          The same build from the source, `./build.sh` and `./build.sh release` in the tagged checkout with the revision of the tag on x86_64, is meant to give the same files; compare `SHA256SUMS` to check.
 
           ## Not included
 

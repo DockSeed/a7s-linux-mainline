@@ -19,12 +19,12 @@ Nothing yet.
 
 ## [7.3.3-T1] - 2026-11-08
 
-Test build: the first build for Linux 7.3.3, as tarballs for any
-distribution instead of RPMs.
+Test build: the first build for Linux 7.3.3, as tarballs for distributions
+that boot the board with U-Boot and extlinux, instead of RPMs.
 
 ### Added
 
-- `INSTALL.md`: how to install the kernel on any distribution that boots
+- `INSTALL.md`: how to install the kernel on a distribution that boots
   the board with U-Boot and extlinux, and how to go back. The kernel
   tarball holds it with the release filled in.
 - AppArmor beside SELinux. Only one of them starts: SELinux unless `lsm=` on

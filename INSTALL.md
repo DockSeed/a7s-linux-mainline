@@ -1,13 +1,15 @@
 # Installing the kernel
 
-For a system on the Radxa Cubie A7S, of any distribution, that boots with
-U-Boot and extlinux, as with the boot chain from
-[a733-bootchain](https://github.com/DockSeed/a733-bootchain). Keep your
+For a distribution on the Radxa Cubie A7S that boots the board with U-Boot
+and extlinux, as with the boot chain from
+[a733-bootchain](https://github.com/DockSeed/a733-bootchain). The steps are
+generic: they use no tool of one distribution beyond its initramfs
+generator, and they are not tried out on every distribution. Keep your
 current kernel and its entry: install this one next to it.
 
-`<release>` is the kernel release, as `uname -r` will show it: the name of
-the directory in `lib/modules/`. Unpack the tarball as a normal user and run
-the commands as root in the directory it made,
+This is the kernel release `<release>`; `uname -r` shows it once the kernel
+runs, and it names the directory in `lib/modules/`. Unpack the tarball as a
+normal user and run the commands as root in the directory it made,
 `a7s-linux-mainline-<release>/`.
 
 1. The kernel, its configuration, symbol table and device trees:
@@ -27,19 +29,34 @@ the commands as root in the directory it made,
    depmod <release>
    ```
 
+   If `/lib/modules/<release>` exists already, from an earlier try of the
+   same release, remove it first (`rm -rf /lib/modules/<release>`, after
+   checking the name): `cp -r` would otherwise put the new copy inside the
+   old one.
+
    `/lib/modules` is the right place with and without a merged `/usr`. Do
    not unpack the tarball into `/`: its `lib/` would replace the `/lib`
    symlink.
 
-3. An initramfs, made with your distribution's tool for this release, for
-   example `dracut --kver <release>`, `update-initramfs -c -k <release>` or
-   `mkinitcpio -k <release> -g /boot/initramfs-<release>.img`. It is needed
-   for a root file system on NVMe: the NVMe driver, the PCIe PHY and the
-   watchdog are modules. The drivers for SD and eMMC and ext4 are built in,
-   so a root file system there boots without one.
+3. An initramfs, made with your distribution's tool for this release.
+   Note the file it writes, for the `initrd` line in step 4:
 
-4. An entry in `/boot/extlinux/extlinux.conf`, with the initramfs that step
-   3 wrote and your root file system:
+   | Tool | Command | File |
+   |---|---|---|
+   | dracut | `dracut /boot/initramfs-<release>.img <release>` | `/boot/initramfs-<release>.img` |
+   | initramfs-tools | `update-initramfs -c -k <release>` | `/boot/initrd.img-<release>` |
+   | mkinitcpio | `mkinitcpio -k <release> -g /boot/initramfs-<release>.img` | `/boot/initramfs-<release>.img` |
+
+   It is needed for a root file system on NVMe: the NVMe driver, the PCIe
+   PHY and the watchdog are modules. It is also needed for a root file
+   system on btrfs, which is a module too; XFS and F2FS are not built at
+   all, so a root file system on them does not boot with this kernel. The
+   drivers for SD and eMMC and ext4 are built in, so an ext4 root file
+   system there boots without an initramfs.
+
+4. An entry in `/boot/extlinux/extlinux.conf`, with your root file system
+   and, in the `initrd` line, the file step 3 wrote (here dracut's or
+   mkinitcpio's; with initramfs-tools `/boot/initrd.img-<release>`):
 
    ```
    label a7s-<release>
@@ -74,8 +91,9 @@ The watchdog matters: the boot chain starts it, and the board resets about
 the initramfs or the root file system).
 
 Booting through EFI instead (grub or systemd-boot, started by U-Boot) is
-left to your distribution's tools. U-Boot then takes the device tree from
-the EFI system partition: copy `dtbs/.` to `dtb/` on it.
+left to your distribution's tools. U-Boot then passes on a device tree it
+loaded itself: copy the one from `dtbs/` to where your U-Boot build looks
+for it.
 
 ## Modules outside the kernel tree
 
@@ -87,6 +105,9 @@ board. Unpack it in the same place as the kernel tarball and copy the tree:
 ```
 cp -r lib/modules/<release>/build /lib/modules/<release>/
 ```
+
+As in step 2, remove an existing `/lib/modules/<release>/build` first, or
+the new copy lands inside it.
 
 `make -C /lib/modules/<release>/build M=$PWD` and DKMS find it there.
 
