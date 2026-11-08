@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# Kernel configuration for the Radxa Cubie A7S (Allwinner A733) under Fedora,
-# Linux with patches/series applied. A defconfig in minimal form: the arm64
+# Kernel configuration for the Radxa Cubie A7S (Allwinner A733), Linux with
+# patches/series applied. A defconfig in minimal form: the arm64
 # defconfig of the patched tree plus config/kernel-config.assert, which says
 # what was added and why. Do not edit by hand: change the assert list or an
 # "arm64: defconfig" patch, then write this file again with

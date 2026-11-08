@@ -20,10 +20,10 @@
 #   savedefconfig  write work/a7s_defconfig: the arm64 defconfig of the
 #             patched tree plus config/kernel-config.assert, in minimal form
 #   build     build Image, device trees and modules
-#   package   collect the results in out/ with MANIFEST and SHA256SUMS
+#   package   the kernel tarball and the headers tarball in out/, with
+#             MANIFEST and SHA256SUMS
 #   release   after package, with A7S_KERNEL_REVISION: the files of a
-#             release in out/release/, the RPMs kernel-a7s,
-#             kernel-a7s-common and kernel-a7s-devel among them
+#             release in out/release/
 #
 # The source is the unmodified kernel.org tarball plus patches/series,
 # applied at fuzz 0. The build runs out of tree (O=); the source tree is
@@ -97,8 +97,11 @@ DEFCONFIG_FILE="config/a7s_defconfig"
 ASSERT_FILE="config/kernel-config.assert"
 # The board's device tree, shipped on its own in a release.
 BOARD_DTB="allwinner/sun60i-a733-cubie-a7s.dtb"
-# What a release carries besides the kernel: the RPM is built from this.
-RPM_SPEC="rpm/kernel-a7s.spec"
+# The installation guide, with the kernel release filled in, in the tarball.
+INSTALL_FILE="INSTALL.md"
+# The tarballs and their one top directory, <TAR_PREFIX>-<release>/: the
+# headers tarball unpacks into the same directory as the kernel tarball.
+TAR_PREFIX="a7s-linux-mainline"
 REVISION="${A7S_KERNEL_REVISION:-}"
 LOCALVERSION="${A7S_LOCALVERSION--a7s}"
 
@@ -217,7 +220,7 @@ stage_tools() {  # <stage>
     prepare)      if [ "$RC" = 1 ]; then echo tar gzip patch; else echo tar xz patch; fi ;;
     config|savedefconfig|build) echo make "${CROSS_COMPILE}gcc" flex bison bc perl ;;
     package)      echo make "${CROSS_COMPILE}gcc" tar gzip find readelf ;;
-    release)      echo rpmbuild rpm git tar gzip modinfo sha256sum find readelf ;;
+    release)      echo git tar gzip modinfo sha256sum find readelf ;;
   esac
 }
 
@@ -575,73 +578,84 @@ stage_build() {
     || die "kernel.release is '$rel', expected '$(kernel_release)'"
 }
 
-# The tree for building modules outside the kernel tree, as
-# /usr/src/kernels/<release>/ of kernel-a7s-devel: the kernel's own
+kernel_tarball() { echo "$TAR_PREFIX-$1.tar.gz"; }           # <release>
+headers_tarball() { echo "$TAR_PREFIX-$1-headers.tar.gz"; }  # <release>
+
+# A tarball of <dir>/<entry>: the same bytes for the same input. Names
+# sorted, times SOURCE_DATE_EPOCH, owner root, and modes that do not depend
+# on how the container engine unpacked the kernel tarball (664/775 there).
+tar_reproducible() {  # <dir> <entry> <tarball>
+  tar -C "$1" --format=gnu --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
+    --owner=0 --group=0 --numeric-owner --mode=u+rwX,go=rX \
+    -cf - "$2" | gzip -n -9 > "$3"
+}
+
+# The tree for building modules outside the kernel tree, as <dest>, which is
+# lib/modules/<release>/build/ in the headers tarball: the kernel's own
 # install-extmod-build, which also rebuilds the programs that modpost and
 # the build need (fixdep, modpost, genksyms and others) for arm64 when the
-# builder is not an arm64 host. The result is src/kernels/<release>/ in
-# <dest>/devel-<release>.tar.gz.
-package_devel() {  # <release> <destination directory>
-  local rel=$1 root="$WORK/develroot" tree
-  tree="$root/src/kernels/$rel"
-  rm -rf "$root"
-  kmake run-command KBUILD_RUN_COMMAND="\$(srctree)/scripts/package/install-extmod-build $tree" >/dev/null
+# builder is not an arm64 host.
+package_headers() {  # <destination directory>
+  kmake run-command KBUILD_RUN_COMMAND="\$(srctree)/scripts/package/install-extmod-build $1" >/dev/null
   # The rebuild of the programs leaves an assembler file with the build path.
-  find "$tree/scripts" -name '*.s' -delete
-  cp "$OBJ/.config" "$tree/.config"
-  check_devel_tree "$tree"
-  # install-extmod-build keeps the modes of the source tree, which are those
-  # of the kernel.org tarball (664/775) or less, depending on how the
-  # container engine unpacked it. The modes here do not depend on it.
-  tar -C "$root" --format=gnu --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
-    --owner=0 --group=0 --numeric-owner --mode=u+rwX,go=rX \
-    -cf - src | gzip -n -9 > "$2/devel-$rel.tar.gz"
+  find "$1/scripts" -name '*.s' -delete
+  cp "$OBJ/.config" "$1/.config"
+  check_headers_tree "$1"
 }
 
 # Everything the board's make runs from scripts/ and tools/ must be an arm64
-# program, not one of the builder; and no link may point out of the tree.
-check_devel_tree() {  # <tree>
+# program, not one of the builder; no link may point out of the tree; and no
+# module may be in it, or depmod would take it for one of the kernel's.
+check_headers_tree() {  # <tree>
   local f n=0 bad=""
   while IFS= read -r -d '' f; do
     [ "$(head -c4 "$f")" = $'\177ELF' ] || continue
     n=$((n + 1))
     readelf -h "$f" | grep -q 'Machine:.*AArch64' || bad="$bad"$'\n'"  ${f#"$1/"}"
   done < <(find "$1" -type f \( -path '*/scripts/*' -o -path '*/tools/*' \) -print0 | sort -z)
-  [ "$n" -gt 0 ] || die "devel: no program in scripts/ of the headers tree"
-  [ -z "$bad" ] || die "devel: programs not built for arm64:$bad"
+  [ "$n" -gt 0 ] || die "headers: no program in scripts/ of the headers tree"
+  [ -z "$bad" ] || die "headers: programs not built for arm64:$bad"
   bad=$(find "$1" -type l -lname '/*' -printf '  %P -> %l\n')
-  [ -z "$bad" ] || die "devel: links to absolute paths:"$'\n'"$bad"
+  [ -z "$bad" ] || die "headers: links to absolute paths:"$'\n'"$bad"
+  bad=$(find "$1" -name '*.ko' -printf '  %P\n')
+  [ -z "$bad" ] || die "headers: modules in the headers tree:"$'\n'"$bad"
   for f in .config Module.symvers include/generated/utsrelease.h include/config/auto.conf \
            arch/arm64/include/generated scripts/mod/modpost; do
-    [ -e "$1/$f" ] || die "devel: $f is missing in the headers tree"
+    [ -e "$1/$f" ] || die "headers: $f is missing in the headers tree"
   done
-  log "devel: $n programs in scripts/ and tools/, all arm64"
+  log "headers: $n programs in scripts/ and tools/, all arm64"
 }
 
+# out/ gets two tarballs, both with the one top directory
+# a7s-linux-mainline-<release>/:
+#   a7s-linux-mainline-<release>.tar.gz          Image, dtbs/ (the allwinner
+#       device trees), lib/modules/<release>/, config, System.map, INSTALL.md
+#   a7s-linux-mainline-<release>-headers.tar.gz  lib/modules/<release>/build/
 stage_package() {
   set_build_time
-  local rel mod
+  local rel top root kern
   rel=$(cat "$OBJ/include/config/kernel.release")
+  top="$TAR_PREFIX-$rel"
+  root="$WORK/pkgroot"
+  kern="$root/kernel/$top"
   # Clear out/ only when it is ours: empty, or holding a previous MANIFEST.
   if [ -n "$(ls -A "$OUT")" ] && [ ! -f "$OUT/MANIFEST" ]; then
     die "$OUT is not empty and holds no MANIFEST -- refusing to clear it (set A7S_OUT)"
   fi
-  rm -rf "${OUT:?}"/* "$WORK/modroot"
-  cp "$OBJ/arch/arm64/boot/Image" "$OUT/Image"
-  cp "$OBJ/.config" "$OUT/config-$rel"
-  cp "$OBJ/System.map" "$OUT/System.map-$rel"
-  # Every result is a single file, so SHA256SUMS covers exactly what out/
-  # holds.
+  rm -rf "${OUT:?}"/* "$root"
+  mkdir -p "$kern/dtbs" "$root/headers/$top/lib/modules/$rel"
+  cp "$OBJ/arch/arm64/boot/Image" "$kern/Image"
+  cp "$OBJ/.config" "$kern/config"
+  cp "$OBJ/System.map" "$kern/System.map"
   (cd "$OBJ/arch/arm64/boot/dts" && find allwinner -name '*.dtb' -print0 | sort -z \
-    | tar --format=gnu --null -T - --mtime="@$SOURCE_DATE_EPOCH" \
-        --owner=0 --group=0 --numeric-owner -cf -) | gzip -n -9 > "$OUT/dtbs-$rel.tar.gz"
-
-  kmake INSTALL_MOD_PATH="$WORK/modroot" modules_install >/dev/null
-  mod="$WORK/modroot/lib/modules/$rel"
-  rm -f "$mod/build" "$mod/source"
-  tar -C "$WORK/modroot" --format=gnu --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
-    --owner=0 --group=0 --numeric-owner -cf - lib | gzip -n -9 > "$OUT/modules-$rel.tar.gz"
-  package_devel "$rel" "$OUT"
+    | xargs -0 cp --parents -t "$kern/dtbs")
+  [ -f "$kern/dtbs/$BOARD_DTB" ] || die "the build made no $BOARD_DTB"
+  sed "s/<release>/$rel/g" "$TOP/$INSTALL_FILE" > "$kern/INSTALL.md"
+  kmake INSTALL_MOD_PATH="$kern" modules_install >/dev/null
+  rm -f "$kern/lib/modules/$rel/build" "$kern/lib/modules/$rel/source"
+  package_headers "$root/headers/$top/lib/modules/$rel/build"
+  tar_reproducible "$root/kernel" "$top" "$OUT/$(kernel_tarball "$rel")"
+  tar_reproducible "$root/headers" "$top" "$OUT/$(headers_tarball "$rel")"
 
   {
     echo "kernel=$KERNEL_VERSION"
@@ -677,35 +691,30 @@ stage_package() {
 
   # No build path may survive into anything we ship. A leaked path always
   # names something below $WORK, so the pattern ends in a slash: bare "/work"
-  # also matches kernel strings such as "mm/workingset.c".
+  # also matches kernel strings such as "mm/workingset.c". The tarballs are
+  # compressed: their trees are checked before they go.
   local leak
-  leak=$(grep -rlaF "$WORK/" "$OUT" "$WORK/modroot" "$WORK/develroot" "$OBJ/vmlinux" || true)
+  leak=$(grep -rlaF "$WORK/" "$OUT" "$root" "$OBJ/vmlinux" || true)
   [ -z "$leak" ] || die "build paths leak into: $leak"
   check_source_unchanged
-  # The modules and the headers tree are in their tarballs now.
-  rm -rf "$WORK/modroot" "$WORK/develroot"
+  # The trees are in their tarballs now.
+  rm -rf "$root"
   log "out: $(wc -l < "$OUT/SHA256SUMS") files, kernel $rel"
 }
 
 # --- release ----------------------------------------------------------------
 # A release is made from a finished build (stages up to package) of a
 # committed checkout, with A7S_KERNEL_REVISION from the tag. It writes
-# out/release/: Image, the board's device tree, config, System.map, the
-# modules, KERNEL-ID, the RPMs kernel-a7s, kernel-a7s-common and
-# kernel-a7s-devel, the kernel.org tarball and its signature, and SHA256SUMS. Nothing in it is
-# compiled again, and nothing in it is firmware.
+# out/release/: the kernel tarball and the headers tarball of out/, Image,
+# the board's device tree, config and System.map from the kernel tarball,
+# KERNEL-ID, the kernel.org tarball and its signature, and SHA256SUMS.
+# Nothing in it is compiled again, and nothing in it is firmware.
 
 # MODULE_LICENSE strings that are GPL-compatible (include/linux/license.h).
 GPL_LICENSES='GPL|GPL v2|GPL and additional rights|Dual BSD/GPL|Dual MIT/GPL|Dual MPL/GPL'
 
 manifest_get() { sed -n "s/^$1=//p" "$OUT/MANIFEST"; }
 file_sha256() { sha256sum < "$1" | cut -d' ' -f1; }
-
-# The RPM's release: r<n> is <n>; a test build t<n> is 0.t<n>, which sorts
-# before release 1 of the same kernel version.
-rpm_release() {
-  case "$REVISION" in r*) echo "${REVISION#r}" ;; t*) echo "0.$REVISION" ;; esac
-}
 
 # out/ must be the build of this checkout as committed, with no switch
 # that changes the output.
@@ -734,110 +743,52 @@ release_check_build() {
     || die "release: out/ was built from commit '$(manifest_get commit)', this checkout is at $(checkout_commit)"
 }
 
-# The modules of the tarball, unpacked to <dir>: nothing but modules and
-# depmod's files, each module with a GPL-compatible licence.
-release_check_modules() {  # <dir> <release>
-  local d=$1 rel=$2 bad n=0 ko lic
-  tar -C "$d" -xzf "$OUT/modules-$rel.tar.gz"
-  bad=$(cd "$d" && find . ! -type d ! -path "./lib/modules/$rel/*.ko" ! -path "./lib/modules/$rel/modules.*")
-  [ -z "$bad" ] || die "release: the module tarball holds more than modules:"$'\n'"$bad"
+# The kernel tarball, unpacked to <dir>: its one top directory with the
+# kernel, its configuration and symbol table, the guide, device trees, and
+# modules with depmod's files, each module with a GPL-compatible licence.
+release_check_kernel() {  # <dir> <release>
+  local d=$1 rel=$2 top="$TAR_PREFIX-$2" bad n=0 ko lic
+  tar -C "$d" -xzf "$OUT/$(kernel_tarball "$rel")"
+  bad=$(cd "$d" && find . ! -type d ! -path "./$top/lib/modules/$rel/*.ko" \
+        ! -path "./$top/lib/modules/$rel/modules.*" ! -path "./$top/dtbs/allwinner/*.dtb" \
+        ! -path "./$top/Image" ! -path "./$top/config" ! -path "./$top/System.map" \
+        ! -path "./$top/INSTALL.md")
+  [ -z "$bad" ] || die "release: the kernel tarball holds more than the kernel, device trees and modules:"$'\n'"$bad"
+  [ "$(cd "$d" && find . -mindepth 1 -maxdepth 1)" = "./$top" ] \
+    || die "release: the kernel tarball has another top directory than $top"
+  [ -f "$d/$top/dtbs/$BOARD_DTB" ] || die "release: the kernel tarball has no $BOARD_DTB"
   bad=""
   while IFS= read -r -d '' ko; do
     lic=$(modinfo -F license "$ko" | head -n1)
     printf '%s\n' "$lic" | grep -qxE "$GPL_LICENSES" || bad="$bad"$'\n'"  ${ko#"$d/"}: '$lic'"
     n=$((n + 1))
   done < <(find "$d" -name '*.ko' -print0 | sort -z)
-  [ "$n" -gt 0 ] || die "release: no module in the tarball"
+  [ "$n" -gt 0 ] || die "release: no module in the kernel tarball"
   [ -z "$bad" ] || die "release: modules without a GPL-compatible licence:$bad"
   log "release: $n modules, all GPL-compatible"
 }
 
-# kernel-a7s, kernel-a7s-common and kernel-a7s-devel from out/, by rpm/kernel-a7s.spec. Same
-# input, same bytes: the build time is SOURCE_DATE_EPOCH, file times are
-# clamped to it, the build host is fixed and the payload is compressed by
-# one thread.
-release_build_rpm() {  # <rpm top dir> <release>
-  rm -rf "$1"
-  rpmbuild -bb --quiet --target aarch64 \
-    --define "_topdir $1" --define "_sourcedir $OUT" --define "_rpmdir $1/RPMS" \
-    --define "_rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
-    --define "kver $2" --define "rpmver $(kernel_base)" --define "rpmrel $(rpm_release)" \
-    --define "_buildhost $KBUILD_BUILD_HOST" \
-    --define "source_date_epoch_from_changelog 0" \
-    --define "use_source_date_epoch_as_buildtime 1" \
-    --define "build_mtime_policy clamp_to_source_date_epoch" \
-    --define "_binary_payload w19.zstdio" \
-    "$TOP/$RPM_SPEC" >/dev/null || die "release: rpmbuild failed"
-}
-
-# The RPM must be this build: its kernel the Image, its modules those of
-# the tarball (unpacked in <dir>), and no file outside the kernel's paths.
-# kernel-a7s is installonly: every path in it carries the kernel release, or
-# two versions installed side by side would conflict.
-release_check_rpm() {  # <rpm> <dir> <release>
-  local r=$1 d=$2 rel=$3 bad
-  [ "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$r")" = "$(kernel_base)-$(rpm_release).aarch64" ] \
-    || die "release: $r has the wrong version or architecture"
-  bad=$(rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -vE \
-    "^(/usr/lib/modules/$rel(/.*)?|/boot/(vmlinuz|config|initramfs|dtb)-$rel(\\.img)?)$" || true)
-  [ -z "$bad" ] || die "release: $r holds files outside the paths of its kernel release (installonly):"$'\n'"$bad"
-  rpm -qp --requires "$r" | grep -qxF "kernel-a7s-common >= $(kernel_base)-$(rpm_release)" \
-    || die "release: $r does not require kernel-a7s-common"
-  ! rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -qxF "/usr/lib/modules/$rel/build" \
-    || die "release: $r holds the link to the headers, which belongs to kernel-a7s-devel"
-  rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" \
-    | grep -qxF "$(file_sha256 "$OUT/Image") /usr/lib/modules/$rel/vmlinuz" \
-    || die "release: the kernel in $r is not out/Image"
-  cmp -s <(rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" | grep '\.ko$' | sed 's# /usr/# /#' | sort -k2) \
-         <(cd "$d" && find . -name '*.ko' -print0 | xargs -0 sha256sum | sed 's#  \./# /#' | sort -k2) \
-    || die "release: the modules in $r are not those of the module tarball"
-}
-
-# kernel-a7s-common: noarch, these two files and no other, the contents of
-# the spec, and not installonly.
-release_check_common() {  # <rpm>
-  local r=$1 want got
-  [ "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$r")" = "$(kernel_base)-$(rpm_release).noarch" ] \
-    || die "release: $r has the wrong version or architecture"
-  want=$'/usr/lib/kernel/install.d/25-a7s-dtb-to-esp.install\n/usr/share/dnf5/libdnf.conf.d/80-kernel-a7s.conf'
-  got=$(rpm -qp --qf '[%{FILENAMES}\n]' "$r" | sort)
-  [ "$got" = "$want" ] || die "release: $r does not hold exactly its two files:"$'\n'"$got"
-  ! rpm -qp --provides "$r" | grep -q installonlypkg \
-    || die "release: $r is installonly, which its files must not be"
-  [ "$(rpm -qp --qf '[%{FILEMODES:perms} %{FILENAMES}\n]' "$r" | sed -n 's# /usr/lib/kernel/.*##p')" = "-rwxr-xr-x" ] \
-    || die "release: the kernel-install plugin in $r is not executable"
-}
-
-# kernel-a7s-devel must be this build too: the headers tree of the tarball
-# (unpacked in <dir>, checked as when it was made) with nothing else, the
-# link to it, and a Requires on the kernel it belongs to.
-release_check_devel() {  # <rpm> <dir> <release>
-  local r=$1 d=$2 rel=$3 bad
-  tar -C "$d" -xzf "$OUT/devel-$rel.tar.gz"
-  check_devel_tree "$d/src/kernels/$rel"
+# The headers tarball, unpacked to <dir>: the headers tree of the same top
+# directory as lib/modules/<release>/build/, checked as when it was made,
+# and nothing else.
+release_check_headers() {  # <dir> <release>
+  local d=$1 rel=$2 top="$TAR_PREFIX-$2" bad
+  tar -C "$d" -xzf "$OUT/$(headers_tarball "$rel")"
+  bad=$(cd "$d" && find . -mindepth 1 ! -path "./$top" ! -path "./$top/lib" \
+        ! -path "./$top/lib/modules" ! -path "./$top/lib/modules/$rel" \
+        ! -path "./$top/lib/modules/$rel/build" ! -path "./$top/lib/modules/$rel/build/*")
+  [ -z "$bad" ] || die "release: the headers tarball holds more than the headers tree:"$'\n'"$bad"
+  check_headers_tree "$d/$top/lib/modules/$rel/build"
   [ -z "$(grep -rlaF "$WORK/" "$d" || true)" ] || die "release: build paths leak into the headers tree"
-  [ "$(rpm -qp --qf '%{VERSION}-%{RELEASE}.%{ARCH}' "$r")" = "$(kernel_base)-$(rpm_release).aarch64" ] \
-    || die "release: $r has the wrong version or architecture"
-  rpm -qp --requires "$r" | grep -qxF "kernel-a7s = $(kernel_base)-$(rpm_release)" \
-    || die "release: $r does not require kernel-a7s of the same version and release"
-  bad=$(rpm -qp --qf '[%{FILENAMES}\n]' "$r" | grep -vE \
-    "^(/usr/src/kernels/$rel(/.*)?|/usr/lib/modules/$rel/build)$" || true)
-  [ -z "$bad" ] || die "release: $r holds files outside the headers tree:"$'\n'"$bad"
-  [ "$(rpm -qp --qf '[%{FILENAMES} %{FILELINKTOS}\n]' "$r" | sed -n "s#^/usr/lib/modules/$rel/build ##p")" = "/usr/src/kernels/$rel" ] \
-    || die "release: $r does not link /usr/lib/modules/$rel/build to /usr/src/kernels/$rel"
-  cmp -s <(rpm -qp --qf '[%{FILEDIGESTS} %{FILENAMES}\n]' "$r" | grep -E '^[0-9a-f]{64} ' | sed 's# /usr/# /#' | sort -k2) \
-         <(cd "$d" && find src -type f -print0 | xargs -0 sha256sum | sed 's#  src/# /src/#' | sort -k2) \
-    || die "release: the files in $r are not those of the headers tarball"
 }
 
-# What the release is: the MANIFEST of the build, the revision, the RPMs and
-# the sha256 of the loose kernel files.
+# What the release is: the MANIFEST of the build, the revision, the
+# tarballs and the sha256 of the loose kernel files.
 release_kernel_id() {  # <dest> <release>
   local f
   cat "$OUT/MANIFEST"
-  echo "rpm=$(cd "$1" && ls kernel-a7s-[0-9]*.rpm)"
-  echo "rpm.common=$(cd "$1" && ls kernel-a7s-common-*.rpm)"
-  echo "rpm.devel=$(cd "$1" && ls kernel-a7s-devel-*.rpm)"
+  echo "kernel.tarball=$(kernel_tarball "$2")"
+  echo "headers.tarball=$(headers_tarball "$2")"
   for f in Image "${BOARD_DTB##*/}" config System.map; do
     echo "sha256_$f=$(file_sha256 "$1/$f")"
   done
@@ -846,29 +797,20 @@ release_kernel_id() {  # <dest> <release>
 stage_release() {
   release_check_build
   set_build_time
-  local rel dest stage rpm common devel
+  local rel top dest stage
   rel=$(kernel_release)
+  top="$TAR_PREFIX-$rel"
   dest="$OUT/release"
   stage="$WORK/release-stage"
   rm -rf "$dest" "$stage"
-  mkdir -p "$dest" "$stage/modules" "$stage/devel"
-  release_check_modules "$stage/modules" "$rel"
-  release_build_rpm "$stage/rpmbuild" "$rel"
-  rpm="$stage/rpmbuild/RPMS/kernel-a7s-$(kernel_base)-$(rpm_release).aarch64.rpm"
-  [ -f "$rpm" ] || die "release: rpmbuild made no ${rpm##*/}"
-  release_check_rpm "$rpm" "$stage/modules" "$rel"
-  common="$stage/rpmbuild/RPMS/kernel-a7s-common-$(kernel_base)-$(rpm_release).noarch.rpm"
-  [ -f "$common" ] || die "release: rpmbuild made no ${common##*/}"
-  release_check_common "$common"
-  devel="$stage/rpmbuild/RPMS/kernel-a7s-devel-$(kernel_base)-$(rpm_release).aarch64.rpm"
-  [ -f "$devel" ] || die "release: rpmbuild made no ${devel##*/}"
-  release_check_devel "$devel" "$stage/devel" "$rel"
+  mkdir -p "$dest" "$stage/kernel" "$stage/headers"
+  release_check_kernel "$stage/kernel" "$rel"
+  release_check_headers "$stage/headers" "$rel"
 
-  cp "$OUT/Image" "$rpm" "$common" "$devel" "$dest/"
-  cp "$OUT/config-$rel" "$dest/config"
-  cp "$OUT/System.map-$rel" "$dest/System.map"
-  cp "$OUT/modules-$rel.tar.gz" "$dest/a7s-linux-mainline-$rel-modules.tar.gz"
-  tar -xzOf "$OUT/dtbs-$rel.tar.gz" "$BOARD_DTB" > "$dest/${BOARD_DTB##*/}"
+  cp "$OUT/$(kernel_tarball "$rel")" "$OUT/$(headers_tarball "$rel")" "$dest/"
+  # The loose files are those of the kernel tarball.
+  cp "$stage/kernel/$top/Image" "$stage/kernel/$top/config" "$stage/kernel/$top/System.map" "$dest/"
+  cp "$stage/kernel/$top/dtbs/$BOARD_DTB" "$dest/${BOARD_DTB##*/}"
   # The corresponding source: the kernel.org tarball unchanged, with its
   # signature. The patches, config and scripts are the tag's source archive.
   echo "$KERNEL_SHA256  $DL/$TARBALL" | sha256sum -c --quiet - || die "release: $TARBALL does not match the pinned sha256"

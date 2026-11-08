@@ -65,9 +65,10 @@ line CONFIG_EXTRA_FIRMWARE=""
 # build time: two builds would differ.
 line # CONFIG_SECURITY_LOCKDOWN_LSM is not set
 
-# --- Fedora ----------------------------------------------------------------------
-# Fedora boots the kernel through grub, an EFI application that U-Boot
-# starts, and from an initramfs that dracut builds.
+# --- Distributions -------------------------------------------------------------
+# What a general-purpose distribution expects of the kernel. Booting through
+# grub or systemd-boot needs EFI, as an EFI application that U-Boot starts;
+# an initramfs (dracut, initramfs-tools, mkinitcpio) needs BLK_DEV_INITRD.
 y EFI
 y BLK_DEV_INITRD
 
@@ -108,9 +109,10 @@ y FW_LOADER_COMPRESS
 y FW_LOADER_COMPRESS_XZ
 y FW_LOADER_COMPRESS_ZSTD
 
-# SELinux, the default LSM: Fedora runs it enforcing and labels its file
-# systems for it. The LSM order is Fedora's; without it SELinux would be
-# built but not started. Names of LSMs that are not built are skipped.
+# SELinux, the default LSM: Fedora and its relatives run it enforcing and
+# label their file systems for it. The LSM order is Fedora's; without it
+# SELinux would be built but not started. Names of LSMs that are not built
+# are skipped.
 y SECURITY_NETWORK
 y SECURITY_SELINUX
 y DEFAULT_SECURITY_SELINUX

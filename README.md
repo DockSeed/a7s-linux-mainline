@@ -41,49 +41,22 @@ Log in again after installing it, otherwise `podman build` fails with
 
 | File | Contents |
 |---|---|
-| `Image` | the kernel |
-| `dtbs-<release>.tar.gz` | device trees, incl. `allwinner/sun60i-a733-cubie-a7s.dtb` |
-| `modules-<release>.tar.gz` | `lib/modules/<release>/` |
-| `devel-<release>.tar.gz` | `src/kernels/<release>/`: headers, configuration, `Module.symvers` and build tools for modules outside the kernel tree; the tools are built for arm64 |
-| `config-<release>` | kernel config |
-| `System.map-<release>` | kernel symbol table |
+| `a7s-linux-mainline-<release>.tar.gz` | the kernel: `Image`, `dtbs/` with the device trees, incl. `allwinner/sun60i-a733-cubie-a7s.dtb`, `lib/modules/<release>/`, `config`, `System.map` and [INSTALL.md](INSTALL.md) with the release filled in |
+| `a7s-linux-mainline-<release>-headers.tar.gz` | `lib/modules/<release>/build/`: headers, configuration, `Module.symvers` and build tools for modules outside the kernel tree; the tools are built for arm64 |
 | `MANIFEST` | inputs: kernel, tarball sha256, series, patches and config sha256, commit, toolchain |
 | `SHA256SUMS` | checksums of the files above |
 
+Both tarballs have the one top directory `a7s-linux-mainline-<release>/`.
 `<release>` is `7.3.3-a7s` by default, `7.3.3-a7s-r1` for the release
 `v7.3.3-R1`. Releases also come ready built, see [Releases](#releases).
 
 ## Install
 
 You need a working system on the board and the boot chain from
-[a733-bootchain](https://github.com/DockSeed/a733-bootchain). Keep your
-current kernel: install this one next to it.
-
-On Fedora, a [release](#releases) also comes as RPMs. There is no package
-repository, so dnf does not find `kernel-a7s-common` by itself: install the
-downloaded files together,
-`sudo dnf install ./kernel-a7s-<version>-<n>.aarch64.rpm ./kernel-a7s-common-<version>-<n>.noarch.rpm`,
-plus `./kernel-a7s-devel-<version>-<n>.aarch64.rpm` to build modules on the
-board. The RPMs are not signed; plain `rpm -i` needs `--nosignature`.
-
-On any other system, install the files of a build by hand:
-
-1. Copy `Image` to `/boot/vmlinuz-7.3.3-a7s` and unpack the device trees:
-   `sudo mkdir -p /boot/dtbs/7.3.3-a7s` and
-   `sudo tar -C /boot/dtbs/7.3.3-a7s -xzf dtbs-7.3.3-a7s.tar.gz`.
-2. Unpack the modules. On a merged-/usr system:
-   `sudo tar -C /usr -xzf modules-7.3.3-a7s.tar.gz`. Do not unpack into
-   `/`: the tarball's `lib/` would replace the `/lib` symlink.
-3. Add an entry to `/boot/extlinux/extlinux.conf` and make it the
-   default. Keep your old entry:
-
-   ```
-   default mainline
-   label mainline
-       kernel /boot/vmlinuz-7.3.3-a7s
-       fdt /boot/dtbs/7.3.3-a7s/allwinner/sun60i-a733-cubie-a7s.dtb
-       append root=PARTUUID=<your root> rootwait rw console=ttyS0,115200
-   ```
+[a733-bootchain](https://github.com/DockSeed/a733-bootchain). The kernel
+is not tied to a distribution: [INSTALL.md](INSTALL.md) says how to
+install it with U-Boot and extlinux, next to your current kernel, and how
+to go back. The tarball holds the same guide with the release filled in.
 
 The defconfig builds the NVMe driver, the PCIe PHY and the watchdog as
 modules. With an initramfs that is fine. Without one, for example with
@@ -93,17 +66,6 @@ the root file system on NVMe, build them in:
 printf 'CONFIG_BLK_DEV_NVME=y\nCONFIG_PHY_SUN60I_A733_PCIE_COMBO=y\nCONFIG_SUNXI_WATCHDOG=y\n' > my.config
 A7S_CONFIG_FRAGMENT=my.config ./build.sh
 ```
-
-The watchdog matters: the boot chain starts it, and the board resets
-about 16 s after boot unless Linux takes it over.
-
-**Going back:** set `default` to your old entry again. If the new kernel
-does not come up at all, the boot chain's safe mode helps: after three
-boots that were not marked good, it boots
-`/boot/extlinux/extlinux-fallback.conf` with your old kernel, if you put
-one there. Marking a boot good is the system's job; the a733-bootchain
-README explains how. To remove the kernel, delete its entry, the files
-in `/boot` and `/usr/lib/modules/7.3.3-a7s`.
 
 ## Reproducible
 
@@ -150,12 +112,11 @@ the output.
 
 ## Configuration
 
-The kernel is configured for Fedora on the board.
+The kernel is configured for a general-purpose distribution on the board.
 [config/a7s_defconfig](config/a7s_defconfig) is the arm64 `defconfig` of
 the patched tree (the defconfig patches in the series enable the A7S
-drivers) plus what Fedora needs from the kernel, among it SELinux as the
-default LSM, nftables for firewalld, zram swap and pressure stall
-information. [config/kernel-config.assert](config/kernel-config.assert)
+drivers) plus what such a system needs from the kernel, among it SELinux
+as the default LSM, nftables, zram swap and pressure stall information. [config/kernel-config.assert](config/kernel-config.assert)
 lists these additions and what the board needs, each block with its reason.
 
 The config stage checks that the file is exactly that defconfig plus the
@@ -191,21 +152,20 @@ Attached to a release:
 
 | File | What it is |
 |---|---|
-| `kernel-a7s-<version>-<n>.aarch64.rpm` | the kernel for Fedora: `/usr/lib/modules/<release>/` with `vmlinuz`, `config`, the modules and the device trees; `kernel-install` puts it into `/boot`. It installs beside an older `kernel-a7s`, and dnf leaves Fedora's own kernel packages out, which do not boot the board. A test build is `0.t<n>` and sorts before the release |
-| `kernel-a7s-common-<version>-<n>.noarch.rpm` | the kernel-install plugin that copies the device trees to the ESP and the dnf configuration that leaves Fedora's kernel packages out: the two files that belong to no single kernel. Not installed beside an older one but updated; `kernel-a7s` needs it, so name both when installing from downloaded files |
-| `kernel-a7s-devel-<version>-<n>.aarch64.rpm` | the headers and build tools of that kernel in `/usr/src/kernels/<release>/`, linked from `/usr/lib/modules/<release>/build`. With it, modules outside the kernel tree can be built on the board, also with DKMS. The tools are built for arm64. It needs the same `kernel-a7s` |
-| `Image`, `sun60i-a733-cubie-a7s.dtb`, `config`, `System.map` | the kernel as built |
-| `a7s-linux-mainline-<release>-modules.tar.gz` | `lib/modules/<release>/`, as `modules-<release>.tar.gz` in `out/` |
-| `KERNEL-ID` | `MANIFEST` of the build, the revision, the names of the three RPMs and the sha256 of the four loose kernel files |
+| `a7s-linux-mainline-<release>.tar.gz` | the kernel for any distribution, as in `out/` (see [Output](#output)); [INSTALL.md](INSTALL.md) in it says how to install it |
+| `a7s-linux-mainline-<release>-headers.tar.gz` | the headers tree of the same build, as in `out/`, for modules outside the kernel tree, also with DKMS |
+| `Image`, `sun60i-a733-cubie-a7s.dtb`, `config`, `System.map` | the same files as in the kernel tarball |
+| `KERNEL-ID` | `MANIFEST` of the build, the revision, the names of the two tarballs and the sha256 of the four loose kernel files |
 | `linux-<kernel>.tar.xz`, `.tar.sign` | the unchanged kernel tarball from kernel.org and its signature |
 | `SHA256SUMS` | the sha256 of every file above |
 
 No firmware is part of a release, and `./build.sh release` stops if the
-module tarball holds anything but modules, if a module's licence is not
-GPL-compatible, if an RPM is not this build, if a build tool in
-`kernel-a7s-devel` is not an arm64 program, or if `out/` was built from
-other patches or another commit than the checkout. The kernel tarball and the
-source archive of the tag, which GitHub adds to every release, are the
+kernel tarball holds anything but the kernel, its device trees, modules and
+the files named above, if a module's licence is not GPL-compatible, if the
+headers tarball holds anything but the headers tree or a build tool in it
+is not an arm64 program, or if `out/` was built from other patches or
+another commit than the checkout. The kernel.org tarball and the source
+archive of the tag, which GitHub adds to every release, are the
 corresponding source (GPL-2.0).
 
 To check a release: `sha256sum -c SHA256SUMS`, then build the tagged
@@ -216,8 +176,8 @@ A7S_KERNEL_REVISION=r1 ./build.sh
 A7S_KERNEL_REVISION=r1 ./build.sh release
 ```
 
-`out/release/` holds the same files, the RPMs included: the build time is
-the tarball's, and the RPM is built with it as `SOURCE_DATE_EPOCH`.
+`out/release/` holds the same files: the build time is the kernel.org
+tarball's.
 
 ## Checking the patches
 

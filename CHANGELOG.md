@@ -15,10 +15,32 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+### Added
+
+- `INSTALL.md`: how to install the kernel on any distribution that boots
+  the board with U-Boot and extlinux, and how to go back. The kernel
+  tarball holds it with the release filled in.
+
 ### Changed
 
 - The kernel is Linux 7.3.3 instead of 7.3. The series applies to it
   unchanged; none of its patches is part of 7.3.1 to 7.3.3.
+- The kernel is no longer packaged for one distribution. `out/` and a
+  release hold the tarball `a7s-linux-mainline-<release>.tar.gz` (`Image`,
+  device trees, `lib/modules/<release>/`, `config`, `System.map`,
+  `INSTALL.md`) and the tarball `a7s-linux-mainline-<release>-headers.tar.gz`
+  with the headers tree as `lib/modules/<release>/build/`, for modules
+  outside the kernel tree. They replace `dtbs-`, `modules-` and
+  `devel-<release>.tar.gz` and the loose files in `out/`. A release still
+  carries `Image`, the board's device tree, `config` and `System.map` on
+  their own.
+- The configuration is described for a general-purpose distribution; its
+  content is unchanged.
+
+### Removed
+
+- The RPMs `kernel-a7s`, `kernel-a7s-common` and `kernel-a7s-devel`, with
+  `rpm/kernel-a7s.spec`: no kernel-install plugin, no dnf configuration.
 
 ## [7.3.0-R1] - 2026-11-06
 
