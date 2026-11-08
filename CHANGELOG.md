@@ -15,7 +15,10 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- `INSTALL.md` says to install the initramfs tool first on a system that
+  so far booted without an initramfs.
 
 ## [7.3.3-T1] - 2026-11-08
 

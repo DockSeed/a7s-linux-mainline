@@ -47,6 +47,10 @@ normal user and run the commands as root in the directory it made,
    | initramfs-tools | `update-initramfs -c -k <release>` | `/boot/initrd.img-<release>` |
    | mkinitcpio | `mkinitcpio -k <release> -g /boot/initramfs-<release>.img` | `/boot/initramfs-<release>.img` |
 
+   A system that so far booted without an initramfs may not have the tool
+   installed; install it first (on Debian: `apt update`, then
+   `apt install initramfs-tools`).
+
    It is needed for a root file system on NVMe: the NVMe driver, the PCIe
    PHY and the watchdog are modules. It is also needed for a root file
    system on btrfs, which is a module too; XFS and F2FS are not built at
