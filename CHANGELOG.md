@@ -20,6 +20,8 @@ release is the section below with the same name.
 - `INSTALL.md`: how to install the kernel on any distribution that boots
   the board with U-Boot and extlinux, and how to go back. The kernel
   tarball holds it with the release filled in.
+- AppArmor beside SELinux. Only one of them starts: SELinux unless `lsm=` on
+  the command line says otherwise; INSTALL.md has an example for each.
 
 ### Changed
 
@@ -34,8 +36,9 @@ release is the section below with the same name.
   `devel-<release>.tar.gz` and the loose files in `out/`. A release still
   carries `Image`, the board's device tree, `config` and `System.map` on
   their own.
-- The configuration is described for a general-purpose distribution; its
-  content is unchanged.
+- The configuration is described for a general-purpose distribution.
+  `CONFIG_LSM` is the kernel's own default order for SELinux first instead
+  of Fedora's.
 
 ### Removed
 

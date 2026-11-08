@@ -49,6 +49,19 @@ the commands as root in the directory it made,
        append root=PARTUUID=<your root> rootwait rw console=ttyS0,115200
    ```
 
+   Of SELinux and AppArmor, both built, only one starts: SELinux unless the
+   command line says otherwise. Add the one your distribution uses to
+   `append`, for example:
+
+   ```
+   append root=PARTUUID=<your root> rootwait rw console=ttyS0,115200 lsm=apparmor
+   append root=PARTUUID=<your root> rootwait rw console=ttyS0,115200 lsm=selinux
+   ```
+
+   The first for Debian, Ubuntu and others with AppArmor, the second for
+   Fedora and its relatives. `lsm=` replaces the kernel's LSM order; this
+   kernel builds no other LSM that would need a place in it.
+
    The paths are those on the partition that holds `extlinux.conf`: with a
    separate `/boot` partition, leave out `/boot`. Without an initramfs, leave
    out the `initrd` line. Make the entry the default with

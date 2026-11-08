@@ -116,7 +116,10 @@ The kernel is configured for a general-purpose distribution on the board.
 [config/a7s_defconfig](config/a7s_defconfig) is the arm64 `defconfig` of
 the patched tree (the defconfig patches in the series enable the A7S
 drivers) plus what such a system needs from the kernel, among it SELinux
-as the default LSM, nftables, zram swap and pressure stall information. [config/kernel-config.assert](config/kernel-config.assert)
+and AppArmor, nftables, zram swap and pressure stall information. Of
+SELinux and AppArmor only one starts: SELinux, in the kernel's own default
+order, unless `lsm=` on the command line says otherwise
+([INSTALL.md](INSTALL.md)). [config/kernel-config.assert](config/kernel-config.assert)
 lists these additions and what the board needs, each block with its reason.
 
 The config stage checks that the file is exactly that defconfig plus the

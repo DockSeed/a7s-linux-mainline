@@ -109,15 +109,21 @@ y FW_LOADER_COMPRESS
 y FW_LOADER_COMPRESS_XZ
 y FW_LOADER_COMPRESS_ZSTD
 
-# SELinux, the default LSM: Fedora and its relatives run it enforcing and
-# label their file systems for it. The LSM order is Fedora's; without it
-# SELinux would be built but not started. Names of LSMs that are not built
-# are skipped.
+# SELinux and AppArmor, the two LSMs distributions confine their services
+# with: Fedora and its relatives run SELinux, Debian, Ubuntu and openSUSE
+# AppArmor. Both are exclusive LSMs, so only the first of them in the LSM
+# order starts. The order is the kernel's own default for this choice
+# (security/Kconfig, config LSM), which starts SELinux; "lsm=" on the
+# command line picks AppArmor instead (INSTALL.md). Names of LSMs that are
+# not built are skipped. DEFAULT_SECURITY_SELINUX is the legacy choice
+# that gives this order as the default; without it the choice stays at DAC
+# from the arm64 defconfig, which CONFIG_LSM then overrides.
 y SECURITY_NETWORK
 y SECURITY_SELINUX
+y SECURITY_APPARMOR
 y DEFAULT_SECURITY_SELINUX
 y AUDIT
-line CONFIG_LSM="lockdown,yama,integrity,selinux,bpf,landlock,ipe"
+line CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,selinux,smack,tomoyo,apparmor,ipe,bpf"
 
 # Bluetooth for bluez: LE with credit-based L2CAP (EATT), RFCOMM (serial
 # ports, HFP), BNEP (PAN), HIDP (classic HID), uhid (LE HID) and uinput
