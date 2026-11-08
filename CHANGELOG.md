@@ -15,6 +15,13 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [7.3.3-T1] - 2026-11-08
+
+Test build: the first build for Linux 7.3.3, as tarballs for any
+distribution instead of RPMs.
+
 ### Added
 
 - `INSTALL.md`: how to install the kernel on any distribution that boots

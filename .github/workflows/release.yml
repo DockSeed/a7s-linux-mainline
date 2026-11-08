@@ -2,7 +2,7 @@
 #
 # Build the kernel with ./build.sh and attach it to a release.
 #
-#   git tag v7.3.3-R1 && git push origin v7.3.3-R1
+#   git tag v7.3.3-T1 && git push origin v7.3.3-T1
 #
 # builds the tagged commit (kernel release 7.3.3-a7s-r1 for -R1, 7.3.3-a7s-t1
 # for -T1) and creates a DRAFT release named after the tag, with the

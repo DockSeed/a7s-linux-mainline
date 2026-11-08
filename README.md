@@ -47,8 +47,8 @@ Log in again after installing it, otherwise `podman build` fails with
 | `SHA256SUMS` | checksums of the files above |
 
 Both tarballs have the one top directory `a7s-linux-mainline-<release>/`.
-`<release>` is `7.3.3-a7s` by default, `7.3.3-a7s-r1` for the release
-`v7.3.3-R1`. Releases also come ready built, see [Releases](#releases).
+`<release>` is `7.3.3-a7s` by default, `7.3.3-a7s-t1` for the test build
+`v7.3.3-T1`. Releases also come ready built, see [Releases](#releases).
 
 ## Install
 
@@ -172,11 +172,12 @@ archive of the tag, which GitHub adds to every release, are the
 corresponding source (GPL-2.0).
 
 To check a release: `sha256sum -c SHA256SUMS`, then build the tagged
-commit on x86_64 and compare:
+commit on x86_64 with the revision of the tag (`t1` for `v7.3.3-T1`) and
+compare:
 
 ```
-A7S_KERNEL_REVISION=r1 ./build.sh
-A7S_KERNEL_REVISION=r1 ./build.sh release
+A7S_KERNEL_REVISION=t1 ./build.sh
+A7S_KERNEL_REVISION=t1 ./build.sh release
 ```
 
 `out/release/` holds the same files: the build time is the kernel.org
