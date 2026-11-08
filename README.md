@@ -1,7 +1,7 @@
 # a7s-linux-mainline
 
 Linux kernel patches for the **Radxa Cubie A7S** (Allwinner A733), on top
-of mainline Linux 7.3, and a script that builds the kernel from them.
+of Linux 7.3.3, and a script that builds the kernel from them.
 
 **What it is:** a kernel you build yourself and install on a system that
 already runs on the board. It goes together with the boot chain from
@@ -50,8 +50,8 @@ Log in again after installing it, otherwise `podman build` fails with
 | `MANIFEST` | inputs: kernel, tarball sha256, series, patches and config sha256, commit, toolchain |
 | `SHA256SUMS` | checksums of the files above |
 
-`<release>` is `7.3.0-a7s` by default, `7.3.0-a7s-r1` for the release
-`v7.3.0-R1`. Releases also come ready built, see [Releases](#releases).
+`<release>` is `7.3.3-a7s` by default, `7.3.3-a7s-r1` for the release
+`v7.3.3-R1`. Releases also come ready built, see [Releases](#releases).
 
 ## Install
 
@@ -68,11 +68,11 @@ board. The RPMs are not signed; plain `rpm -i` needs `--nosignature`.
 
 On any other system, install the files of a build by hand:
 
-1. Copy `Image` to `/boot/vmlinuz-7.3.0-a7s` and unpack the device trees:
-   `sudo mkdir -p /boot/dtbs/7.3.0-a7s` and
-   `sudo tar -C /boot/dtbs/7.3.0-a7s -xzf dtbs-7.3.0-a7s.tar.gz`.
+1. Copy `Image` to `/boot/vmlinuz-7.3.3-a7s` and unpack the device trees:
+   `sudo mkdir -p /boot/dtbs/7.3.3-a7s` and
+   `sudo tar -C /boot/dtbs/7.3.3-a7s -xzf dtbs-7.3.3-a7s.tar.gz`.
 2. Unpack the modules. On a merged-/usr system:
-   `sudo tar -C /usr -xzf modules-7.3.0-a7s.tar.gz`. Do not unpack into
+   `sudo tar -C /usr -xzf modules-7.3.3-a7s.tar.gz`. Do not unpack into
    `/`: the tarball's `lib/` would replace the `/lib` symlink.
 3. Add an entry to `/boot/extlinux/extlinux.conf` and make it the
    default. Keep your old entry:
@@ -80,8 +80,8 @@ On any other system, install the files of a build by hand:
    ```
    default mainline
    label mainline
-       kernel /boot/vmlinuz-7.3.0-a7s
-       fdt /boot/dtbs/7.3.0-a7s/allwinner/sun60i-a733-cubie-a7s.dtb
+       kernel /boot/vmlinuz-7.3.3-a7s
+       fdt /boot/dtbs/7.3.3-a7s/allwinner/sun60i-a733-cubie-a7s.dtb
        append root=PARTUUID=<your root> rootwait rw console=ttyS0,115200
    ```
 
@@ -103,7 +103,7 @@ boots that were not marked good, it boots
 `/boot/extlinux/extlinux-fallback.conf` with your old kernel, if you put
 one there. Marking a boot good is the system's job; the a733-bootchain
 README explains how. To remove the kernel, delete its entry, the files
-in `/boot` and `/usr/lib/modules/7.3.0-a7s`.
+in `/boot` and `/usr/lib/modules/7.3.3-a7s`.
 
 ## Reproducible
 
@@ -175,7 +175,7 @@ the host (see `stage_config` in `scripts/build.sh`).
 
 ## Releases
 
-A release is named `v<version>-R<n>` (`v7.3.0-R1`), a test build
+A release is named `v<version>-R<n>` (`v7.3.3-R1`), a test build
 `v<version>-T<n>`; `<version>` is the kernel version as `uname -r` begins.
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds the
 tagged commit with `./build.sh` and `./build.sh release` in the same pinned

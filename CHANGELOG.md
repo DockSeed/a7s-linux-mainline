@@ -15,7 +15,10 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- The kernel is Linux 7.3.3 instead of 7.3. The series applies to it
+  unchanged; none of its patches is part of 7.3.1 to 7.3.3.
 
 ## [7.3.0-R1] - 2026-11-06
 
