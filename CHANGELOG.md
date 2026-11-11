@@ -17,6 +17,10 @@ release is the section below with the same name.
 
 ### Changed
 
+- The kernel is Linux 7.3.4 instead of 7.3.3. The series applies to it
+  unchanged; none of its patches is part of 7.3.4. Two patches are
+  exported again from the applied tree: only their index lines and, for
+  btusb, the line numbers of the hunk change.
 - `INSTALL.md` says to install the initramfs tool first on a system that
   so far booted without an initramfs.
 

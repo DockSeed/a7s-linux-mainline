@@ -98,7 +98,7 @@ index 218cfe5bc4ac..a5f651ef3266 100644
  #endif /* CONFIG_OF_GPIO */
  
 diff --git a/drivers/gpio/gpiolib.c b/drivers/gpio/gpiolib.c
-index c0394c7d6279..51c46ad9af16 100644
+index 226ed5b8d444..bc8646cc0500 100644
 --- a/drivers/gpio/gpiolib.c
 +++ b/drivers/gpio/gpiolib.c
 @@ -1026,9 +1026,13 @@ int gpiochip_add_hog(struct gpio_chip *gc, struct fwnode_handle *fwnode)

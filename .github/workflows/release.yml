@@ -2,9 +2,9 @@
 #
 # Build the kernel with ./build.sh and attach it to a release.
 #
-#   git tag v7.3.3-T1 && git push origin v7.3.3-T1
+#   git tag v7.3.4-T1 && git push origin v7.3.4-T1
 #
-# builds the tagged commit (kernel release 7.3.3-a7s-r1 for -R1, 7.3.3-a7s-t1
+# builds the tagged commit (kernel release 7.3.4-a7s-r1 for -R1, 7.3.4-a7s-t1
 # for -T1) and creates a DRAFT release named after the tag, with the
 # CHANGELOG.md section of that tag as its text. A person reads the draft and
 # publishes it. A -T<n> draft is marked as a pre-release. A manual run
@@ -67,7 +67,7 @@ jobs:
           scripts/release-notes.sh "${TAG}" > /dev/null
 
       - name: Name the revision
-        # v7.3.3-R1 builds revision r1, v7.3.3-T1 builds t1; a manual run is t1.
+        # v7.3.4-R1 builds revision r1, v7.3.4-T1 builds t1; a manual run is t1.
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |

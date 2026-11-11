@@ -1,7 +1,7 @@
 # a7s-linux-mainline
 
 Linux kernel patches for the **Radxa Cubie A7S** (Allwinner A733), on top
-of Linux 7.3.3, and a script that builds the kernel from them.
+of Linux 7.3.4, and a script that builds the kernel from them.
 
 **What it is:** a kernel you build yourself and install on a system that
 already runs on the board. It goes together with the boot chain from
@@ -47,8 +47,8 @@ Log in again after installing it, otherwise `podman build` fails with
 | `SHA256SUMS` | checksums of the files above |
 
 Both tarballs have the one top directory `a7s-linux-mainline-<release>/`.
-`<release>` is `7.3.3-a7s` by default, `7.3.3-a7s-t1` for the test build
-`v7.3.3-T1`. Releases also come ready built, see [Releases](#releases).
+`<release>` is `7.3.4-a7s` by default, `7.3.4-a7s-t1` for the test build
+`v7.3.4-T1`. Releases also come ready built, see [Releases](#releases).
 
 ## Install
 
@@ -143,7 +143,7 @@ the host (see `stage_config` in `scripts/build.sh`).
 
 ## Releases
 
-A release is named `v<version>-R<n>` (`v7.3.3-R1`), a test build
+A release is named `v<version>-R<n>` (`v7.3.4-R1`), a test build
 `v<version>-T<n>`; `<version>` is the kernel version as `uname -r` begins.
 GitHub Actions ([release.yml](.github/workflows/release.yml)) builds the
 tagged commit with `./build.sh` and `./build.sh release` in the same pinned
@@ -176,7 +176,7 @@ archive of the tag, which GitHub adds to every release, are the
 corresponding source (GPL-2.0).
 
 To check a release: `sha256sum -c SHA256SUMS`, then build the tagged
-commit on x86_64 with the revision of the tag (`t1` for `v7.3.3-T1`) and
+commit on x86_64 with the revision of the tag (`t1` for `v7.3.4-T1`) and
 compare:
 
 ```
