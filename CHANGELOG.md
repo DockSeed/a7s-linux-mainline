@@ -15,6 +15,12 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [7.3.4-T1] - 2026-11-11
+
+Test build: the recipe of 7.3.3-T1 on Linux 7.3.4.
+
 ### Changed
 
 - The kernel is Linux 7.3.4 instead of 7.3.3. The series applies to it
