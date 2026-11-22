@@ -15,7 +15,15 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- The kernel is Linux 7.3.5 instead of 7.3.4. 7.3.5 carries the etnaviv
+  unbind fix (upstream a0560a12d8c1, "drm/etnaviv: Fix NULL dereference
+  on unbind without PPU flop reset"), the same change as our patch
+  `etnaviv-unbind-flop`, which no longer applies and is dropped. No other
+  patch of the series is part of 7.3.5. The two `drm-dp-crc-stop`
+  patches are exported again from the applied tree: only their index
+  lines and the line numbers of their hunks change.
 
 ## [7.3.4-R1] - 2026-11-11
 

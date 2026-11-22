@@ -519,8 +519,6 @@ a733-usb0-gadget/phy-sun4i-usb-write-the-a733-phy0-control-bits-while-the-phy-is
 a733-usb0-gadget/dt-bindings-usb-allwinner-sun4i-a10-musb-add-the-a733-compatible.patch
 a733-usb0-gadget/arm64-dts-allwinner-a733-add-the-usb0-otg-controller.patch
 a733-usb0-gadget/arm64-dts-allwinner-a733-cubie-a7s-enable-usb0-as-a-usb-gadget.patch
-# drm/etnaviv: unbind oopses when no PPU flop reset buffer exists -- ours, not posted
-etnaviv-unbind-flop/drm-etnaviv-free-the-ppu-flop-reset-buffer-only-when-it-was-allocated.patch
 # drm/etnaviv: unbind leaves the clocks of the core enabled -- ours, not posted
 etnaviv-remove-rpm/drm-etnaviv-suspend-the-core-before-disabling-runtime-pm-on-remove.patch
 # A733 video engine, kernel side without a driver: binding, the IOMMU port gates

@@ -59,8 +59,8 @@
 set -euo pipefail
 
 # --- pins: the one place for the kernel version --------------------------
-KERNEL_VERSION="7.3.4"
-KERNEL_SHA256="b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f"
+KERNEL_VERSION="7.3.5"
+KERNEL_SHA256="8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990"
 # Greg Kroah-Hartman, Linux kernel stable release signing key: it signs the
 # tarballs of mainline and stable releases alike.
 KERNEL_SIGNER_FPR="647F28654894E3BD457199BE38DBBDC86092693E"

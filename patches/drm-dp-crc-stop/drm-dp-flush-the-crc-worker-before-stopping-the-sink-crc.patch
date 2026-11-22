@@ -30,10 +30,10 @@ Assisted-by: LLM
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/gpu/drm/display/drm_dp_helper.c b/drivers/gpu/drm/display/drm_dp_helper.c
-index 488fd123a01a..f9e65bd266cf 100644
+index 7676285c19f8..8bcd7fafbc55 100644
 --- a/drivers/gpu/drm/display/drm_dp_helper.c
 +++ b/drivers/gpu/drm/display/drm_dp_helper.c
-@@ -2507,6 +2507,12 @@ int drm_dp_stop_crc(struct drm_dp_aux *aux)
+@@ -2508,6 +2508,12 @@ int drm_dp_stop_crc(struct drm_dp_aux *aux)
  	u8 buf;
  	int ret;
  
@@ -46,7 +46,7 @@ index 488fd123a01a..f9e65bd266cf 100644
  	ret = drm_dp_dpcd_read_byte(aux, DP_TEST_SINK, &buf);
  	if (ret < 0)
  		return ret;
-@@ -2515,7 +2521,6 @@ int drm_dp_stop_crc(struct drm_dp_aux *aux)
+@@ -2516,7 +2522,6 @@ int drm_dp_stop_crc(struct drm_dp_aux *aux)
  	if (ret < 0)
  		return ret;
  

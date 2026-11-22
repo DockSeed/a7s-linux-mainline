@@ -47,10 +47,10 @@ Assisted-by: LLM
  1 file changed, 13 insertions(+)
 
 diff --git a/drivers/gpu/drm/display/drm_dp_helper.c b/drivers/gpu/drm/display/drm_dp_helper.c
-index f9e65bd266cf..a99f548e9e68 100644
+index 8bcd7fafbc55..0c46f6349f25 100644
 --- a/drivers/gpu/drm/display/drm_dp_helper.c
 +++ b/drivers/gpu/drm/display/drm_dp_helper.c
-@@ -2298,7 +2298,14 @@ static void drm_dp_aux_crc_work(struct work_struct *work)
+@@ -2299,7 +2299,14 @@ static void drm_dp_aux_crc_work(struct work_struct *work)
  
  	crtc = aux->crtc;
  	while (crtc->crc.opened) {
@@ -65,7 +65,7 @@ index f9e65bd266cf..a99f548e9e68 100644
  		if (!crtc->crc.opened)
  			break;
  
-@@ -2473,6 +2480,12 @@ EXPORT_SYMBOL(drm_dp_psr_setup_time);
+@@ -2474,6 +2481,12 @@ EXPORT_SYMBOL(drm_dp_psr_setup_time);
   * @aux: DisplayPort AUX channel
   * @crtc: CRTC displaying the frames whose CRCs are to be captured
   *
