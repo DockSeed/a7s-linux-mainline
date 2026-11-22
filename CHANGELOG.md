@@ -15,6 +15,12 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [7.3.5-T1] - 2026-11-22
+
+Test build: the recipe of 7.3.4-R1 on Linux 7.3.5.
+
 ### Changed
 
 - The kernel is Linux 7.3.5 instead of 7.3.4. 7.3.5 carries the etnaviv
