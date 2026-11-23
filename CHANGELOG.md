@@ -17,6 +17,11 @@ release is the section below with the same name.
 
 Nothing yet.
 
+## [7.3.5-R1] - 2026-11-23
+
+Release: the recipe of the test build 7.3.5-T1, unchanged; its section
+lists what changed since 7.3.4-R1.
+
 ## [7.3.5-T1] - 2026-11-22
 
 Test build: the recipe of 7.3.4-R1 on Linux 7.3.5.
