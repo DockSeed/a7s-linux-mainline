@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Norman Herms <dockseed@proton.me>
+Date: Tue, 24 Nov 2026 16:25:11 +0100
+Subject: [PATCH] drm/etnaviv: turn the core clocks off on remove
+
+When the etnaviv-gpu driver is unbound after the master has been
+unbound, as at rmmod, the driver core resumes the device before
+remove() and drops its reference with pm_runtime_put_sync(). etnaviv
+uses autosuspend with a 200 ms delay, so the put only arms the
+autosuspend timer. etnaviv_gpu_platform_remove() then disables runtime
+PM, which cancels the timer, and etnaviv_gpu_rpm_suspend() never runs:
+the driver core then marks the device suspended without calling it.
+The clock enable done by etnaviv_gpu_rpm_resume() is never undone, and
+the enable count survives the driver in the clock framework. The same
+holds whenever user space keeps the device active, for example through
+power/control, also when only the GPU is unbound.
+
+Make remove() leave the hardware in a defined state whatever references
+are held: resume the GPU explicitly, disable runtime PM, turn its
+clocks off and mark it suspended, then undo the autosuspend setting
+from probe. Without CONFIG_PM, bind and unbind enable and disable the
+clocks, so remove() leaves them alone.
+
+etnaviv_gpu_hw_suspend() is not called: it could write to the command
+buffer, which the component unbind has already freed.
+
+Tested on Radxa Cubie A7S: on the Allwinner A733 NPU, the enable counts
+of the reg, bus and core clocks stay unchanged over three rounds each of
+rmmod and insmod, unbind and bind of the GPU alone, and rmmod and insmod
+with power/control set to "on"; without the fix they go up by one per
+rmmod round.
+
+Fixes: a8c21a5451d8 ("drm/etnaviv: add initial etnaviv DRM driver")
+Assisted-by: LLM
+---
+ drivers/gpu/drm/etnaviv/etnaviv_gpu.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/etnaviv/etnaviv_gpu.c b/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
+index c4375859dfe9..b09f91bbfc56 100644
+--- a/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
++++ b/drivers/gpu/drm/etnaviv/etnaviv_gpu.c
+@@ -1992,7 +1992,21 @@ static void etnaviv_gpu_platform_remove(struct platform_device *pdev)
+ 	struct etnaviv_gpu *gpu = dev_get_drvdata(&pdev->dev);
+ 
+ 	component_del(&pdev->dev, &gpu_ops);
+-	pm_runtime_disable(&pdev->dev);
++	/*
++	 * Leave the hardware in a defined state: resume the core and, with
++	 * runtime PM disabled, disable its clocks here, as no suspend
++	 * callback runs after this point. Without runtime PM, bind and
++	 * unbind handle the clocks.
++	 */
++	if (IS_ENABLED(CONFIG_PM) && !pm_runtime_resume_and_get(&pdev->dev)) {
++		pm_runtime_disable(&pdev->dev);
++		etnaviv_gpu_clk_disable(gpu);
++		pm_runtime_set_suspended(&pdev->dev);
++		pm_runtime_put_noidle(&pdev->dev);
++	} else {
++		pm_runtime_disable(&pdev->dev);
++	}
++	pm_runtime_dont_use_autosuspend(&pdev->dev);
+ 
+ 	mutex_destroy(&gpu->lock);
+ 	mutex_destroy(&gpu->sched_lock);

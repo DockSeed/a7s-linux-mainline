@@ -514,7 +514,7 @@ a733-usb0-gadget/dt-bindings-usb-allwinner-sun4i-a10-musb-add-the-a733-compatibl
 a733-usb0-gadget/arm64-dts-allwinner-a733-add-the-usb0-otg-controller.patch
 a733-usb0-gadget/arm64-dts-allwinner-a733-cubie-a7s-enable-usb0-as-a-usb-gadget.patch
 # drm/etnaviv: unbind leaves the clocks of the core enabled -- ours, not posted
-etnaviv-remove-rpm/drm-etnaviv-suspend-the-core-before-disabling-runtime-pm-on-remove.patch
+etnaviv-remove-rpm/drm-etnaviv-turn-the-core-clocks-off-on-remove.patch
 # A733 video engine, kernel side without a driver: binding, the IOMMU port gates
 # of its masters, the decoder and encoder nodes (disabled) -- ours, not posted
 a733-ve-base/dt-bindings-media-add-allwinner-a733-video-engine.patch

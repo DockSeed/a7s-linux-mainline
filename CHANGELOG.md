@@ -15,7 +15,13 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- etnaviv: remove() now resumes the core, turns its clocks off and marks
+  it suspended (`etnaviv-remove-rpm`, new patch
+  `drm-etnaviv-turn-the-core-clocks-off-on-remove`), also when user space
+  keeps the device active. The patch it replaces released the clocks only
+  as a side effect of undoing autosuspend.
 
 ## [7.3.6-R1] - 2026-11-24
 
