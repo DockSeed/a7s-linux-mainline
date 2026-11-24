@@ -32,7 +32,7 @@ ARCH=$(dpkg --print-architecture)
 LOCK="$HERE/packages-$ARCH.lock"
 case "$ARCH" in
   # The kernel is cross compiled; the libc is for the arm64 build tools in
-  # kernel-a7s-devel.
+  # the headers tarball.
   amd64) CROSS="gcc-aarch64-linux-gnu libc6-dev-arm64-cross" ;;
   arm64) CROSS= ;;                        # the native gcc builds it
   *) echo "install.sh: no lock for architecture $ARCH (amd64 or arm64)" >&2; exit 1 ;;

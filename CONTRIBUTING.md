@@ -59,8 +59,9 @@ Assisted-by: LLM
 
 One directory in `patches/` per upstream series, as it was or would be
 sent. Order in `patches/series`: bindings, drivers, device tree, then
-`arm64: defconfig`. Other authors' series first, then ours. A comment
-above each series gives author, version, upstream state and lore link.
+`arm64: defconfig`. Other authors' series before ours where the
+dependencies allow it. A comment above each series gives author, version,
+upstream state and lore link.
 Once a series is in the kernel we build on, its directory goes.
 
 ## Kernel configuration

@@ -32,8 +32,8 @@ Release: the recipe of 7.3.5-R1 on Linux 7.3.6.
   be58267a34ae). `btusb-reset-gpio` now patches `btusb_main.c`; its change
   is the same.
 - Exported again from the applied tree, because 7.3.6 changes the files
-  they patch: four of the five `a733-dma` patches and the `a733-dma-a7s`,
-  `stmmac-rx-refill` and `gpiolib-hog` patches. Only their index lines
+  they patch: four of the five `a733-dma` patches, two of the three `a733-dma-a7s`
+  patches and the `stmmac-rx-refill` and `gpiolib-hog` patches. Only their index lines
   and, where the lines moved, the line numbers of their hunks change.
 - `config/a7s_defconfig` leaves out `CONFIG_QRTR_SMD=m`: in 7.3.6
   `ATH11K_AHB` selects it, so the minimal form no longer has the line. The

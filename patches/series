@@ -5,8 +5,9 @@
 # One directory per upstream series, as it was sent or would be: its
 # patches follow each other in the series' own order (bindings, drivers,
 # device tree, then "arm64: defconfig"). Series by other authors come
-# first, then ours. A comment line above each series names its author,
-# version and state upstream, with a lore link where there is one.
+# before ours where the dependencies allow it. A comment line above each
+# series names its author, version and state upstream, with a lore link
+# where there is one.
 #
 # One patch path per line, relative to this directory. Lines starting with
 # '#' are comments.
@@ -304,7 +305,8 @@ a733-usb3-gen2/arm64-dts-allwinner-a733-cubie-a7s-set-up-gen2-on-the-usb-c-port.
 # ours, not posted (needs a733-power-a7s)
 a733-cpu-supply-a7s/arm64-dts-allwinner-a733-cubie-a7s-add-the-cpu-cluster-supplies.patch
 
-# A733 CCU audio: the manual's PLL_AUDIO0 point, the OWA RX parent and the
+# A733 CCU audio: the manual's PLL_AUDIO0 point, the OWA RX parent, the
+# PLL_AUDIO1 reset rate, the audio module clocks setting PLL_AUDIO0 and the
 # audio PLL N range (PLL_AUDIO0 by its VCO range) -- ours, not posted
 # (fixes on a733-ccu v6)
 a733-ccu-audio/clk-sunxi-ng-a733-use-the-manual-s-pll_audio0-point-for-22.5792-mhz.patch
@@ -576,7 +578,7 @@ a733-pwm/arm64-defconfig-enable-the-allwinner-sun8i-pwm-drive.patch
 btusb-reset-gpio/bluetooth-btusb-request-the-reset-gpio-only-where-a-handler-uses-it.patch
 # hwspinlock: sun6i: Allwinner D1 and T113 support -- Nguyen Minh Tien, v1,
 # under review; patches 1/3 and 2/3 (Acked-by Conor Dooley on 2/3 collected
-# from the list, 28.09.); 1/3 makes the driver bind to a node that follows
+# from the list, 2026-09-28); 1/3 makes the driver bind to a node that follows
 # the binding
 # https://lore.kernel.org/all/20260927025626.69614-2-tien.nguyenminh@embeddedlinux.blog/
 hwspinlock-sun6i-d1/hwspinlock-sun6i-get-the-clock-and-the-reset-without-names.patch

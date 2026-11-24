@@ -4,7 +4,7 @@
 # The build steps of a7s-linux-mainline. They run inside the builder
 # container, which ./build.sh at the top of the repository starts:
 #
-#   ./build.sh [stage...]        default: all stages in order
+#   ./build.sh [stage...]        default: fetch verify prepare config build package
 #
 # Paths below are relative to the top of the repository.
 #
