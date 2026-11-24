@@ -15,6 +15,12 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [7.3.6-R1] - 2026-11-24
+
+Release: the recipe of 7.3.5-R1 on Linux 7.3.6.
+
 ### Changed
 
 - The kernel is Linux 7.3.6 instead of 7.3.5. 7.3.6 carries Junhui Liu's
