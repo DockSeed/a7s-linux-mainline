@@ -40,7 +40,7 @@ Assisted-by: LLM
  2 files changed, 30 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac.h b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
-index d2d387f45c10..8926abb8c837 100644
+index 9cdad8430856..0f56d118575d 100644
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac.h
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
 @@ -145,6 +145,7 @@ struct stmmac_channel {
@@ -52,7 +52,7 @@ index d2d387f45c10..8926abb8c837 100644
  
  struct stmmac_fpe_cfg {
 diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-index b837e8e27a35..108a2069a7d2 100644
+index 8a8e9f71e6f9..2c8b3a8cf7dc 100644
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 @@ -85,6 +85,7 @@ MODULE_PARM_DESC(phyaddr, "Physical device address");
@@ -96,7 +96,7 @@ index b837e8e27a35..108a2069a7d2 100644
  		if (queue < tx_queues_cnt)
  			napi_enable(&ch->tx_napi);
  	}
-@@ -5994,6 +6004,13 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
+@@ -6006,6 +6016,13 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
  	return count;
  }
  
@@ -110,7 +110,7 @@ index b837e8e27a35..108a2069a7d2 100644
  static int stmmac_napi_poll_rx(struct napi_struct *napi, int budget)
  {
  	struct stmmac_channel *ch =
-@@ -6009,6 +6026,15 @@ static int stmmac_napi_poll_rx(struct napi_struct *napi, int budget)
+@@ -6021,6 +6038,15 @@ static int stmmac_napi_poll_rx(struct napi_struct *napi, int budget)
  	u64_stats_update_end(&rxq_stats->napi_syncp);
  
  	work_done = stmmac_rx(priv, budget, chan);
@@ -126,7 +126,7 @@ index b837e8e27a35..108a2069a7d2 100644
  	if (work_done < budget && napi_complete_done(napi, work_done)) {
  		unsigned long flags;
  
-@@ -7594,6 +7620,8 @@ static void stmmac_napi_add(struct net_device *dev)
+@@ -7606,6 +7632,8 @@ static void stmmac_napi_add(struct net_device *dev)
  
  		if (queue < priv->plat->rx_queues_to_use) {
  			netif_napi_add(dev, &ch->rx_napi, stmmac_napi_poll_rx);

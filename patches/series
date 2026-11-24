@@ -22,14 +22,6 @@ a733-pinctrl/dt-bindings-pinctrl-add-compatible-for-allwinner-a733.patch
 a733-pinctrl/pinctrl-sunxi-a523-r-add-a733-r-compatible-string.patch
 a733-pinctrl/pinctrl-sunxi-add-support-for-the-allwinner-a733.patch
 
-# clk: sunxi-ng: a523: Fix single-divider clocks -- Junhui Liu, v1, applied for 7.4
-# (sunxi/linux.git sunxi/clk-for-7.4, f43bed1fb..1002cc9d6)
-# https://lore.kernel.org/all/20260906-sunxi-clk-no-p-v1-0-cbde21c9fe69@pigmoral.tech/
-a523-clk-single-divider/clk-sunxi-ng-div-add-feature-support-to-m-clock-macro.patch
-a523-clk-single-divider/clk-sunxi-ng-sun55i-a523-ccu-use-m-only-clocks-for-mbus-iommu-and-dram.patch
-a523-clk-single-divider/clk-sunxi-ng-sun55i-a523-ccu-use-p-only-clocks-for-high-speed-timers.patch
-a523-clk-single-divider/clk-sunxi-ng-sun55i-a523-r-ccu-use-p-only-clocks-for-timers.patch
-
 # clk: sunxi-ng: ccu_common: Use readl_relaxed_poll_timeout_atomic for PLL lock
 # -- Alastair D'Silva, v2, applied for 7.4
 # (sunxi/linux.git sunxi/clk-for-7.4, 9ef62592b80c)

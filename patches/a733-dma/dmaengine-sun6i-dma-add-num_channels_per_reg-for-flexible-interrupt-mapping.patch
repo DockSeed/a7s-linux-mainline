@@ -26,7 +26,7 @@ Signed-off-by: Yuanshen Cao <alex.caoys@gmail.com>
  1 file changed, 12 insertions(+), 9 deletions(-)
 
 diff --git a/drivers/dma/sun6i-dma.c b/drivers/dma/sun6i-dma.c
-index fc50ac2fbbff..a17c84b80753 100644
+index 3fea5d8b5ce8..f2f53c313d38 100644
 --- a/drivers/dma/sun6i-dma.c
 +++ b/drivers/dma/sun6i-dma.c
 @@ -32,14 +32,13 @@
@@ -71,7 +71,7 @@ index fc50ac2fbbff..a17c84b80753 100644
  		dev_dbg(sdev->slave.dev, "Common register:\n"
  			"chan num %d\n"
  			"\tmask(%04x): 0x%08x\n"
-@@ -491,8 +493,8 @@ static int sun6i_dma_start_desc(struct sun6i_vchan *vchan)
+@@ -498,8 +500,8 @@ static int sun6i_dma_start_desc(struct sun6i_vchan *vchan)
  
  	sun6i_dma_dump_lli(vchan, pchan->desc->v_lli, pchan->desc->p_lli);
  
@@ -82,7 +82,7 @@ index fc50ac2fbbff..a17c84b80753 100644
  
  	vchan->irq_type = vchan->cyclic ? DMA_IRQ_PKG : DMA_IRQ_QUEUE;
  
-@@ -584,7 +586,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
+@@ -591,7 +593,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
  	int i, j, ret = IRQ_NONE;
  	u32 status;
  
@@ -91,7 +91,7 @@ index fc50ac2fbbff..a17c84b80753 100644
  		status = sun6i_read_irq_stat(sdev, i);
  		if (!status)
  			continue;
-@@ -594,7 +596,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
+@@ -601,7 +603,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
  
  		sun6i_write_irq_stat(sdev, i, status);
  
@@ -100,7 +100,7 @@ index fc50ac2fbbff..a17c84b80753 100644
  			pchan = sdev->pchans + j;
  			vchan = pchan->vchan;
  			if (vchan && (status & vchan->irq_type)) {
-@@ -1111,7 +1113,7 @@ static inline void sun6i_kill_tasklet(struct sun6i_dma_dev *sdev)
+@@ -1112,7 +1114,7 @@ static inline void sun6i_kill_tasklet(struct sun6i_dma_dev *sdev)
  	int i;
  
  	/* Disable all interrupts from DMA */
@@ -109,7 +109,7 @@ index fc50ac2fbbff..a17c84b80753 100644
  		sun6i_write_irq_en(sdev, i, 0);
  
  	/* Prevent spurious interrupts from scheduling the tasklet */
-@@ -1139,7 +1141,8 @@ static inline void sun6i_dma_free(struct sun6i_dma_dev *sdev)
+@@ -1140,7 +1142,8 @@ static inline void sun6i_dma_free(struct sun6i_dma_dev *sdev)
  #define SUN6I_DMA_IRQ_A31_COMMON_CFG	\
  	.irq_stride      = DMA_IRQ_STRIDE_A31,	\
  	.irq_en_offset   = DMA_IRQ_EN_OFFSET_A31,	\

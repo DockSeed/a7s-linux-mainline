@@ -19,7 +19,7 @@ Signed-off-by: Yuanshen Cao <alex.caoys@gmail.com>
  1 file changed, 33 insertions(+)
 
 diff --git a/drivers/dma/sun6i-dma.c b/drivers/dma/sun6i-dma.c
-index a17c84b80753..2d23be1a67f1 100644
+index f2f53c313d38..c5e83024943e 100644
 --- a/drivers/dma/sun6i-dma.c
 +++ b/drivers/dma/sun6i-dma.c
 @@ -54,10 +54,14 @@
@@ -46,7 +46,7 @@ index a17c84b80753..2d23be1a67f1 100644
  
  /*
   * Various hardware related defines
-@@ -1319,6 +1325,32 @@ static struct sun6i_dma_config sun50i_h6_dma_cfg = {
+@@ -1320,6 +1326,32 @@ static struct sun6i_dma_config sun50i_h6_dma_cfg = {
  	SUN6I_DMA_IRQ_A31_COMMON_CFG
  };
  
@@ -79,7 +79,7 @@ index a17c84b80753..2d23be1a67f1 100644
  /*
   * The V3s have only 8 physical channels, a maximum DRQ port id of 23,
   * and a total of 24 usable source and destination endpoints.
-@@ -1353,6 +1385,7 @@ static const struct of_device_id sun6i_dma_match[] = {
+@@ -1354,6 +1386,7 @@ static const struct of_device_id sun6i_dma_match[] = {
  	{ .compatible = "allwinner,sun50i-a64-dma", .data = &sun50i_a64_dma_cfg },
  	{ .compatible = "allwinner,sun50i-a100-dma", .data = &sun50i_a100_dma_cfg },
  	{ .compatible = "allwinner,sun50i-h6-dma", .data = &sun50i_h6_dma_cfg },

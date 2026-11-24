@@ -23,7 +23,7 @@ Assisted-by: LLM
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/dma/sun6i-dma.c b/drivers/dma/sun6i-dma.c
-index db4946947b5b..d2c612a05ef9 100644
+index abcef43dbe66..3e331714778d 100644
 --- a/drivers/dma/sun6i-dma.c
 +++ b/drivers/dma/sun6i-dma.c
 @@ -72,6 +72,7 @@
@@ -43,7 +43,7 @@ index db4946947b5b..d2c612a05ef9 100644
  };
  
  /*
-@@ -941,7 +944,7 @@ static int sun6i_dma_pause(struct dma_chan *chan)
+@@ -942,7 +945,7 @@ static int sun6i_dma_pause(struct dma_chan *chan)
  	dev_dbg(chan2dev(chan), "vchan %p: pause\n", &vchan->vc);
  
  	if (pchan) {
@@ -52,7 +52,7 @@ index db4946947b5b..d2c612a05ef9 100644
  		       pchan->base + DMA_CHAN_PAUSE);
  	} else {
  		spin_lock(&sdev->lock);
-@@ -1350,6 +1353,7 @@ static struct sun6i_dma_config sun60i_a733_dma_cfg = {
+@@ -1351,6 +1354,7 @@ static struct sun6i_dma_config sun60i_a733_dma_cfg = {
  	.irq_en_offset   = DMA_IRQ_EN_OFFSET_A733,
  	.irq_stat_offset = DMA_IRQ_STAT_OFFSET_A733,
  	.num_channels_per_reg = DMA_IRQ_CHAN_NR_A733,

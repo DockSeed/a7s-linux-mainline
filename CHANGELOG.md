@@ -15,7 +15,23 @@ release is the section below with the same name.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- The kernel is Linux 7.3.6 instead of 7.3.5. 7.3.6 carries Junhui Liu's
+  A523 single-divider clock series (upstream f43bed1fb1dd and the three
+  patches after it), the same changes as our `a523-clk-single-divider`
+  patches, which no longer apply and are dropped. No other patch of the
+  series is part of 7.3.6.
+- 7.3.6 renames `drivers/bluetooth/btusb.c` to `btusb_main.c` (upstream
+  be58267a34ae). `btusb-reset-gpio` now patches `btusb_main.c`; its change
+  is the same.
+- Exported again from the applied tree, because 7.3.6 changes the files
+  they patch: the `a733-dma`, `a733-dma-a7s`, `stmmac-rx-refill` and
+  `gpiolib-hog` patches. Only their index lines and the line numbers of
+  their hunks change.
+- `config/a7s_defconfig` leaves out `CONFIG_QRTR_SMD=m`: in 7.3.6
+  `ATH11K_AHB` selects it, so the minimal form no longer has the line. The
+  built configuration is the same.
 
 ## [7.3.5-R1] - 2026-11-23
 

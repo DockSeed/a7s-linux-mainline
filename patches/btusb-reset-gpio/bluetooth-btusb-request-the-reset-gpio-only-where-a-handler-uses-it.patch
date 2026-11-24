@@ -26,14 +26,14 @@ WiFi on the same chip keeps working.
 
 Assisted-by: LLM
 ---
- drivers/bluetooth/btusb.c | 22 +++++++++++++++-------
+ drivers/bluetooth/btusb_main.c | 22 +++++++++++++++-------
  1 file changed, 15 insertions(+), 7 deletions(-)
 
-diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
-index ece1fd426f12..c842e03f079e 100644
---- a/drivers/bluetooth/btusb.c
-+++ b/drivers/bluetooth/btusb.c
-@@ -4301,13 +4301,21 @@ static int btusb_probe(struct usb_interface *intf,
+diff --git a/drivers/bluetooth/btusb_main.c b/drivers/bluetooth/btusb_main.c
+index 67b7271c9eb9..d1bf4baef682 100644
+--- a/drivers/bluetooth/btusb_main.c
++++ b/drivers/bluetooth/btusb_main.c
+@@ -4299,13 +4299,21 @@ static int btusb_probe(struct usb_interface *intf,
  
  	SET_HCIDEV_DEV(hdev, &intf->dev);
  

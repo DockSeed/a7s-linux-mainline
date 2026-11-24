@@ -30,10 +30,10 @@ Assisted-by: LLM
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/dma/sun6i-dma.c b/drivers/dma/sun6i-dma.c
-index 2d23be1a67f1..db4946947b5b 100644
+index c5e83024943e..abcef43dbe66 100644
 --- a/drivers/dma/sun6i-dma.c
 +++ b/drivers/dma/sun6i-dma.c
-@@ -603,7 +603,8 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
+@@ -610,7 +610,8 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
  		sun6i_write_irq_stat(sdev, i, status);
  
  		for (j = 0; (j < sdev->cfg->num_channels_per_reg) && status; j++) {
